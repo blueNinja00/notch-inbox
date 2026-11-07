@@ -8,6 +8,14 @@ enum BrowserExtensionInstaller {
         Bundle.main.resourceURL?.appendingPathComponent("BrowserExtension", isDirectory: true)
     }
 
+    /// The version of the add-on inside this app, from its manifest.
+    static let bundledVersion: String? = {
+        guard let manifest = bundledFolder?.appendingPathComponent("manifest.json"),
+              let data = try? Data(contentsOf: manifest),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object["version"] as? String
+    }()
+
     static var installedFolder: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")

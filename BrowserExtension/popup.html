@@ -11,6 +11,7 @@
   #state.bad { color: #b42318; }
   ul { margin: 8px 0; padding-left: 18px; }
   .muted { color: #6e6e73; font-size: 12px; margin-top: 6px; }
+  #whole { font-size: 12px; margin-top: 6px; }
   button { margin-top: 10px; font: inherit; padding: 4px 12px; }
 </style>
 </head>
@@ -19,7 +20,8 @@
 <div id="state">Checking…</div>
 <ul id="accounts"></ul>
 <div class="muted" id="when"></div>
-<div class="muted">Reads the Primary tab of each Gmail account signed in here and passes it only to Notch Inbox on this Mac.</div>
+<div id="whole"></div>
+<div class="muted">Reads the unread mail of each Gmail account signed in here (the Primary tab, plus Google Classroom and other mail from Google), opens it in full and passes it only to Notch Inbox on this Mac.</div>
 <button id="sync" type="button">Sync now</button>
 <script src="popup.js"></script>
 </body>

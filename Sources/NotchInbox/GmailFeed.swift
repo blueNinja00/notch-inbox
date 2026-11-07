@@ -135,3 +135,61 @@ final class GmailFeedParser: NSObject, XMLParserDelegate {
         return isoPlain.date(from: string) ?? isoFractional.date(from: string)
     }
 }
+
+extension GmailFeed {
+    /// This feed plus mail from Google itself (Classroom, Docs, Drive, Calendar…) found in
+    /// the whole inbox, so school notices show even when Gmail files them under Updates.
+    func addingGoogleMail(from inbox: GmailFeed) -> GmailFeed {
+        guard inbox.account == account else { return self }
+        let known = Set(entries.map { $0.id })
+        let extras = inbox.entries.filter { !known.contains($0.id) && GmailFeed.isFromGoogle($0.senderEmail) }
+        guard !extras.isEmpty else { return self }
+        return GmailFeed(account: account,
+                         unreadCount: unreadCount + extras.count,
+                         entries: (entries + extras).sorted { $0.date > $1.date })
+    }
+
+    /// Sent from google.com or one of its subdomains, e.g. no-reply@classroom.google.com.
+    static func isFromGoogle(_ address: String) -> Bool {
+        guard let at = address.lastIndex(of: "@") else { return false }
+        let domain = address[address.index(after: at)...].lowercased()
+        return domain == "google.com" || domain.hasSuffix(".google.com")
+    }
+}
+
+/// Which of an account's unread mail the notch shows.
+enum InboxChoice: String, Codable {
+    /// The Primary tab, plus Classroom and other mail from Google wherever Gmail filed it.
+    case primary
+    /// Everything unread in the inbox, every tab. Suits catch-all and receipts accounts.
+    case everything
+}
+
+/// One account's feeds from the add-on: its Primary tab and (add-on 1.1 on) its whole inbox.
+struct AccountFeeds: Equatable {
+    /// The Primary tab, or the whole inbox for an account that has no Primary feed.
+    let main: GmailFeed
+    /// The whole inbox, when the add-on sent it as well.
+    let inbox: GmailFeed?
+
+    var account: String { main.account }
+
+    /// The feed for the notch, as chosen for this account.
+    func feed(showing choice: InboxChoice) -> GmailFeed {
+        guard let inbox = inbox, inbox.account == main.account else { return main }
+        switch choice {
+        case .primary:
+            return main.addingGoogleMail(from: inbox)
+        case .everything:
+            return inbox
+        }
+    }
+
+    /// A first choice for an account with none saved: the whole inbox when nothing in
+    /// Primary is unread but the inbox has unread mail, as with a catch-all or receipts
+    /// address. Nil until the add-on sends the whole inbox too.
+    var suggestedChoice: InboxChoice? {
+        guard let inbox = inbox, inbox.account == main.account else { return nil }
+        return main.unreadCount == 0 && inbox.unreadCount > 0 ? .everything : .primary
+    }
+}

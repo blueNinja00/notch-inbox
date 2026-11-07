@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private static let accountOrderKey = "linkedAccountOrder"
+    private static let inboxChoicesKey = "inboxChoices"
+    private static let hiddenAccountsKey = "hiddenAccounts"
 
     /// One notch per connected screen, keyed by display.
     private var screens: [CGDirectDisplayID: NotchWindowController] = [:]
@@ -27,12 +29,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let browserLink = BrowserLink()
     private var mailbox = LiveMailbox(order: UserDefaults.standard.stringArray(forKey: AppDelegate.accountOrderKey) ?? [])
     private var lastFeedAt: Date?
+    private var wholeEmails: NotchModel.WholeEmails = .coming
+    /// The latest feeds, so changing what an account shows takes effect at once.
+    private var lastFeeds: [AccountFeeds] = []
+    /// Per account: the Primary tab (plus Google mail) or the whole inbox.
+    private var inboxChoices: [String: InboxChoice] = [:]
+    private var lastSavedMailbox: Data?
+    private var saveMailboxWork: DispatchWorkItem?
 
     private var statusItem: NSStatusItem?
     private var appMenu: NSMenu?
     private var versionItem: NSMenuItem?
     private var updateItem: NSMenuItem?
     private var linkItem: NSMenuItem?
+    /// One item per linked account, with its choices, rebuilt each time the menu opens.
+    private var accountItems: [NSMenuItem] = []
     /// "Open Inboxes" and its divider, hidden when the menu opens from inside the notch.
     private var menuBarOnlyItems: [NSMenuItem] = []
     private var subscriptions = Set<AnyCancellable>()
@@ -45,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var models: [NotchModel] { screens.values.map { $0.model } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        restoreMailbox()
         installStatusItem()
 
         syncScreens()
@@ -65,10 +77,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         BrowserExtensionInstaller.refreshIfInstalled()
-        browserLink.onFeeds = { [weak self] feeds in
-            self?.received(feeds)
+        browserLink.onFeeds = { [weak self] feeds, upload in
+            self?.received(feeds, upload: upload) ?? LinkReply()
+        }
+        browserLink.onEmail = { [weak self] email in
+            self?.received(email)
         }
         browserLink.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        saveMailboxNow()
     }
 
     // MARK: Screens
@@ -114,6 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onShowAppMenu = { [weak self] in
             self?.showAppMenuAtPointer()
         }
+        model.onOpenMessage = { [weak self] id in
+            self?.mailbox.markOpened(id)
+        }
+        model.wholeEmails = wholeEmails
         if lastFeedAt != nil {
             model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
         }
@@ -131,17 +154,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Gmail via the browser add-on
 
-    private func received(_ feeds: [GmailFeed]) {
-        guard !feeds.isEmpty else { return }
-        mailbox.apply(feeds)
+    /// Each minute's feeds. The answer asks the add-on for the whole emails still missing.
+    private func received(_ feeds: [AccountFeeds], upload: FeedUpload) -> LinkReply {
+        let addOn = BrowserExtensionInstaller.bundledVersion
+        guard !feeds.isEmpty else { return LinkReply(want: [], addon: addOn) }
+        // An account seen for the first time gets a sensible view: the whole inbox for a
+        // catch-all or receipts address whose Primary tab is empty, Primary otherwise.
+        var choicesChanged = false
+        for account in feeds where inboxChoices[account.account] == nil {
+            if let suggested = account.suggestedChoice {
+                inboxChoices[account.account] = suggested
+                choicesChanged = true
+            }
+        }
+        if choicesChanged {
+            saveInboxChoices()
+        }
+        lastFeeds = feeds
+        mailbox.apply(feeds.map { $0.feed(showing: inboxChoices[$0.account] ?? .primary) })
         UserDefaults.standard.set(mailbox.order, forKey: AppDelegate.accountOrderKey)
+        if upload.version == nil {
+            wholeEmails = .addOnNeedsReload
+        } else {
+            wholeEmails = upload.fullEmails == "on-open" ? .whenOpened : .coming
+        }
+        lastFeedAt = Date()
+        showMailEverywhere()
+        refreshLinkItem()
+        saveMailboxSoon()
+        return LinkReply(want: mailbox.wanted(), addon: addOn)
+    }
+
+    /// A whole email (or news that it couldn't be fetched) from the add-on.
+    private func received(_ email: EmailUpload) {
+        if mailbox.storeWhole(email) {
+            showMailEverywhere()
+        }
+    }
+
+    private func showMailEverywhere() {
         let accounts = mailbox.accounts
         let messages = mailbox.messages
         for model in models {
             model.showLive(accounts: accounts, messages: messages, unread: mailbox.unread)
+            if model.wholeEmails != wholeEmails {
+                model.wholeEmails = wholeEmails
+            }
         }
-        lastFeedAt = Date()
-        refreshLinkItem()
     }
 
     private func refreshLinkItem() {
@@ -150,12 +209,145 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.title = "Gmail: not linked yet"
             return
         }
-        let count = mailbox.accounts.count
+        let count = mailbox.linkedAccounts.count
         let accounts = "\(count) account\(count == 1 ? "" : "s")"
         if Date().timeIntervalSince(last) > 5 * 60 {
             item.title = "Gmail link paused · last update \(MailTime.label(for: last))"
+        } else if wholeEmails == .addOnNeedsReload {
+            item.title = "Gmail linked · reload the add-on in Chrome to finish updating"
         } else {
             item.title = "Gmail linked · \(accounts) · updated \(MailTime.label(for: last))"
+        }
+    }
+
+    // MARK: Accounts in the menu
+
+    private static func loadInboxChoices() -> [String: InboxChoice] {
+        let saved = UserDefaults.standard.dictionary(forKey: AppDelegate.inboxChoicesKey) as? [String: String] ?? [:]
+        return saved.compactMapValues { InboxChoice(rawValue: $0) }
+    }
+
+    private func saveInboxChoices() {
+        UserDefaults.standard.set(inboxChoices.mapValues { $0.rawValue }, forKey: AppDelegate.inboxChoicesKey)
+    }
+
+    /// Under the Gmail line: each linked account, with what the notch shows of it.
+    private func rebuildAccountItems() {
+        guard let menu = appMenu, let link = linkItem else { return }
+        accountItems.forEach { menu.removeItem($0) }
+        accountItems = []
+
+        let shown = Set(mailbox.accounts.map { $0.id })
+        var position = menu.index(of: link) + 1
+        for account in mailbox.linkedAccounts {
+            let choice = inboxChoices[account] ?? .primary
+            let isHidden = mailbox.hidden.contains(account)
+            let summary: String
+            if isHidden {
+                summary = "hidden"
+            } else if !shown.contains(account) {
+                summary = "no room"
+            } else {
+                summary = choice == .everything ? "whole inbox" : "Primary"
+            }
+
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            submenu.addItem(choiceItem("Primary tab, plus Classroom and other Google mail", .primary, account, current: choice))
+            submenu.addItem(choiceItem("Whole inbox (every tab)", .everything, account, current: choice))
+            submenu.addItem(NSMenuItem.separator())
+            let show = NSMenuItem(title: "Show in the Notch", action: #selector(toggleAccountShown(_:)), keyEquivalent: "")
+            show.target = self
+            show.representedObject = account
+            show.state = isHidden ? .off : .on
+            submenu.addItem(show)
+            if !isHidden && !shown.contains(account) {
+                let room = NSMenuItem(title: "The notch has room for three accounts. Hide one to show this one.",
+                                      action: nil, keyEquivalent: "")
+                room.isEnabled = false
+                submenu.addItem(room)
+            }
+
+            let item = NSMenuItem(title: "\(account) · \(summary)", action: nil, keyEquivalent: "")
+            item.submenu = submenu
+            menu.insertItem(item, at: position)
+            position += 1
+            accountItems.append(item)
+        }
+    }
+
+    private func choiceItem(_ title: String, _ choice: InboxChoice, _ account: String, current: InboxChoice) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(chooseInbox(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = "\(choice.rawValue) \(account)"
+        item.state = choice == current ? .on : .off
+        return item
+    }
+
+    @objc private func chooseInbox(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String,
+              let space = value.firstIndex(of: " "),
+              let choice = InboxChoice(rawValue: String(value[..<space])) else { return }
+        let account = String(value[value.index(after: space)...])
+        guard inboxChoices[account] != choice else { return }
+        inboxChoices[account] = choice
+        saveInboxChoices()
+        // Swap the account's mail straight away from the latest feeds.
+        mailbox.forget(account)
+        mailbox.apply(lastFeeds.filter { $0.account == account }.map { $0.feed(showing: choice) })
+        showMailEverywhere()
+        saveMailboxSoon()
+    }
+
+    @objc private func toggleAccountShown(_ sender: NSMenuItem) {
+        guard let account = sender.representedObject as? String else { return }
+        if mailbox.hidden.contains(account) {
+            mailbox.hidden.remove(account)
+        } else {
+            mailbox.hidden.insert(account)
+        }
+        UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
+        showMailEverywhere()
+    }
+
+    // MARK: Keeping mail between launches
+
+    /// Shows the mail from the last run straight away, before the add-on's next sync.
+    private func restoreMailbox() {
+        inboxChoices = AppDelegate.loadInboxChoices()
+        if let snapshot = MailboxFile.load() {
+            mailbox = LiveMailbox(snapshot: snapshot)
+            var comparable = snapshot
+            comparable.savedAt = Date(timeIntervalSince1970: 0)
+            lastSavedMailbox = MailboxFile.encode(comparable)
+            if !snapshot.messages.isEmpty || !snapshot.unread.isEmpty {
+                lastFeedAt = snapshot.savedAt
+            }
+        }
+        mailbox.hidden = Set(UserDefaults.standard.stringArray(forKey: AppDelegate.hiddenAccountsKey) ?? [])
+    }
+
+    private func saveMailboxSoon() {
+        saveMailboxWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.saveMailboxNow()
+        }
+        saveMailboxWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
+    private func saveMailboxNow() {
+        saveMailboxWork?.cancel()
+        saveMailboxWork = nil
+        guard lastFeedAt != nil else { return }
+        var snapshot = mailbox.snapshot(at: lastFeedAt ?? Date())
+        // Only rewrite the file when the mail changed, not every minute.
+        snapshot.savedAt = Date(timeIntervalSince1970: 0)
+        let comparable = MailboxFile.encode(snapshot)
+        guard comparable != lastSavedMailbox else { return }
+        snapshot.savedAt = lastFeedAt ?? Date()
+        if let data = MailboxFile.encode(snapshot), MailboxFile.save(data) {
+            lastSavedMailbox = comparable
         }
     }
 
@@ -186,7 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             2. Drag the highlighted “Notch Inbox Link” folder from Finder onto that page.
                Or click “Load unpacked”, press ⌘⇧G, paste (the folder's path is already copied) and choose it.
 
-            Within a minute, the unread Primary mail of every Gmail account signed in to that browser shows up in the notch. Your mail only travels from the browser to this app, on this Mac.
+            Within a minute, the unread mail of every Gmail account signed in to that browser shows up in the notch: the Primary tab, plus Google Classroom and other mail from Google. Your mail only travels from the browser to this app, on this Mac.
             """
             alert.addButton(withTitle: "Done")
             alert.runModal()
@@ -247,8 +439,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshLinkItem()
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === appMenu else { return }
         refreshLinkItem()
+        rebuildAccountItems()
     }
 
     /// The menu button inside the notch opens the same menu where you clicked.
@@ -344,7 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func checkForUpdates() {
         userAskedForUpdate = true
-        updater.check()
+        updater.check(userInitiated: true)
     }
 
     @objc private func installUpdate() {

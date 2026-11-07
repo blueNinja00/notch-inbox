@@ -1,8 +1,8 @@
 import AppKit
 import Combine
 
-/// Checks GitHub for a newer build and, when you say so, installs it and relaunches.
-/// Every push to the repository's main branch publishes a new numbered build.
+/// Checks GitHub for a newer build every couple of minutes and, when you say so, installs
+/// it and relaunches. Every push to the repository's main branch publishes a numbered build.
 final class Updater: ObservableObject {
     enum State: Equatable {
         case idle
@@ -15,7 +15,9 @@ final class Updater: ObservableObject {
 
     static let repository = "blueNinja00/notch-inbox"
     static let assetName = "NotchInbox.zip"
-    private static let checkInterval: TimeInterval = 4 * 60 * 60
+    /// Cheap: GitHub answers "nothing new" (304) to a repeat question, which doesn't count
+    /// towards its hourly limit.
+    private static let checkInterval: TimeInterval = 2 * 60
 
     @Published private(set) var state: State = .idle
 
@@ -23,6 +25,10 @@ final class Updater: ObservableObject {
     let currentBuild: Int
 
     private var timer: Timer?
+    private var isChecking = false
+    /// The newest release seen and GitHub's tag for that answer, to ask "anything newer?".
+    private var latestSeen: ReleaseInfo?
+    private var etag: String?
 
     init(bundle: Bundle = .main) {
         let version = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
@@ -48,37 +54,54 @@ final class Updater: ObservableObject {
 
     // MARK: Checking
 
-    func check() {
-        switch state {
-        case .checking, .installing:
-            return
-        default:
-            break
-        }
+    /// Background checks stay quiet: no "Checking…", and a failed one (offline, say) keeps
+    /// what was known. Checks you ask for show their progress and any error.
+    func check(userInitiated: Bool = false) {
+        guard !isChecking, state != .installing else { return }
         guard let url = URL(string: "https://api.github.com/repos/\(Updater.repository)/releases/latest") else { return }
-        state = .checking
+        isChecking = true
+        if userInitiated {
+            state = .checking
+        }
 
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("NotchInbox/\(currentBuild)", forHTTPHeaderField: "User-Agent")
+        if let etag = etag, latestSeen != nil {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            let tag = http?.value(forHTTPHeaderField: "ETag")
             let release = data.flatMap { ReleaseFeed.parse($0, assetName: Updater.assetName) }
             DispatchQueue.main.async {
-                self?.finishCheck(release: release, status: status, error: error)
+                self?.finishCheck(release: release, status: status, etag: tag, error: error, userInitiated: userInitiated)
             }
         }.resume()
     }
 
-    private func finishCheck(release: ReleaseInfo?, status: Int, error: Error?) {
-        if let release = release {
-            state = release.build > currentBuild ? .available(release) : .upToDate
+    private func finishCheck(release: ReleaseInfo?, status: Int, etag: String?, error: Error?, userInitiated: Bool) {
+        isChecking = false
+        if status == 304, let known = latestSeen {
+            settle(known.build > currentBuild ? .available(known) : .upToDate)
+        } else if let release = release {
+            latestSeen = release
+            self.etag = etag
+            settle(release.build > currentBuild ? .available(release) : .upToDate)
         } else if status == 404 {
-            state = .upToDate // nothing published yet
-        } else {
+            settle(.upToDate) // nothing published yet
+        } else if userInitiated || state == .checking {
             state = .failed(error?.localizedDescription ?? "Couldn't check GitHub for updates.")
+        }
+    }
+
+    /// Announces a state only when it changed, so the menu and notch don't redraw every check.
+    private func settle(_ new: State) {
+        if state != new {
+            state = new
         }
     }
 

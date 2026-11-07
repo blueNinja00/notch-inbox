@@ -2,7 +2,8 @@ import Foundation
 
 /// The little bit of HTTP the browser link needs: one small request per connection.
 struct HTTPRequest {
-    static let maxSize = 4 * 1024 * 1024
+    /// Whole HTML emails can run to a few megabytes.
+    static let maxSize = 8 * 1024 * 1024
 
     let method: String
     let path: String
@@ -75,12 +76,55 @@ enum LinkAddOn {
     }
 }
 
-/// What the add-on posts: one raw feed per signed-in account.
+/// What the add-on posts every minute: the unread-mail feeds of each signed-in account.
 struct FeedUpload: Decodable {
     struct Feed: Decodable {
         let index: Int
+        /// The Primary tab's feed (or the whole inbox when the account has no tabs).
         let xml: String
+        /// The whole inbox, sent with the Primary feed so mail from Google itself
+        /// (Classroom, Docs, Drive…) still shows when Gmail files it under Updates.
+        /// Add-on 1.1 and later.
+        let extra: String?
     }
 
     let feeds: [Feed]
+    /// The add-on's version; missing from add-on 1.0.
+    let version: String?
+    /// Whether the add-on fetches whole emails: "ok", "on-open" (only ones you open in
+    /// the notch, because Gmail counts them as read) or "unknown" (still finding out).
+    let fullEmails: String?
+}
+
+extension FeedUpload.Feed {
+    func parsed() -> AccountFeeds? {
+        guard let main = GmailFeedParser.parse(Data(xml.utf8)) else { return nil }
+        let inbox = extra.flatMap { GmailFeedParser.parse(Data($0.utf8)) }
+        return AccountFeeds(main: main, inbox: inbox)
+    }
+}
+
+/// The app's answer to a feed upload: the whole emails it would like next, and the
+/// version of the add-on that came with the app, so an outdated add-on reloads itself.
+struct LinkReply: Encodable, Equatable {
+    struct Wanted: Encodable, Equatable {
+        let account: String
+        let id: String
+        let link: String?
+        let unread: Bool
+        let opened: Bool
+    }
+
+    var want: [Wanted] = []
+    var addon: String? = nil
+}
+
+/// One whole email from the add-on: its HTML and/or plain text, or why it couldn't be read.
+struct EmailUpload: Decodable {
+    let account: String
+    let id: String
+    let html: String?
+    let text: String?
+    let attachments: [String]?
+    let error: String?
 }

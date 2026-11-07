@@ -17,12 +17,19 @@ struct MailMessage: Identifiable, Hashable {
     let accountID: String
     let sender: String
     let subject: String
-    let body: [String]
+    /// Paragraphs of plain text: Gmail's preview, or the whole email once it has arrived.
+    var body: [String]
     let date: Date
     var isUnread: Bool
     var attachment: String? = nil
     /// Where to open the full message (Gmail), for real mail.
     var link: URL? = nil
+    /// The email as its sender designed it, for real HTML mail fetched in full.
+    var html: String? = nil
+    /// True once the whole email, not just Gmail's preview, is here.
+    var isWhole = false
+    /// The browser add-on tried to fetch the whole email and couldn't.
+    var couldNotLoad = false
 
     var snippet: String { body.first ?? "" }
 

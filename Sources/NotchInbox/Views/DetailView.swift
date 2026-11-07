@@ -224,30 +224,48 @@ struct ReadingPane: View {
                         .lineLimit(2)
                         .padding(.top, 12)
 
-                    ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(message.body.enumerated()), id: \.offset) { item in
-                                Text(item.element)
-                                    .font(.system(size: 13.5))
-                                    .foregroundStyle(Theme.body)
-                                    .lineSpacing(4)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            if let attachment = message.attachment {
-                                AttachmentChip(name: attachment)
-                                    .padding(.top, 4)
-                            }
+                    if let html = message.html {
+                        // A whole HTML email (Classroom notices, newsletters…) as designed.
+                        if let attachment = message.attachment {
+                            AttachmentChip(name: attachment)
+                                .padding(.top, 8)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 8)
+                        EmailWebView(html: html, openLink: { model.openLink($0) })
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.top, 10)
+                    } else {
+                        ScrollView(.vertical) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(message.body.enumerated()), id: \.offset) { item in
+                                    Text(LinkedText.make(item.element))
+                                        .font(.system(size: 13.5))
+                                        .foregroundStyle(Theme.body)
+                                        .lineSpacing(4)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if let attachment = message.attachment {
+                                    AttachmentChip(name: attachment)
+                                        .padding(.top, 4)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
+                        }
+                        .scrollIndicators(.hidden)
+                        .environment(\.openURL, OpenURLAction { url in
+                            model.openLink(url)
+                            return .handled
+                        })
                     }
-                    .scrollIndicators(.hidden)
 
                     if model.canAct {
                         Composer(model: model)
                             .padding(.top, 8)
                     } else {
-                        GmailActions(open: { model.openInGmail() })
+                        GmailActions(note: message.isWhole
+                                        ? "Reply, forward or archive it in Gmail. It opens in Chrome."
+                                        : model.previewNote(for: message),
+                                     open: { model.openInGmail() })
                             .padding(.top, 8)
                     }
                 }
@@ -313,17 +331,18 @@ struct MessageHeader: View {
     }
 }
 
-/// For real Gmail: the notch shows Gmail's preview; the full email and replies live in Gmail.
+/// For real Gmail: replying, forwarding and archiving happen in Gmail, in Chrome.
 struct GmailActions: View {
+    let note: String
     let open: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Button(action: open) {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.right.square")
+                    Image(systemName: "arrowshape.turn.up.left")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Open in Gmail")
+                    Text("Reply in Gmail")
                         .font(.system(size: 12.5, weight: .semibold))
                 }
                 .foregroundStyle(Theme.onAccent)
@@ -333,13 +352,32 @@ struct GmailActions: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .help("Opens this email in Gmail, in Chrome")
 
-            Text("This is Gmail's preview. Read the whole email, reply or archive it in Gmail.")
+            Text(note)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Plain text with its web addresses made clickable.
+enum LinkedText {
+    private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    static func make(_ text: String) -> AttributedString {
+        var attributed = AttributedString(text)
+        guard let detector = detector else { return attributed }
+        let matches = detector.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
+        for match in matches {
+            guard let url = match.url,
+                  let range = Range(match.range, in: text),
+                  let target = Range<AttributedString.Index>(range, in: attributed) else { continue }
+            attributed[target].link = url
+        }
+        return attributed
     }
 }
 

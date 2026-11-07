@@ -22,15 +22,28 @@ Notch Inbox reads your mail through the browser where your Gmail accounts are al
 2. In the browser, open `chrome://extensions` (Arc: `arc://extensions`) and turn on **Developer mode**.
 3. Drag the **Notch Inbox Link** folder onto that page.
 
-Within a minute, the notch shows the unread **Primary** mail of every Gmail account signed in to that browser (up to three), with Gmail's exact unread counts. When you read something in Gmail, it greys out in the notch. Opening an email in the notch shows Gmail's preview; **Open in Gmail** (or **O**) opens the full email to reply or archive.
+Within a minute, the notch shows the unread mail of every Gmail account signed in to that browser (up to three), with Gmail's unread counts:
+
+- **Primary tab, plus Google mail** for everyday accounts: Google Classroom, Docs, Drive and Calendar notices are included even when Gmail files them under Updates.
+- **Whole inbox** (every tab) for an account whose Primary tab is empty, such as a catch-all or receipts address.
+
+Change either per account, or hide an account, in the app menu (sliders button) under the account's address. When you read something in Gmail, it greys out in the notch.
+
+**Whole emails.** Click an email in the notch to read all of it there, laid out the way its sender designed it: a Classroom assignment with its class, due date and **Open** button, a newsletter, a receipt. Links open in the browser. To reply, forward or archive, click **Reply in Gmail** (or press **O**).
 
 Gmail always opens in **Google Chrome**, where your accounts are signed in, even if another browser is your default. Without Chrome it uses Arc, Brave or Edge.
 
-How it works: every minute the add-on reads each signed-in account's unread-mail feed from `mail.google.com`, using the browser's existing sign-in, and passes it to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else, and it never goes to GitHub.
+**How it works.** Every minute, and within seconds when an open Gmail tab shows new or read mail, the add-on reads each signed-in account's unread-mail feeds from `mail.google.com`, using the browser's existing sign-in. It also opens the new emails through Gmail's **Show original** and decodes them. It passes all this to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else and never goes to GitHub. Emails are shown with scripts turned off; pictures in them load from the sender's servers, as in any mail app.
+
+If opening emails that way would count as reading them in Gmail, the add-on notices on its first try and from then on only fetches emails you open in the notch.
+
+The app keeps a copy of what the notch shows in `~/Library/Application Support/Notch Inbox/Mailbox.json`, readable only by you, so your mail is there the moment it starts, after an update say.
+
+**After an app update.** The add-on comes with the app and updates itself: it reloads in the browser when the app brings a new version. The one exception is going from the first version (1.0) to a newer one: click the reload arrow on **Notch Inbox Link** in `chrome://extensions` once, or quit and reopen Chrome.
 
 ## Updates
 
-Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every few hours. When one is ready:
+Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every 2 minutes. When one is ready:
 
 - an **Update** button appears at the top right of the open notch, and
 - **Install Update** appears in the app menu.
@@ -77,7 +90,10 @@ open "build/Notch Inbox.app"
 | `Updater.swift`, `ReleaseFeed.swift` | Checks this repo's releases and installs newer builds |
 | `BrowserExtension/` | The **Notch Inbox Link** browser add-on |
 | `BrowserLink.swift`, `HTTPRequest.swift` | Receives the add-on's feeds on 127.0.0.1 |
-| `GmailFeed.swift`, `LiveMailbox.swift` | Reads Gmail's feed; keeps read mail greyed instead of dropping it |
+| `GmailFeed.swift`, `LiveMailbox.swift` | Reads Gmail's feeds, picks Primary or the whole inbox per account, keeps read mail greyed instead of dropping it |
+| `EmailContent.swift`, `Views/EmailWebView.swift` | Tidies whole emails and shows them (no scripts; links go to the browser) |
+| `MailboxFile.swift` | The copy of the notch's mail kept between launches |
+| `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
 | `Views/` | The SwiftUI screens: resting notch, peek, lanes, expanded inbox |
 | `Theme.swift` | Colours from the design |

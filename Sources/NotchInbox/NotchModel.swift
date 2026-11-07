@@ -33,6 +33,21 @@ final class NotchModel: ObservableObject {
     /// A short update status shown beside the panel buttons after Check for Updates.
     @Published var updateNote: String? = nil
 
+    /// Tells the app you opened a real email, so its whole text is fetched first.
+    var onOpenMessage: ((String) -> Void)?
+
+    /// What the browser add-on does about whole emails, for the note under Gmail's previews.
+    enum WholeEmails: Equatable {
+        /// Fetched within a minute or so.
+        case coming
+        /// Fetched once you open them here, because Gmail then counts them as read.
+        case whenOpened
+        /// The browser still runs add-on 1.0, which can't fetch them.
+        case addOnNeedsReload
+    }
+
+    @Published var wholeEmails: WholeEmails = .coming
+
     init(provider: MailProvider, metrics: NotchMetrics) {
         let accounts = provider.accounts()
         self.accounts = accounts
@@ -139,6 +154,9 @@ final class NotchModel: ObservableObject {
         if canAct, let target = target {
             setRead(target, true)
         }
+        if !canAct, let target = target {
+            onOpenMessage?(target)
+        }
         level = .detail
     }
 
@@ -216,6 +234,53 @@ final class NotchModel: ObservableObject {
                        URLQueryItem(name: "tf", value: "1")]
         if let url = gmailURL(for: accountID, extra: compose) {
             onOpenURL?(url)
+        }
+    }
+
+    /// A link clicked inside an email. Web links open in the browser; email addresses
+    /// start a new message in Gmail from the inbox that's open.
+    func openLink(_ url: URL) {
+        switch url.scheme?.lowercased() {
+        case "http", "https":
+            onOpenURL?(url)
+        case "mailto":
+            let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            var compose = [URLQueryItem(name: "view", value: "cm"),
+                           URLQueryItem(name: "fs", value: "1"),
+                           URLQueryItem(name: "tf", value: "1")]
+            if let to = parts?.path, !to.isEmpty {
+                compose.append(URLQueryItem(name: "to", value: to))
+            }
+            for item in parts?.queryItems ?? [] {
+                switch item.name.lowercased() {
+                case "subject":
+                    compose.append(URLQueryItem(name: "su", value: item.value))
+                case "body", "cc", "bcc":
+                    compose.append(URLQueryItem(name: item.name.lowercased(), value: item.value))
+                default:
+                    break
+                }
+            }
+            if let link = gmailURL(for: activeAccountID, extra: compose) {
+                onOpenURL?(link)
+            }
+        default:
+            break
+        }
+    }
+
+    /// The line under an email that's still Gmail's short preview.
+    func previewNote(for message: MailMessage) -> String {
+        if message.couldNotLoad {
+            return "Gmail didn't hand over the whole email. Open it in Gmail to read it all."
+        }
+        switch wholeEmails {
+        case .coming:
+            return "This is Gmail's preview. The whole email shows here in a moment."
+        case .whenOpened:
+            return "This is Gmail's preview. The whole email shows here within a minute."
+        case .addOnNeedsReload:
+            return "This is Gmail's preview. To see whole emails, reload Notch Inbox Link on chrome://extensions, or quit and reopen Chrome."
         }
     }
 

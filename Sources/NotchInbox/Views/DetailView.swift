@@ -143,7 +143,9 @@ struct MessageList: View {
                                action: { model.open(accountID: account.id, messageID: message.id) })
                 }
                 if messages.isEmpty {
-                    Text("All caught up — nothing left in this inbox.")
+                    Text(model.isSample
+                         ? "All caught up — nothing left in this inbox."
+                         : "Nothing unread. New mail shows up here as it arrives, and stays (greyed) after you read it.")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Theme.tertiary)
                         .padding(12)
@@ -270,7 +272,7 @@ struct ReadingPane: View {
                     }
                 }
             } else {
-                Text("Nothing left in \(account.name) — inbox zero.")
+                Text(model.isSample ? "Nothing left in \(account.name) — inbox zero." : "Nothing unread in \(account.name).")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

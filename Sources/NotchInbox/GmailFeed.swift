@@ -184,12 +184,24 @@ struct AccountFeeds: Equatable {
             return inbox
         }
     }
+}
 
-    /// A first choice for an account with none saved: the whole inbox when nothing in
-    /// Primary is unread but the inbox has unread mail, as with a catch-all or receipts
-    /// address. Nil until the add-on sends the whole inbox too.
-    var suggestedChoice: InboxChoice? {
-        guard let inbox = inbox, inbox.account == main.account else { return nil }
-        return main.unreadCount == 0 && inbox.unreadCount > 0 ? .everything : .primary
+extension InboxChoice {
+    /// Where an account starts until you pick in the app menu: the whole inbox for an
+    /// address that collects receipts and sign-ups (a catch-all, say), since Gmail files
+    /// that mail outside Primary; the Primary tab plus Google mail for everyday accounts.
+    static func starting(for address: String) -> InboxChoice {
+        let local = address.split(separator: "@").first.map { $0.lowercased() } ?? ""
+        if local.filter({ $0.isLetter }).contains("catchall") {
+            return .everything
+        }
+        let words = Set(local.split(whereSeparator: { !$0.isLetter }).map { String($0) })
+        return words.isDisjoint(with: collectorWords) ? .primary : .everything
     }
+
+    private static let collectorWords: Set<String> = [
+        "purchase", "purchases", "receipt", "receipts", "order", "orders", "shop", "shopping",
+        "billing", "invoice", "invoices", "signup", "signups", "newsletter", "newsletters",
+        "deals", "promo", "promos", "subscriptions", "spam", "junk",
+    ]
 }

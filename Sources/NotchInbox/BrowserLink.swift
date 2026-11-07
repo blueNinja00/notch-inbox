@@ -13,6 +13,9 @@ final class BrowserLink {
 
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "NotchInbox.BrowserLink")
+    /// Different every time the app starts, so the add-on can tell it restarted (after an
+    /// update, say) and sync straight away.
+    private static let launchID = UUID().uuidString
 
     func start() {
         guard listener == nil, let port = NWEndpoint.Port(rawValue: LinkAddOn.port) else { return }
@@ -113,6 +116,8 @@ final class BrowserLink {
             + "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
             + "Access-Control-Allow-Headers: Content-Type\r\n"
             + "Access-Control-Allow-Private-Network: true\r\n"
+            + "Access-Control-Expose-Headers: X-Notch-Launch\r\n"
+            + "X-Notch-Launch: \(launchID)\r\n"
             + "Connection: close\r\n\r\n"
         var message = Data(head.utf8)
         if let json = json {

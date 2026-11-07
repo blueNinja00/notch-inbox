@@ -197,6 +197,8 @@ struct LiveMailbox {
         var order: [String]
         var unread: [String: Int]
         var messages: [Message]
+        /// What each account was showing (Primary or whole inbox) when this was saved.
+        var views: [String: InboxChoice]? = nil
     }
 
     func snapshot(at date: Date = Date()) -> Snapshot {

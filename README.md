@@ -25,15 +25,17 @@ Notch Inbox reads your mail through the browser where your Gmail accounts are al
 Within a minute, the notch shows the unread mail of every Gmail account signed in to that browser (up to three), with Gmail's unread counts:
 
 - **Primary tab, plus Google mail** for everyday accounts: Google Classroom, Docs, Drive and Calendar notices are included even when Gmail files them under Updates.
-- **Whole inbox** (every tab) for an account whose Primary tab is empty, such as a catch-all or receipts address.
+- **Whole inbox** (every tab) for an address made for receipts or sign-ups (a catch-all, say), since Gmail files that mail outside Primary.
 
-Change either per account, or hide an account, in the app menu (sliders button) under the account's address. When you read something in Gmail, it greys out in the notch.
+Change either per account, or hide an account, in the app menu (sliders button) under the account's address.
+
+The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
 **Whole emails.** Click an email in the notch to read all of it there, laid out the way its sender designed it: a Classroom assignment with its class, due date and **Open** button, a newsletter, a receipt. Links open in the browser. To reply, forward or archive, click **Reply in Gmail** (or press **O**).
 
 Gmail always opens in **Google Chrome**, where your accounts are signed in, even if another browser is your default. Without Chrome it uses Arc, Brave or Edge.
 
-**How it works.** Every minute, and within seconds when an open Gmail tab shows new or read mail, the add-on reads each signed-in account's unread-mail feeds from `mail.google.com`, using the browser's existing sign-in. It also opens the new emails through Gmail's **Show original** and decodes them. It passes all this to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else and never goes to GitHub. Emails are shown with scripts turned off; pictures in them load from the sender's servers, as in any mail app.
+**How it works.** Every minute, within seconds when an open Gmail tab shows new or read mail, and within 30 seconds of the app starting, the add-on reads each signed-in account's unread-mail feeds from `mail.google.com`, using the browser's existing sign-in. It also opens the new emails through Gmail's **Show original** and decodes them. It passes all this to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else and never goes to GitHub. Emails are shown with scripts turned off; pictures in them load from the sender's servers, as in any mail app.
 
 If opening emails that way would count as reading them in Gmail, the add-on notices on its first try and from then on only fetches emails you open in the notch.
 

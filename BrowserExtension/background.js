@@ -19,6 +19,7 @@ const EMAILS_PER_SYNC = 8;
 const IK_RETRY_MS = 30 * 60 * 1000;
 const TITLE_SYNC_GAP_MS = 15 * 1000;
 const APP_RETRY_MS = [5 * 1000, 15 * 1000];
+const AWAKE_PING_MS = 20 * 1000;
 const VERSION = chrome.runtime.getManifest().version;
 
 chrome.runtime.onInstalled.addListener(start);
@@ -26,6 +27,7 @@ chrome.runtime.onStartup.addListener(start);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'sync') sync();
+  if (alarm.name === 'app') syncIfAppRestarted();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -38,7 +40,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 function start() {
   chrome.alarms.create('sync', { periodInMinutes: 1 });
+  // Every 30 seconds, a quick look at the app (nothing goes to Gmail): if it has just
+  // started, after an update say, sync now rather than at the next minute.
+  chrome.alarms.create('app', { periodInMinutes: 0.5 });
   sync();
+}
+
+async function syncIfAppRestarted() {
+  const launch = await appLaunch();
+  if (!launch) return;
+  const saved = await chrome.storage.local.get('appLaunch');
+  if (saved.appLaunch !== launch) sync();
 }
 
 // Gmail retitles its tab ("Inbox (3) - you@gmail.com - Gmail") the moment mail arrives or
@@ -69,12 +81,14 @@ function retryForApp() {
   appRetries += 1;
 }
 
-async function appIsUp() {
+// The app's launch ID when it's running (any non-empty value for older versions), else null.
+async function appLaunch() {
   try {
     const response = await fetch(`${APP}/feeds`, { method: 'OPTIONS' });
-    return response.ok;
+    if (!response.ok) return null;
+    return (response.headers && response.headers.get('X-Notch-Launch')) || 'running';
   } catch (error) {
-    return false;
+    return null;
   }
 }
 
@@ -82,22 +96,35 @@ async function appIsUp() {
 let running = null;
 function sync() {
   if (!running) {
+    const release = keepAwake();
     running = syncOnce().finally(() => {
+      release();
       running = null;
     });
   }
   return running;
 }
 
+// The browser pauses an add-on that goes quiet for 30 seconds, even mid-way through a sync
+// that's waiting on Gmail. A tiny call every 20 seconds keeps it going until it's done.
+function keepAwake() {
+  const timer = setInterval(() => {
+    chrome.runtime.getPlatformInfo().catch(() => {});
+  }, AWAKE_PING_MS);
+  return () => clearInterval(timer);
+}
+
 async function syncOnce() {
   // Nothing to do while the app isn't running: don't read Gmail for nobody.
-  if (!(await appIsUp())) {
+  const launch = await appLaunch();
+  if (!launch) {
     const status = { ok: false, message: 'Notch Inbox isn’t running on this Mac.', accounts: [], at: Date.now() };
     await chrome.storage.local.set({ status });
     retryForApp();
     return status;
   }
   appRetries = 0;
+  await chrome.storage.local.set({ appLaunch: launch });
 
   const feeds = [];
   const seen = new Set();
@@ -109,7 +136,7 @@ async function syncOnce() {
     feeds.push(feed);
   }
 
-  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedFor']);
+  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedFor', 'wholeFetched']);
   const fullEmails = saved.fullEmails || 'unknown';
   let status;
   let reply = null;
@@ -136,6 +163,7 @@ async function syncOnce() {
   status.accounts = feeds.map((feed) => feed.account).filter(Boolean);
   status.at = Date.now();
   status.fullEmails = fullEmails;
+  status.wholeFetched = saved.wholeFetched || 0;
   await chrome.storage.local.set({ status });
 
   // The app was updated and brought a newer copy of this add-on with it: switch to it
@@ -198,9 +226,10 @@ async function getText(url) {
 // read, from then on only emails you open in the notch are fetched.
 async function readWholeEmails(want, feeds, status) {
   const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
-  const saved = await chrome.storage.local.get(['fullEmails', 'iks']);
+  const saved = await chrome.storage.local.get(['fullEmails', 'iks', 'wholeFetched']);
   let mode = saved.fullEmails || 'unknown';
   const iks = saved.iks || {};
+  let fetched = saved.wholeFetched || 0;
 
   let queue = want.filter((item) => item && typeof item.id === 'string' && slots.has(item.account));
   if (mode === 'on-open') {
@@ -212,6 +241,9 @@ async function readWholeEmails(want, feeds, status) {
 
   let failuresInARow = 0;
   for (const item of queue.slice(0, EMAILS_PER_SYNC)) {
+    status.trying = true;
+    await chrome.storage.local.set({ status });
+
     const index = slots.get(item.account);
     const email = await readEmail(index, item, iks);
     await sendEmail({ account: item.account, id: item.id, ...email });
@@ -222,15 +254,17 @@ async function readWholeEmails(want, feeds, status) {
     } else {
       delete status.emailError;
       failuresInARow = 0;
+      fetched += 1;
       if (mode === 'unknown' && item.unread) {
         const unread = await isStillUnread(index, item.id);
         if (unread === true) mode = 'ok';
         if (unread === false) mode = 'on-open';
       }
     }
+    status.trying = false;
     status.fullEmails = mode;
-    // Saving as we go also stops the browser pausing the add-on half way through.
-    await chrome.storage.local.set({ fullEmails: mode, iks, status });
+    status.wholeFetched = fetched;
+    await chrome.storage.local.set({ fullEmails: mode, iks, wholeFetched: fetched, status });
     if (failuresInARow >= 3) break; // Gmail isn't cooperating; try again next minute
   }
 }
@@ -268,11 +302,12 @@ async function showOriginal(index, ids, ik) {
 
 // Gmail's key for the account, read from the Gmail page. Not looked up more than every
 // half hour per account, since the page is large.
-const ikLookups = new Map();
 async function findIk(index, account) {
-  const last = ikLookups.get(account) || 0;
-  if (Date.now() - last < IK_RETRY_MS) return null;
-  ikLookups.set(account, Date.now());
+  const saved = await chrome.storage.local.get('ikLookups');
+  const lookups = saved.ikLookups || {};
+  if (Date.now() - (lookups[account] || 0) < IK_RETRY_MS) return null;
+  lookups[account] = Date.now();
+  await chrome.storage.local.set({ ikLookups: lookups });
   return NotchMime.ikFromGmailPage(await getText(`${GMAIL}${index}/`));
 }
 

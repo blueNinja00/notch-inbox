@@ -24,18 +24,24 @@ function render(status) {
 }
 
 function wholeEmails(status) {
+  if (status.trying) return 'Whole emails: opening one…';
   if (status.emailError) return `Whole emails: the last one didn’t load (${status.emailError})`;
+  const count = status.wholeFetched ? ` · ${status.wholeFetched} so far` : '';
   switch (status.fullEmails) {
     case 'ok':
-      return 'Whole emails: on';
+      return `Whole emails: on${count}`;
     case 'on-open':
-      return 'Whole emails: loaded when you open one in the notch, since Gmail then counts it as read';
+      return `Whole emails: only ones you open in the notch, since Gmail then counts them as read${count}`;
     default:
-      return 'Whole emails: starting up';
+      return 'Whole emails: waiting for an unread email to try';
   }
 }
 
 chrome.storage.local.get('status').then((stored) => render(stored.status));
+// Keep up while the popup is open.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.status) render(changes.status.newValue);
+});
 
 document.getElementById('sync').addEventListener('click', async () => {
   document.getElementById('state').textContent = 'Syncing…';

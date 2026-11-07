@@ -17,7 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private static let accountOrderKey = "linkedAccountOrder"
-    private static let inboxChoicesKey = "inboxChoices"
+    /// Choices you made in the menu. (Version 2: build 5's automatic guesses are dropped.)
+    private static let inboxChoicesKey = "inboxChoices.v2"
     private static let hiddenAccountsKey = "hiddenAccounts"
 
     /// One notch per connected screen, keyed by display.
@@ -32,8 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var wholeEmails: NotchModel.WholeEmails = .coming
     /// The latest feeds, so changing what an account shows takes effect at once.
     private var lastFeeds: [AccountFeeds] = []
-    /// Per account: the Primary tab (plus Google mail) or the whole inbox.
+    /// Per account, as you chose in the menu: the Primary tab (plus Google mail) or the whole inbox.
     private var inboxChoices: [String: InboxChoice] = [:]
+    /// What each account's mail in the mailbox came from, to start it afresh when that changes.
+    private var appliedViews: [String: InboxChoice] = [:]
     private var lastSavedMailbox: Data?
     private var saveMailboxWork: DispatchWorkItem?
 
@@ -158,20 +161,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func received(_ feeds: [AccountFeeds], upload: FeedUpload) -> LinkReply {
         let addOn = BrowserExtensionInstaller.bundledVersion
         guard !feeds.isEmpty else { return LinkReply(want: [], addon: addOn) }
-        // An account seen for the first time gets a sensible view: the whole inbox for a
-        // catch-all or receipts address whose Primary tab is empty, Primary otherwise.
-        var choicesChanged = false
-        for account in feeds where inboxChoices[account.account] == nil {
-            if let suggested = account.suggestedChoice {
-                inboxChoices[account.account] = suggested
-                choicesChanged = true
-            }
-        }
-        if choicesChanged {
-            saveInboxChoices()
-        }
         lastFeeds = feeds
-        mailbox.apply(feeds.map { $0.feed(showing: inboxChoices[$0.account] ?? .primary) })
+        var showing: [GmailFeed] = []
+        for account in feeds {
+            let choice = inboxChoice(for: account.account)
+            if appliedViews[account.account] != choice {
+                // Mail kept from a different view isn't mail you read: start this account afresh.
+                mailbox.forget(account.account)
+                appliedViews[account.account] = choice
+            }
+            showing.append(account.feed(showing: choice))
+        }
+        mailbox.apply(showing)
         UserDefaults.standard.set(mailbox.order, forKey: AppDelegate.accountOrderKey)
         if upload.version == nil {
             wholeEmails = .addOnNeedsReload
@@ -231,6 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(inboxChoices.mapValues { $0.rawValue }, forKey: AppDelegate.inboxChoicesKey)
     }
 
+    private func inboxChoice(for account: String) -> InboxChoice {
+        inboxChoices[account] ?? InboxChoice.starting(for: account)
+    }
+
     /// Under the Gmail line: each linked account, with what the notch shows of it.
     private func rebuildAccountItems() {
         guard let menu = appMenu, let link = linkItem else { return }
@@ -240,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let shown = Set(mailbox.accounts.map { $0.id })
         var position = menu.index(of: link) + 1
         for account in mailbox.linkedAccounts {
-            let choice = inboxChoices[account] ?? .primary
+            let choice = inboxChoice(for: account)
             let isHidden = mailbox.hidden.contains(account)
             let summary: String
             if isHidden {
@@ -289,11 +294,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let space = value.firstIndex(of: " "),
               let choice = InboxChoice(rawValue: String(value[..<space])) else { return }
         let account = String(value[value.index(after: space)...])
-        guard inboxChoices[account] != choice else { return }
+        let before = inboxChoice(for: account)
         inboxChoices[account] = choice
         saveInboxChoices()
+        guard choice != before else { return }
         // Swap the account's mail straight away from the latest feeds.
         mailbox.forget(account)
+        appliedViews[account] = choice
         mailbox.apply(lastFeeds.filter { $0.account == account }.map { $0.feed(showing: choice) })
         showMailEverywhere()
         saveMailboxSoon()
@@ -317,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         inboxChoices = AppDelegate.loadInboxChoices()
         if let snapshot = MailboxFile.load() {
             mailbox = LiveMailbox(snapshot: snapshot)
+            appliedViews = snapshot.views ?? [:]
             var comparable = snapshot
             comparable.savedAt = Date(timeIntervalSince1970: 0)
             lastSavedMailbox = MailboxFile.encode(comparable)
@@ -341,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         saveMailboxWork = nil
         guard lastFeedAt != nil else { return }
         var snapshot = mailbox.snapshot(at: lastFeedAt ?? Date())
+        snapshot.views = appliedViews
         // Only rewrite the file when the mail changed, not every minute.
         snapshot.savedAt = Date(timeIntervalSince1970: 0)
         let comparable = MailboxFile.encode(snapshot)

@@ -60,9 +60,10 @@ struct LaneColumn: View {
             }
 
             if messages.isEmpty {
-                Text("All caught up")
+                Text(model.isSample ? "All caught up" : "Nothing unread. New mail shows up here as it arrives.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
             }
 

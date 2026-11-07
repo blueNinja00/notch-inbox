@@ -3,8 +3,9 @@ import Combine
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    /// Menu-bar-only app: no Dock icon and no app menu. A notch panel per screen and a
-    /// small envelope menu in the menu bar (Gmail link, updates, Quit) are created at launch.
+    /// Menu-bar-only app: no Dock icon and no app menu. A notch panel per screen and the
+    /// app menu (Gmail link, updates, Quit) are created at launch. The menu opens from the
+    /// envelope in the menu bar and from the menu button inside the open notch.
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -28,10 +29,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastFeedAt: Date?
 
     private var statusItem: NSStatusItem?
+    private var appMenu: NSMenu?
     private var versionItem: NSMenuItem?
     private var updateItem: NSMenuItem?
     private var linkItem: NSMenuItem?
+    /// "Open Inboxes" and its divider, hidden when the menu opens from inside the notch.
+    private var menuBarOnlyItems: [NSMenuItem] = []
     private var subscriptions = Set<AnyCancellable>()
+
+    /// Set when you ask for an update check or install, so the notch can say how it went.
+    private var userAskedForUpdate = false
+    private var lastUpdaterState: Updater.State = .idle
+    private var clearUpdateNote: DispatchWorkItem?
 
     private var models: [NotchModel] { screens.values.map { $0.model } }
 
@@ -94,11 +103,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A new screen's notch starts with whatever the others already show.
     private func makeModel(metrics: NotchMetrics) -> NotchModel {
         let model = NotchModel(provider: SampleMailProvider(), metrics: metrics)
-        model.onOpenURL = { url in
-            NSWorkspace.shared.open(url)
+        // Gmail opens in Chrome, where the accounts are signed in; the notch gets out of its way.
+        model.onOpenURL = { [weak model] url in
+            BrowserOpener.open(url)
+            model?.close()
         }
         model.onInstallUpdate = { [weak self] in
-            self?.updater.install()
+            self?.installUpdate()
+        }
+        model.onShowAppMenu = { [weak self] in
+            self?.showAppMenuAtPointer()
         }
         if lastFeedAt != nil {
             model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
@@ -146,6 +160,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func setUpBrowserLink() {
+        // Close any open notch first, so it doesn't sit on top of the instructions.
+        for model in models where model.level != .rest {
+            model.close()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.showBrowserLinkSteps()
+        }
+    }
+
+    private func showBrowserLinkSteps() {
         NSApp.activate(ignoringOtherApps: true)
         do {
             let folder = try BrowserExtensionInstaller.install()
@@ -172,9 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: Menu bar
+    // MARK: App menu
 
-    /// The app has no Dock icon, so a small menu-bar item holds the Gmail link, updates and Quit.
+    /// The app has no Dock icon, so its menu (Gmail link, updates, Quit) lives in the menu
+    /// bar's envelope and behind the menu button in the open notch.
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Notch Inbox")
@@ -204,7 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        menu.addItem(NSMenuItem.separator())
+        let openDivider = NSMenuItem.separator()
+        menu.addItem(openDivider)
 
         let quit = NSMenuItem(title: "Quit Notch Inbox", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -212,15 +238,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         item.menu = menu
         statusItem = item
+        appMenu = menu
         versionItem = version
         updateItem = update
         linkItem = link
+        menuBarOnlyItems = [open, openDivider]
         updaterChanged(updater.state)
         refreshLinkItem()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshLinkItem()
+    }
+
+    /// The menu button inside the notch opens the same menu where you clicked.
+    private func showAppMenuAtPointer() {
+        guard let menu = appMenu else { return }
+        let point = NSEvent.mouseLocation
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.menuBarOnlyItems.forEach { $0.isHidden = true }
+            _ = menu.popUp(positioning: nil, at: point, in: nil)
+            self.menuBarOnlyItems.forEach { $0.isHidden = false }
+        }
     }
 
     /// Keeps the menu and every notch's Update button in step with the updater.
@@ -260,6 +300,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for model in models {
             model.pendingUpdate = pending
         }
+
+        // After you check for updates, the open notch says how it went.
+        switch state {
+        case .checking:
+            showUpdateNote(userAskedForUpdate ? "Checking for updates…" : nil)
+        case .upToDate:
+            let upToDate = build > 0 ? "Up to date · Build \(build)" : "Up to date"
+            showUpdateNote(userAskedForUpdate ? upToDate : nil, clearAfter: 5)
+            userAskedForUpdate = false
+        case .failed:
+            let failure = lastUpdaterState == .installing ? "Couldn't install the update" : "Couldn't check for updates"
+            showUpdateNote(userAskedForUpdate ? failure : nil, clearAfter: 8)
+            userAskedForUpdate = false
+        case .installing:
+            showUpdateNote("Installing update…")
+        case .idle, .available:
+            showUpdateNote(nil)
+            userAskedForUpdate = false
+        }
+        lastUpdaterState = state
+    }
+
+    private func showUpdateNote(_ note: String?, clearAfter seconds: TimeInterval? = nil) {
+        clearUpdateNote?.cancel()
+        clearUpdateNote = nil
+        for model in models where model.updateNote != note {
+            model.updateNote = note
+        }
+        guard note != nil, let seconds = seconds else { return }
+        let clear = DispatchWorkItem { [weak self] in
+            self?.showUpdateNote(nil)
+        }
+        clearUpdateNote = clear
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: clear)
     }
 
     private func setUpdateItem(_ title: String, action: Selector?) {
@@ -269,10 +343,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func checkForUpdates() {
+        userAskedForUpdate = true
         updater.check()
     }
 
     @objc private func installUpdate() {
+        userAskedForUpdate = true
         updater.install()
     }
 

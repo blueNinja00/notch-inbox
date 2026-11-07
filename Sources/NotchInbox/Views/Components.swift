@@ -133,7 +133,7 @@ struct SampleTag: View {
             .padding(.horizontal, 8)
             .frame(height: 20)
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-            .help("Showing made-up mail. Choose Set Up Browser Link… in the envelope menu to see your Gmail.")
+            .help("Showing made-up mail. To see your Gmail, click the menu button at the top right and choose Set Up Browser Link….")
     }
 }
 
@@ -145,6 +145,9 @@ struct PanelActions: View {
             if let build = model.pendingUpdate {
                 UpdateButton(build: build, action: { model.installUpdate() })
                     .padding(.trailing, 4)
+            } else if let note = model.updateNote {
+                UpdateNote(text: note)
+                    .padding(.trailing, 4)
             }
             IconButton(symbol: "magnifyingglass", label: "Search mail (coming soon)")
             if model.isSample {
@@ -152,9 +155,25 @@ struct PanelActions: View {
             } else {
                 IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
             }
-            IconButton(symbol: "slider.horizontal.3", label: "Settings (coming soon)")
+            IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
+                       action: { model.showAppMenu() })
         }
         .padding(.trailing, 4)
+    }
+}
+
+/// How a Check for Updates went, e.g. "Up to date · Build 4". Fades after a few seconds.
+struct UpdateNote: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .semibold))
+            .foregroundStyle(Theme.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(Capsule().fill(Theme.raised))
     }
 }
 

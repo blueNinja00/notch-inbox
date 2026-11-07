@@ -27,6 +27,12 @@ final class NotchModel: ObservableObject {
     /// Opens a link in the browser (set by the app).
     var onOpenURL: ((URL) -> Void)?
 
+    /// Opens the app menu (updates, Gmail link, Quit) where you clicked. It's the same menu
+    /// as the envelope in the menu bar, which macOS hides behind the notch when space runs out.
+    var onShowAppMenu: (() -> Void)?
+    /// A short update status shown beside the panel buttons after Check for Updates.
+    @Published var updateNote: String? = nil
+
     init(provider: MailProvider, metrics: NotchMetrics) {
         let accounts = provider.accounts()
         self.accounts = accounts
@@ -180,6 +186,10 @@ final class NotchModel: ObservableObject {
 
     func installUpdate() {
         onInstallUpdate?()
+    }
+
+    func showAppMenu() {
+        onShowAppMenu?()
     }
 
     // MARK: Gmail in the browser

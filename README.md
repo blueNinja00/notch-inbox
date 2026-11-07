@@ -18,11 +18,13 @@ It downloads the latest build, puts **Notch Inbox** in your Applications folder 
 
 Notch Inbox reads your mail through the browser where your Gmail accounts are already signed in (Chrome, Arc, Brave or Edge). No passwords, nothing to sign in to again.
 
-1. Click the envelope icon in the menu bar and choose **Set Up Browser Link…**. Finder opens with the **Notch Inbox Link** folder selected.
+1. Open the notch, click the menu button at its top right (the sliders icon) and choose **Set Up Browser Link…**. Finder opens with the **Notch Inbox Link** folder selected.
 2. In the browser, open `chrome://extensions` (Arc: `arc://extensions`) and turn on **Developer mode**.
 3. Drag the **Notch Inbox Link** folder onto that page.
 
 Within a minute, the notch shows the unread **Primary** mail of every Gmail account signed in to that browser (up to three), with Gmail's exact unread counts. When you read something in Gmail, it greys out in the notch. Opening an email in the notch shows Gmail's preview; **Open in Gmail** (or **O**) opens the full email to reply or archive.
+
+Gmail always opens in **Google Chrome**, where your accounts are signed in, even if another browser is your default. Without Chrome it uses Arc, Brave or Edge.
 
 How it works: every minute the add-on reads each signed-in account's unread-mail feed from `mail.google.com`, using the browser's existing sign-in, and passes it to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else, and it never goes to GitHub.
 
@@ -31,9 +33,11 @@ How it works: every minute the add-on reads each signed-in account's unread-mail
 Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every few hours. When one is ready:
 
 - an **Update** button appears at the top right of the open notch, and
-- **Install Update** appears in the envelope menu in your menu bar.
+- **Install Update** appears in the app menu.
 
-Click either one to download the new build, swap it in and restart. Nothing installs without your click. The envelope menu also has **Check for Updates…** and shows which build you're running.
+Click either one to download the new build, swap it in and restart. Nothing installs without your click. The app menu also has **Check for Updates…** and shows which build you're running.
+
+**The app menu** opens from the menu button (sliders icon) at the top right of the open notch. The same menu sits under an envelope icon in the menu bar, but on a MacBook macOS hides menu-bar icons that don't fit beside the notch, so the notch's button is the reliable way in.
 
 ## Using it
 
@@ -64,7 +68,8 @@ open "build/Notch Inbox.app"
 
 | File | What it does |
 |---|---|
-| `AppDelegate.swift` | Launch, the envelope menu in the menu bar |
+| `AppDelegate.swift` | Launch; the app menu, in the notch and in the menu bar |
+| `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
 | `NotchModel.swift` | State and actions: open, archive, mark unread, reply |

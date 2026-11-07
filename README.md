@@ -1,0 +1,61 @@
+# Notch Inbox
+
+A menu-bar app that turns the MacBook notch into one inbox for three email accounts. Hover to peek, click to see all three side by side, click an inbox to expand it.
+
+This version runs on **sample mail**, so you can try the whole flow. Connecting real accounts and a settings page come next.
+
+## Install
+
+Paste this into Terminal (macOS 13 Ventura or later):
+
+```sh
+curl -fL -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/releases/latest/download/NotchInbox.zip && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
+```
+
+It downloads the latest build, puts **Notch Inbox** in your Applications folder and starts it. To have it start when you log in, add it under **System Settings → General → Login Items**.
+
+## Updates
+
+Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every few hours. When one is ready:
+
+- an **Update** button appears at the top right of the open notch, and
+- **Install Update** appears in the envelope menu in your menu bar.
+
+Click either one to download the new build, swap it in and restart. Nothing installs without your click. The envelope menu also has **Check for Updates…** and shows which build you're running.
+
+## Using it
+
+- **Glance:** unread counts for each account sit beside the notch.
+- **Hover the notch:** a peek drops down with one tile per account and its newest sender.
+- **Click the peek:** it opens into three lanes, one per inbox.
+- **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
+- **Click outside, or press Esc** to close (Esc steps back one level).
+
+After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
+
+## What's still sample
+
+The accounts (Personal, Work, Studio) and emails are made up, and archiving and sending only happen inside the app; nothing is sent anywhere. Search, new message, snooze and settings are placeholders.
+
+## Building it yourself (optional)
+
+Needs Xcode or Apple's command-line tools (`xcode-select --install`):
+
+```sh
+./scripts/build-app.sh
+open "build/Notch Inbox.app"
+```
+
+## Where things live
+
+| File | What it does |
+|---|---|
+| `AppDelegate.swift` | Launch, the envelope menu in the menu bar |
+| `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
+| `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
+| `NotchModel.swift` | State and actions: open, archive, mark unread, reply |
+| `Mail.swift`, `SampleMail.swift` | Account and message types, sample data. A real mail source plugs in by implementing `MailProvider` |
+| `Updater.swift`, `ReleaseFeed.swift` | Checks this repo's releases and installs newer builds |
+| `Views/` | The SwiftUI screens: resting notch, peek, lanes, expanded inbox |
+| `Theme.swift` | Colours from the design |
+| `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |

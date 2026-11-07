@@ -1,0 +1,47 @@
+name: Build and release
+
+# Every push to main builds the app on a GitHub Mac and publishes it as
+# "build-N". Installed copies of Notch Inbox see the new build and offer to update.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build the app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build-app.sh
+
+      - name: Zip it
+        run: ditto -c -k --sequesterRsrc --keepParent "build/Notch Inbox.app" build/NotchInbox.zip
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ github.run_number }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          gh release create "build-$BUILD" build/NotchInbox.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Build $BUILD" \
+            --notes "${NOTES:-Manual build}" \
+            --latest

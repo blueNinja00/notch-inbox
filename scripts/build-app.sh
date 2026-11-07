@@ -12,8 +12,10 @@ BIN_DIR="$(swift build -c release --show-bin-path)"
 
 APP="build/Notch Inbox.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/NotchInbox" "$APP/Contents/MacOS/NotchInbox"
+# The Gmail browser add-on ships inside the app; "Set Up Browser Link…" installs it.
+cp -R BrowserExtension "$APP/Contents/Resources/BrowserExtension"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -59,9 +59,11 @@ struct InboxRail: View {
                 Text(account.name)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.secondary)
-                    .fixedSize()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: 96, height: 20)
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 20, height: 90)
+                    .frame(width: 20, height: 96)
                 Spacer(minLength: 0)
                 KeyCap(text: account.shortcut)
             }
@@ -92,8 +94,19 @@ struct ExpandedInbox: View {
                 Text(account.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                if let email = account.email, email != account.name {
+                    Text(email)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
+                }
                 CountPill(count: model.unreadCount(account.id))
                 Spacer(minLength: 4)
+                if !model.canAct {
+                    IconButton(symbol: "arrow.up.right.square", label: "Open this inbox in Gmail", size: 24,
+                               action: { model.openAccountInGmail(account.id) })
+                }
                 KeyCap(text: account.shortcut)
             }
             .padding(.horizontal, 6)
@@ -200,8 +213,10 @@ struct ReadingPane: View {
                 VStack(alignment: .leading, spacing: 0) {
                     MessageHeader(message: message,
                                   account: account,
+                                  canAct: model.canAct,
                                   archive: { model.archiveOpen() },
-                                  markUnread: { model.markOpenUnread() })
+                                  markUnread: { model.markOpenUnread() },
+                                  openInGmail: { model.openInGmail() })
 
                     Text(message.subject)
                         .font(.system(size: 17, weight: .semibold))
@@ -228,8 +243,13 @@ struct ReadingPane: View {
                     }
                     .scrollIndicators(.hidden)
 
-                    Composer(model: model)
-                        .padding(.top, 8)
+                    if model.canAct {
+                        Composer(model: model)
+                            .padding(.top, 8)
+                    } else {
+                        GmailActions(open: { model.openInGmail() })
+                            .padding(.top, 8)
+                    }
                 }
             } else {
                 Text("Nothing left in \(account.name) — inbox zero.")
@@ -247,8 +267,10 @@ struct ReadingPane: View {
 struct MessageHeader: View {
     let message: MailMessage
     let account: MailAccount
+    let canAct: Bool
     let archive: () -> Void
     let markUnread: () -> Void
+    let openInGmail: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -280,12 +302,44 @@ struct MessageHeader: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 2) {
-                IconButton(symbol: "archivebox", label: "Archive (E)", action: archive)
-                IconButton(symbol: "clock", label: "Snooze (coming soon)")
-                IconButton(symbol: "envelope.badge", label: "Mark as unread (U)", action: markUnread)
-                IconButton(symbol: "arrow.up.right.square", label: "Open in your mail app (coming soon)")
+                if canAct {
+                    IconButton(symbol: "archivebox", label: "Archive (E)", action: archive)
+                    IconButton(symbol: "clock", label: "Snooze (coming soon)")
+                    IconButton(symbol: "envelope.badge", label: "Mark as unread (U)", action: markUnread)
+                }
+                IconButton(symbol: "arrow.up.right.square", label: "Open in Gmail (O)", action: openInGmail)
             }
         }
+    }
+}
+
+/// For real Gmail: the notch shows Gmail's preview; the full email and replies live in Gmail.
+struct GmailActions: View {
+    let open: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: open) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Open in Gmail")
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .foregroundStyle(Theme.onAccent)
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .background(Capsule().fill(Theme.text))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Text("This is Gmail's preview. Read the whole email, reply or archive it in Gmail.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -11,7 +11,7 @@ struct LanesView: View {
 
         VStack(spacing: 0) {
             TopRow(metrics: metrics) {
-                ModuleTabs()
+                ModuleTabs(model: model)
             } trailing: {
                 PanelActions(model: model)
             }
@@ -91,6 +91,7 @@ struct LaneHeader: View {
                 Text(account.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
                 CountPill(count: unread)
                 Spacer(minLength: 4)
                 KeyCap(text: account.shortcut)

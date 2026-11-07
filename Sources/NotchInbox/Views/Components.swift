@@ -98,6 +98,8 @@ struct TopRow<Leading: View, Trailing: View>: View {
 
 /// "Mail" tab plus a slot for future notch modules.
 struct ModuleTabs: View {
+    @ObservedObject var model: NotchModel
+
     var body: some View {
         HStack(spacing: 4) {
             HStack(spacing: 7) {
@@ -113,8 +115,25 @@ struct ModuleTabs: View {
             .background(Capsule().fill(Theme.raised))
 
             IconButton(symbol: "plus", label: "Add a module (coming soon)", size: 28, tint: Theme.tertiary)
+
+            if model.isSample {
+                SampleTag()
+            }
         }
         .padding(.leading, 4)
+    }
+}
+
+/// Shown until real mail arrives from the browser link.
+struct SampleTag: View {
+    var body: some View {
+        Text("Sample mail")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            .help("Showing made-up mail. Choose Set Up Browser Link… in the envelope menu to see your Gmail.")
     }
 }
 
@@ -128,7 +147,11 @@ struct PanelActions: View {
                     .padding(.trailing, 4)
             }
             IconButton(symbol: "magnifyingglass", label: "Search mail (coming soon)")
-            IconButton(symbol: "square.and.pencil", label: "New message (coming soon)")
+            if model.isSample {
+                IconButton(symbol: "square.and.pencil", label: "New message (coming soon)")
+            } else {
+                IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
+            }
             IconButton(symbol: "slider.horizontal.3", label: "Settings (coming soon)")
         }
         .padding(.trailing, 4)

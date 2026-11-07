@@ -2,7 +2,7 @@
 
 A menu-bar app that turns the MacBook notch into one inbox for three email accounts. Hover to peek, click to see all three side by side, click an inbox to expand it.
 
-This version runs on **sample mail**, so you can try the whole flow. Connecting real accounts and a settings page come next.
+It shows sample mail until you link your Gmail through the browser (below). A settings page comes next.
 
 ## Install
 
@@ -13,6 +13,18 @@ curl -fL -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/relea
 ```
 
 It downloads the latest build, puts **Notch Inbox** in your Applications folder and starts it. To have it start when you log in, add it under **System Settings → General → Login Items**.
+
+## Link your Gmail
+
+Notch Inbox reads your mail through the browser where your Gmail accounts are already signed in (Chrome, Arc, Brave or Edge). No passwords, nothing to sign in to again.
+
+1. Click the envelope icon in the menu bar and choose **Set Up Browser Link…**. Finder opens with the **Notch Inbox Link** folder selected.
+2. In the browser, open `chrome://extensions` (Arc: `arc://extensions`) and turn on **Developer mode**.
+3. Drag the **Notch Inbox Link** folder onto that page.
+
+Within a minute, the notch shows the unread **Primary** mail of every Gmail account signed in to that browser (up to three), with Gmail's exact unread counts. When you read something in Gmail, it greys out in the notch. Opening an email in the notch shows Gmail's preview; **Open in Gmail** (or **O**) opens the full email to reply or archive.
+
+How it works: every minute the add-on reads each signed-in account's unread-mail feed from `mail.google.com`, using the browser's existing sign-in, and passes it to the app over `127.0.0.1`. The app only listens on this Mac and only accepts uploads from this add-on. Your mail isn't sent anywhere else, and it never goes to GitHub.
 
 ## Updates
 
@@ -33,9 +45,9 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 
-## What's still sample
+## Sample mail
 
-The accounts (Personal, Work, Studio) and emails are made up, and archiving and sending only happen inside the app; nothing is sent anywhere. Search, new message, snooze and settings are placeholders.
+Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Search, snooze and settings are placeholders for now.
 
 ## Building it yourself (optional)
 
@@ -56,6 +68,10 @@ open "build/Notch Inbox.app"
 | `NotchModel.swift` | State and actions: open, archive, mark unread, reply |
 | `Mail.swift`, `SampleMail.swift` | Account and message types, sample data. A real mail source plugs in by implementing `MailProvider` |
 | `Updater.swift`, `ReleaseFeed.swift` | Checks this repo's releases and installs newer builds |
+| `BrowserExtension/` | The **Notch Inbox Link** browser add-on |
+| `BrowserLink.swift`, `HTTPRequest.swift` | Receives the add-on's feeds on 127.0.0.1 |
+| `GmailFeed.swift`, `LiveMailbox.swift` | Reads Gmail's feed; keeps read mail greyed instead of dropping it |
+| `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
 | `Views/` | The SwiftUI screens: resting notch, peek, lanes, expanded inbox |
 | `Theme.swift` | Colours from the design |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |

@@ -66,7 +66,8 @@ struct PeekView: View {
                 .foregroundStyle(Theme.text)
                 .padding(.leading, 6)
             } trailing: {
-                Text("\(model.totalUnread) unread")
+                let summary: String = model.isSample ? "Sample mail" : "\(model.totalUnread) unread"
+                Text(summary)
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.tertiary)
                     .padding(.trailing, 6)
@@ -102,6 +103,7 @@ struct PeekTile: View {
                 Text(account.name)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Theme.text)
+                    .lineLimit(1)
                 Spacer(minLength: 4)
                 Text("\(unread)")
                     .font(.system(size: 17, weight: .bold).monospacedDigit())

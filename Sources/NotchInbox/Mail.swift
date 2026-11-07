@@ -8,6 +8,8 @@ struct MailAccount: Identifiable, Hashable {
     var colorHex: UInt32
     /// Number key that jumps to this inbox while the notch is open.
     var shortcut: String
+    /// The real address, for accounts linked through the browser (nil for sample accounts).
+    var email: String? = nil
 }
 
 struct MailMessage: Identifiable, Hashable {
@@ -19,6 +21,8 @@ struct MailMessage: Identifiable, Hashable {
     let date: Date
     var isUnread: Bool
     var attachment: String? = nil
+    /// Where to open the full message (Gmail), for real mail.
+    var link: URL? = nil
 
     var snippet: String { body.first ?? "" }
 

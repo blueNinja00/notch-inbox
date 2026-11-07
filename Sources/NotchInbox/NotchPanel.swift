@@ -199,11 +199,14 @@ final class NotchWindowController {
         case "1", "2", "3":
             model.open(accountAt: (Int(key) ?? 1) - 1)
             return nil
-        case "e" where model.level == .detail:
+        case "e" where model.level == .detail && model.canAct:
             model.archiveOpen()
             return nil
-        case "u" where model.level == .detail:
+        case "u" where model.level == .detail && model.canAct:
             model.markOpenUnread()
+            return nil
+        case "o" where model.level == .detail:
+            model.openInGmail()
             return nil
         default:
             return event

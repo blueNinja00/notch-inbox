@@ -37,6 +37,8 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 ## Using it
 
+It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
+
 - **Glance:** unread counts for each account sit beside the notch.
 - **Hover the notch:** a peek drops down with one tile per account and its newest sender.
 - **Click the peek:** it opens into three lanes, one per inbox.

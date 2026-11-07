@@ -3,7 +3,7 @@ import Combine
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    /// Menu-bar-only app: no Dock icon and no app menu. The notch panel and a
+    /// Menu-bar-only app: no Dock icon and no app menu. A notch panel per screen and a
     /// small envelope menu in the menu bar (Gmail link, updates, Quit) are created at launch.
     static func main() {
         let app = NSApplication.shared
@@ -17,8 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private static let accountOrderKey = "linkedAccountOrder"
 
-    private var model: NotchModel?
-    private var controller: NotchWindowController?
+    /// One notch per connected screen, keyed by display.
+    private var screens: [CGDirectDisplayID: NotchWindowController] = [:]
+    private var levelWatchers: [CGDirectDisplayID: AnyCancellable] = [:]
+    private var screenObserver: NSObjectProtocol?
+
     private let updater = Updater()
     private let browserLink = BrowserLink()
     private var mailbox = LiveMailbox(order: UserDefaults.standard.stringArray(forKey: AppDelegate.accountOrderKey) ?? [])
@@ -30,24 +33,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var linkItem: NSMenuItem?
     private var subscriptions = Set<AnyCancellable>()
 
+    private var models: [NotchModel] { screens.values.map { $0.model } }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let placement = NotchPlacement.detect() else { return }
-
-        // Sample mail until the browser add-on delivers your Gmail.
-        let model = NotchModel(provider: SampleMailProvider(), metrics: placement.metrics)
-        let controller = NotchWindowController(model: model, screen: placement.screen)
-        controller.show()
-        self.model = model
-        self.controller = controller
-
         installStatusItem()
 
-        model.onOpenURL = { url in
-            NSWorkspace.shared.open(url)
+        syncScreens()
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.syncScreens()
         }
-        model.onInstallUpdate = { [weak self] in
-            self?.updater.install()
-        }
+
         updater.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in self?.updaterChanged(state) }
@@ -63,13 +62,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         browserLink.start()
     }
 
+    // MARK: Screens
+
+    /// Keeps one notch panel on every connected screen as displays come and go.
+    private func syncScreens() {
+        let placements = NotchPlacement.allScreens()
+        let connected = Set(placements.map { $0.displayID })
+
+        for (id, controller) in screens where !connected.contains(id) {
+            controller.close()
+            screens[id] = nil
+            levelWatchers[id] = nil
+        }
+
+        for placement in placements {
+            let id = placement.displayID
+            if let controller = screens[id] {
+                controller.move(to: placement)
+                continue
+            }
+            let model = makeModel(metrics: placement.metrics)
+            let controller = NotchWindowController(model: model, placement: placement)
+            controller.show()
+            screens[id] = controller
+            levelWatchers[id] = model.$level.sink { [weak self] level in
+                self?.panelLevelChanged(level, on: id)
+            }
+        }
+    }
+
+    /// A new screen's notch starts with whatever the others already show.
+    private func makeModel(metrics: NotchMetrics) -> NotchModel {
+        let model = NotchModel(provider: SampleMailProvider(), metrics: metrics)
+        model.onOpenURL = { url in
+            NSWorkspace.shared.open(url)
+        }
+        model.onInstallUpdate = { [weak self] in
+            self?.updater.install()
+        }
+        if lastFeedAt != nil {
+            model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
+        }
+        model.pendingUpdate = updater.availableRelease?.build
+        return model
+    }
+
+    /// Only one notch is open at a time: opening one closes any other.
+    private func panelLevelChanged(_ level: NotchLevel, on id: CGDirectDisplayID) {
+        guard level == .lanes || level == .detail else { return }
+        for (other, controller) in screens where other != id && controller.model.level != .rest {
+            controller.model.close()
+        }
+    }
+
     // MARK: Gmail via the browser add-on
 
     private func received(_ feeds: [GmailFeed]) {
         guard !feeds.isEmpty else { return }
         mailbox.apply(feeds)
         UserDefaults.standard.set(mailbox.order, forKey: AppDelegate.accountOrderKey)
-        model?.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
+        let accounts = mailbox.accounts
+        let messages = mailbox.messages
+        for model in models {
+            model.showLive(accounts: accounts, messages: messages, unread: mailbox.unread)
+        }
         lastFeedAt = Date()
         refreshLinkItem()
     }
@@ -167,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshLinkItem()
     }
 
-    /// Keeps the menu and the notch's Update button in step with the updater.
+    /// Keeps the menu and every notch's Update button in step with the updater.
     private func updaterChanged(_ state: Updater.State) {
         let build = updater.currentBuild
         versionItem?.title = build > 0 ? "Notch Inbox · Build \(build)" : "Notch Inbox · local build"
@@ -197,10 +253,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             setUpdateItem("Updates work in the installed app", action: nil)
         }
 
+        var pending: Int? = nil
         if case .available(let release) = state {
-            model?.pendingUpdate = release.build
-        } else {
-            model?.pendingUpdate = nil
+            pending = release.build
+        }
+        for model in models {
+            model.pendingUpdate = pending
         }
     }
 
@@ -218,8 +276,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updater.install()
     }
 
+    /// Opens the notch on the screen you clicked the menu on.
     @objc private func openInboxes() {
-        model?.openLanes()
+        let mouse = NSEvent.mouseLocation
+        let target = screens.values.first(where: { $0.screen.frame.contains(mouse) }) ?? screens.values.first
+        target?.model.openLanes()
     }
 
     @objc private func quit() {

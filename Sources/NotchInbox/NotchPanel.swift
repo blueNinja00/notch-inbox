@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// Borderless, transparent panel that sits above the menu bar at the top of the screen.
+/// Borderless, transparent panel that sits above the menu bar at the top of a screen.
 final class NotchPanel: NSPanel {
     convenience init(frame: NSRect) {
         self.init(contentRect: frame,
@@ -18,6 +18,7 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
         acceptsMouseMovedEvents = true
         appearance = NSAppearance(named: .darkAqua)
+        // Every desktop (Space), including full-screen apps.
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
     }
 
@@ -37,27 +38,24 @@ final class NotchHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-/// Owns the panel, keeps it pinned to the notch, and decides when the mouse
-/// reaches it (over the black shape) or passes through to the apps below.
+/// Owns one screen's panel, keeps it pinned to that screen's notch, and decides when
+/// the mouse reaches it (over the black shape) or passes through to the apps below.
 final class NotchWindowController {
-    private let model: NotchModel
-    private var screen: NSScreen
+    let model: NotchModel
+    private(set) var screen: NSScreen
     private var panel: NotchPanel?
     private var monitors: [Any] = []
     private var subscriptions = Set<AnyCancellable>()
     private var pendingHover: DispatchWorkItem?
-    private var screenObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
 
-    init(model: NotchModel, screen: NSScreen) {
+    init(model: NotchModel, placement: NotchPlacement) {
         self.model = model
-        self.screen = screen
+        self.screen = placement.screen
     }
 
     deinit {
-        monitors.forEach { NSEvent.removeMonitor($0) }
-        if let observer = screenObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        close()
     }
 
     func show() {
@@ -80,13 +78,38 @@ final class NotchWindowController {
             .sink { [weak self] level in self?.levelDidChange(to: level) }
             .store(in: &subscriptions)
 
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
+        // Belt and braces: bring the panel forward whenever you switch desktops.
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.screenDidChange()
+            self?.panel?.orderFrontRegardless()
         }
+    }
+
+    /// The screen was rearranged, changed resolution, or its notch size changed.
+    func move(to placement: NotchPlacement) {
+        screen = placement.screen
+        if model.metrics != placement.metrics {
+            model.metrics = placement.metrics
+        }
+        panel?.setFrame(panelFrame(), display: true)
+        refreshMousePassThrough()
+    }
+
+    /// Takes the panel down, e.g. when its display is unplugged.
+    func close() {
+        cancelPending()
+        monitors.forEach { NSEvent.removeMonitor($0) }
+        monitors.removeAll()
+        if let observer = spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            spaceObserver = nil
+        }
+        subscriptions.removeAll()
+        panel?.orderOut(nil)
+        panel = nil
     }
 
     // MARK: Geometry
@@ -236,14 +259,6 @@ final class NotchWindowController {
         guard let panel = panel, panel.isKeyWindow else { return }
         panel.orderOut(nil)
         panel.orderFrontRegardless()
-    }
-
-    private func screenDidChange() {
-        guard let placement = NotchPlacement.detect() else { return }
-        screen = placement.screen
-        model.metrics = placement.metrics
-        panel?.setFrame(panelFrame(), display: true)
-        refreshMousePassThrough()
     }
 
     // MARK: Hover timing

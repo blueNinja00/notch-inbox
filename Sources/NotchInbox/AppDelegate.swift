@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var models: [NotchModel] { screens.values.map { $0.model } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        endOtherCopies()
         restoreMailbox()
         installStatusItem()
 
@@ -161,7 +162,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Each minute's feeds. The answer asks the add-on for the whole emails still missing.
     private func received(_ feeds: [AccountFeeds], upload: FeedUpload) -> LinkReply {
-        let addOn = BrowserExtensionInstaller.bundledVersion
+        // The version Chrome would load if the add-on reloaded; if the running add-on is
+        // different, it reloads itself to catch up.
+        let addOn = BrowserExtensionInstaller.installedVersion
         lastUpload = upload
         guard !feeds.isEmpty else { return LinkReply(want: [], addon: addOn) }
         lastFeeds = feeds
@@ -320,6 +323,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showMailEverywhere()
     }
 
+    /// Only one copy runs at a time: the one just opened (after an update, say) takes over
+    /// from any other copy still running, which would otherwise keep the browser link.
+    private func endOtherCopies() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0.processIdentifier != me }
+        guard !others.isEmpty else { return }
+        others.forEach { $0.terminate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            others.filter { !$0.isTerminated }.forEach { $0.forceTerminate() }
+        }
+    }
+
     // MARK: Debugging
 
     /// Copies a plain report of what the app and the browser add-on are doing: builds,
@@ -339,6 +355,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             update += " · last check \(MailTime.label(for: check.at)) (\(check.result))"
         }
         lines.append(update)
+        lines.append("Browser link: \(browserLink.status)")
+        let copies = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count
+        lines.append("Copies of the app running: \(copies) · app at \(Bundle.main.bundlePath)")
+        lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")
         let lastSync = lastFeedAt.map { MailTime.label(for: $0) } ?? "never"
         if let upload = lastUpload {
             lines.append("Browser add-on \(upload.version ?? "1.0") · whole emails: \(upload.fullEmails ?? "not supported") · last sync \(lastSync)")

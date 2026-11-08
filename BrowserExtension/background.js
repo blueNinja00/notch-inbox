@@ -20,6 +20,7 @@ const IK_RETRY_MS = 30 * 60 * 1000;
 const TITLE_SYNC_GAP_MS = 15 * 1000;
 const APP_RETRY_MS = [5 * 1000, 15 * 1000];
 const AWAKE_PING_MS = 20 * 1000;
+const RELOAD_GAP_MS = 10 * 60 * 1000;
 const VERSION = chrome.runtime.getManifest().version;
 
 chrome.runtime.onInstalled.addListener(start);
@@ -136,7 +137,7 @@ async function syncOnce() {
     feeds.push(feed);
   }
 
-  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedFor', 'wholeFetched']);
+  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedAt', 'wholeFetched']);
   const fullEmails = saved.fullEmails || 'unknown';
   let status;
   let reply = null;
@@ -172,10 +173,13 @@ async function syncOnce() {
   status.wholeFetched = saved.wholeFetched || 0;
   await chrome.storage.local.set({ status });
 
-  // The app was updated and brought a newer copy of this add-on with it: switch to it
-  // (once per version, so a copy that didn't arrive can't cause a reload loop).
-  if (reply && typeof reply.addon === 'string' && reply.addon !== VERSION && saved.reloadedFor !== reply.addon) {
-    await chrome.storage.local.set({ reloadedFor: reply.addon });
+  // The app put a different version of this add-on in the folder it's loaded from (an app
+  // update brings one): reload to switch to it. At most every 10 minutes, so a reload that
+  // somehow doesn't take can't turn into a loop.
+  if (reply && typeof reply.addon === 'string' && reply.addon !== VERSION
+      && Date.now() - (saved.reloadedAt || 0) > RELOAD_GAP_MS) {
+    console.info('[Notch Inbox Link] reloading to switch from', VERSION, 'to', reply.addon);
+    await chrome.storage.local.set({ reloadedAt: Date.now(), reloadedFor: reply.addon });
     chrome.runtime.reload();
     return status;
   }

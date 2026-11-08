@@ -185,11 +185,15 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Opens the new copy a moment after this one quits.
+    /// Opens the new copy once this one has quit. (Opening it while this copy is still
+    /// quitting would just bring this one forward.)
     private static func relaunch(_ app: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", app.path]
+        process.arguments = ["-c",
+                             "while /bin/kill -0 \"$1\" 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$0\"",
+                             app.path,
+                             String(ProcessInfo.processInfo.processIdentifier)]
         try? process.run()
         NSApp.terminate(nil)
     }

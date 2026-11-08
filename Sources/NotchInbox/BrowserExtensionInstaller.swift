@@ -9,12 +9,18 @@ enum BrowserExtensionInstaller {
     }
 
     /// The version of the add-on inside this app, from its manifest.
-    static let bundledVersion: String? = {
-        guard let manifest = bundledFolder?.appendingPathComponent("manifest.json"),
-              let data = try? Data(contentsOf: manifest),
+    static let bundledVersion: String? = bundledFolder.flatMap { version(in: $0) }
+
+    /// The version in the folder Chrome loads the add-on from: what it gets if it reloads.
+    static var installedVersion: String? {
+        version(in: installedFolder)
+    }
+
+    static func version(in folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return object["version"] as? String
-    }()
+    }
 
     static var installedFolder: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

@@ -17,6 +17,11 @@ final class BrowserLink {
     /// update, say) and sync straight away.
     private static let launchID = UUID().uuidString
 
+    /// Whether the add-on can reach the app, and if not why, for Copy Debug Info.
+    private(set) var status = "starting"
+
+    /// Starts listening (on the main thread). If the port is taken, say by an older copy of
+    /// the app that's still quitting, it keeps trying every few seconds.
     func start() {
         guard listener == nil, let port = NWEndpoint.Port(rawValue: LinkAddOn.port) else { return }
         do {
@@ -27,10 +32,39 @@ final class BrowserLink {
             listener.newConnectionHandler = { [weak self] connection in
                 self?.serve(connection)
             }
+            listener.stateUpdateHandler = { [weak self] state in
+                DispatchQueue.main.async {
+                    self?.listenerChanged(state)
+                }
+            }
             listener.start(queue: queue)
             self.listener = listener
         } catch {
+            status = "couldn't listen: \(error.localizedDescription)"
             NSLog("Notch Inbox: couldn't open the browser link: \(error.localizedDescription)")
+            restartSoon()
+        }
+    }
+
+    private func listenerChanged(_ state: NWListener.State) {
+        switch state {
+        case .ready:
+            status = "listening on 127.0.0.1:\(LinkAddOn.port)"
+        case .failed(let error), .waiting(let error):
+            status = "not listening: \(error.localizedDescription)"
+            NSLog("Notch Inbox: browser link stopped (\(error.localizedDescription)); trying again")
+            restartSoon()
+        default:
+            break
+        }
+    }
+
+    private func restartSoon() {
+        listener?.stateUpdateHandler = nil
+        listener?.cancel()
+        listener = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.start()
         }
     }
 

@@ -14,8 +14,20 @@ struct NotchMetrics: Equatable {
     var notchHeight: CGFloat
     var hasNotch: Bool
 
+    /// The narrowest an ear gets. Ears widen to fit the unread counts they show.
     static let earWidth: CGFloat = 56
     static let shadowMargin: CGFloat = 48
+
+    /// How wide each ear must be to show these unread counts in full, side by side.
+    /// Accounts with nothing unread are left out; nothing unread at all means no ears.
+    static func earWidth(for counts: [Int]) -> CGFloat {
+        let shown = counts.filter { $0 > 0 }
+        guard !shown.isEmpty else { return 0 }
+        let characters = shown.reduce(0) { $0 + UnreadText.format($1).count }
+        // About 7.6pt per bold 12pt digit, 8pt between counts, padding at both ends.
+        let needed = CGFloat(characters) * 7.6 + CGFloat(shown.count - 1) * 8 + 20
+        return max(earWidth, needed.rounded(.up))
+    }
 
     /// Height of the row that sits beside the camera housing.
     var topRow: CGFloat { max(notchHeight, 32) + 4 }
@@ -23,11 +35,11 @@ struct NotchMetrics: Equatable {
     /// Width the content leaves empty in the middle of the top row, around the camera.
     var notchGap: CGFloat { notchWidth + 16 }
 
-    func bodySize(_ level: NotchLevel, showEars: Bool) -> CGSize {
+    /// `ears` is the width of each ear when closed (0 for none); other levels ignore it.
+    func bodySize(_ level: NotchLevel, ears: CGFloat = 0) -> CGSize {
         switch level {
         case .rest:
-            let width = showEars ? notchWidth + NotchMetrics.earWidth * 2 : notchWidth
-            return CGSize(width: width, height: notchHeight)
+            return CGSize(width: notchWidth + max(0, ears) * 2, height: notchHeight)
         case .peek:
             return CGSize(width: 600, height: topRow + 110)
         case .lanes:
@@ -47,24 +59,31 @@ struct NotchMetrics: Equatable {
     }
 
     /// Radius of the inward curves where the shape meets the top edge of the screen.
-    func shoulder(_ level: NotchLevel, showEars: Bool) -> CGFloat {
+    func shoulder(_ level: NotchLevel, ears: CGFloat = 0) -> CGFloat {
         switch level {
-        case .rest: return showEars ? 6 : 0
+        case .rest: return ears > 0 ? 6 : 0
         case .peek, .lanes: return 12
         case .detail: return 14
         }
     }
 
     /// Body plus shoulders: the full black outline.
-    func outlineSize(_ level: NotchLevel, showEars: Bool) -> CGSize {
-        let body = bodySize(level, showEars: showEars)
-        return CGSize(width: body.width + shoulder(level, showEars: showEars) * 2, height: body.height)
+    func outlineSize(_ level: NotchLevel, ears: CGFloat = 0) -> CGSize {
+        let body = bodySize(level, ears: ears)
+        return CGSize(width: body.width + shoulder(level, ears: ears) * 2, height: body.height)
     }
 
     /// The transparent window fits the largest level plus room for its shadow.
     var windowSize: CGSize {
-        let largest = outlineSize(.detail, showEars: true)
+        let largest = outlineSize(.detail)
         return CGSize(width: largest.width + NotchMetrics.shadowMargin * 2,
                       height: largest.height + NotchMetrics.shadowMargin * 1.5)
+    }
+}
+
+/// Unread counts as people write them: 7, 297, 3992. Only 10,000 and up are shortened (12k).
+enum UnreadText {
+    static func format(_ count: Int) -> String {
+        count < 10_000 ? "\(count)" : "\(count / 1000)k"
     }
 }

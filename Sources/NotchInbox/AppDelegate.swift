@@ -49,8 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var linkItem: NSMenuItem?
     /// One item per linked account, with its choices, rebuilt each time the menu opens.
     private var accountItems: [NSMenuItem] = []
-    /// "Open Inboxes" and its divider, hidden when the menu opens from inside the notch.
+    /// "Open Inboxes", hidden when the menu opens from inside the notch.
     private var menuBarOnlyItems: [NSMenuItem] = []
+    private var minimiseItem: NSMenuItem?
+
+    /// Minimised: a small mail icon you can drag anywhere stands in for the notch.
+    private static let minimisedKey = "minimisedToIcon"
+    private var minimised = UserDefaults.standard.bool(forKey: AppDelegate.minimisedKey)
+    private let mailIcon = MailIconController()
     private var subscriptions = Set<AnyCancellable>()
 
     /// Set when you ask for an update check or install, so the notch can say how it went.
@@ -66,6 +72,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         installStatusItem()
 
         syncScreens()
+        mailIcon.onOpen = { [weak self] in
+            self?.openFromMailIcon()
+        }
+        mailIcon.menu = { [weak self] in
+            self?.appMenu
+        }
+        if minimised {
+            mailIcon.show()
+            refreshMailIcon()
+        }
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -123,6 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.panelLevelChanged(level, on: id)
             }
         }
+        if minimised {
+            mailIcon.keepOnScreen()
+        }
     }
 
     /// A new screen's notch starts with whatever the others already show.
@@ -142,6 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onOpenMessage = { [weak self] id in
             self?.mailbox.markOpened(id)
         }
+        model.minimised = minimised
+        model.onMinimise = { [weak self] on in
+            self?.setMinimised(on)
+        }
         model.wholeEmails = wholeEmails
         if lastFeedAt != nil {
             model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
@@ -152,6 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Only one notch is open at a time: opening one closes any other.
     private func panelLevelChanged(_ level: NotchLevel, on id: CGDirectDisplayID) {
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshMailIcon() // sample mail can change counts too
+        }
         guard level == .lanes || level == .detail else { return }
         for (other, controller) in screens where other != id && controller.model.level != .rest {
             controller.model.close()
@@ -208,6 +234,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 model.wholeEmails = wholeEmails
             }
         }
+        refreshMailIcon()
+    }
+
+    // MARK: Minimised to a mail icon
+
+    private func setMinimised(_ on: Bool) {
+        minimised = on
+        UserDefaults.standard.set(on, forKey: AppDelegate.minimisedKey)
+        for model in models {
+            if on {
+                model.close()
+            }
+            model.minimised = on
+        }
+        if on {
+            mailIcon.show()
+        } else {
+            mailIcon.hide()
+        }
+        refreshMailIcon()
+    }
+
+    private func refreshMailIcon() {
+        minimiseItem?.title = minimised ? "Show in the Notch" : "Minimise to Mail Icon"
+        guard mailIcon.isShown else { return }
+        mailIcon.setUnread(models.first?.totalUnread ?? 0)
+    }
+
+    /// Clicking the mail icon opens the inboxes at the notch of the screen it's on, or
+    /// closes them if they're open.
+    private func openFromMailIcon() {
+        let screen = mailIcon.screen
+        let target = screens.values.first(where: { $0.screen == screen }) ?? screens.values.first
+        guard let model = target?.model else { return }
+        if model.level == .rest {
+            model.openLanes()
+        } else {
+            model.close()
+        }
+    }
+
+    @objc private func toggleMinimised() {
+        setMinimised(!minimised)
     }
 
     private func refreshLinkItem() {
@@ -528,8 +597,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let openDivider = NSMenuItem.separator()
-        menu.addItem(openDivider)
+        let minimise = NSMenuItem(title: minimised ? "Show in the Notch" : "Minimise to Mail Icon",
+                                  action: #selector(toggleMinimised), keyEquivalent: "")
+        minimise.target = self
+        menu.addItem(minimise)
+        menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(title: "Quit Notch Inbox", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -541,7 +613,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         versionItem = version
         updateItem = update
         linkItem = link
-        menuBarOnlyItems = [open, openDivider]
+        menuBarOnlyItems = [open]
+        minimiseItem = minimise
         updaterChanged(updater.state)
         refreshLinkItem()
     }

@@ -6,24 +6,25 @@ struct RestView: View {
 
     var body: some View {
         let metrics = model.metrics
-        let showEars = model.totalUnread > 0
+        let ears = model.restEars
 
         HStack(spacing: 0) {
-            if showEars {
+            if ears > 0 {
                 Image(systemName: "envelope")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.text2)
-                    .frame(width: NotchMetrics.earWidth)
+                    .frame(width: ears)
             }
             Color.clear
                 .frame(width: metrics.notchWidth)
-            if showEars {
-                HStack(spacing: 6) {
-                    ForEach(model.accounts) { account in
+            if ears > 0 {
+                HStack(spacing: 8) {
+                    ForEach(model.accounts.filter { model.unreadCount($0.id) > 0 }) { account in
                         UnreadNumber(count: model.unreadCount(account.id), color: account.color)
                     }
                 }
-                .frame(width: NotchMetrics.earWidth)
+                .fixedSize()
+                .frame(width: ears)
             }
         }
         .frame(height: metrics.notchHeight)
@@ -40,9 +41,11 @@ private struct UnreadNumber: View {
     let color: Color
 
     var body: some View {
-        Text("\(count)")
+        Text(UnreadText.format(count))
             .font(.system(size: 12, weight: .bold).monospacedDigit())
             .foregroundStyle(count > 0 ? color : Theme.tertiary)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -53,7 +56,7 @@ struct PeekView: View {
 
     var body: some View {
         let metrics = model.metrics
-        let size = metrics.bodySize(.peek, showEars: true)
+        let size = metrics.bodySize(.peek)
 
         VStack(spacing: 0) {
             TopRow(metrics: metrics) {

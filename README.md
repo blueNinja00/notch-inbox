@@ -58,11 +58,12 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
 
-- **Glance:** unread counts for each account sit beside the notch.
+- **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Hover the notch:** a peek drops down with one tile per account and its newest sender.
 - **Click the peek:** it opens into three lanes, one per inbox.
 - **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
 - **Click outside, or press Esc** to close (Esc steps back one level).
+- **Minimise:** the button beside the sliders (or **Minimise to Mail Icon** in the menu) swaps the notch for a small mail icon with your unread count. Drag it anywhere; it stays where you leave it. Click it to open your inboxes at the notch, right-click it for the menu, and choose **Show in the Notch** to go back.
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 

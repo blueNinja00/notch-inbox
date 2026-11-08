@@ -7,7 +7,7 @@ struct LanesView: View {
 
     var body: some View {
         let metrics = model.metrics
-        let size = metrics.bodySize(.lanes, showEars: true)
+        let size = metrics.bodySize(.lanes)
 
         VStack(spacing: 0) {
             TopRow(metrics: metrics) {

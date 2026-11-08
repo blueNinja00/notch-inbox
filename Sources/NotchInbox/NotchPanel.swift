@@ -126,7 +126,11 @@ final class NotchWindowController {
     /// The visible black shape for the current level, in screen coordinates.
     private func hotRect() -> NSRect {
         let level = model.level
-        let outline = model.metrics.outlineSize(level, showEars: model.totalUnread > 0)
+        // Minimised to the mail icon: the closed notch lets every click and hover through.
+        if model.minimised && level == .rest {
+            return .zero
+        }
+        let outline = model.metrics.outlineSize(level, ears: model.restEars)
         let screenFrame = screen.frame
         let rect = NSRect(x: screenFrame.midX - outline.width / 2,
                           y: screenFrame.maxY - outline.height,

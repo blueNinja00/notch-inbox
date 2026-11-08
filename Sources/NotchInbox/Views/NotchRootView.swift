@@ -8,10 +8,12 @@ struct NotchRootView: View {
     var body: some View {
         let metrics = model.metrics
         let level = model.level
-        let showEars = model.totalUnread > 0
-        let outline = metrics.outlineSize(level, showEars: showEars)
+        let ears = model.restEars
+        let outline = metrics.outlineSize(level, ears: ears)
         let shape = NotchShape(bottomRadius: metrics.bottomRadius(level),
-                               shoulder: metrics.shoulder(level, showEars: showEars))
+                               shoulder: metrics.shoulder(level, ears: ears))
+        // Minimised to the mail icon: nothing at the notch until it's opened.
+        let hidden = model.minimised && level == .rest
 
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
@@ -23,13 +25,14 @@ struct NotchRootView: View {
                     .clipShape(shape)
             }
             .frame(width: outline.width, height: outline.height)
+            .opacity(hidden ? 0 : 1)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
         .animation(Theme.spring, value: level)
-        .animation(Theme.spring, value: showEars)
+        .animation(Theme.spring, value: ears)
     }
 
     @ViewBuilder

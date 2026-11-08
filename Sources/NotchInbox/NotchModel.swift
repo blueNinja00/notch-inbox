@@ -99,6 +99,19 @@ final class NotchModel: ObservableObject {
         accounts.reduce(0) { $0 + unreadCount($1.id) }
     }
 
+    /// Minimised to the floating mail icon: nothing shows at the notch until you open it.
+    @Published var minimised = false
+    var onMinimise: ((Bool) -> Void)?
+
+    func setMinimised(_ on: Bool) {
+        onMinimise?(on)
+    }
+
+    /// Width of each ear beside the closed notch: wide enough for every unread count.
+    var restEars: CGFloat {
+        minimised ? 0 : NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
+    }
+
     func account(_ id: String) -> MailAccount? {
         accounts.first { $0.id == id }
     }

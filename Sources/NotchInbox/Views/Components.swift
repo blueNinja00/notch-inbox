@@ -155,6 +155,13 @@ struct PanelActions: View {
             } else {
                 IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
             }
+            if model.minimised {
+                IconButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Show in the notch again",
+                           action: { model.setMinimised(false) })
+            } else {
+                IconButton(symbol: "arrow.down.right.and.arrow.up.left", label: "Minimise to a mail icon you can drag anywhere",
+                           action: { model.setMinimised(true) })
+            }
             IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
                        action: { model.showAppMenu() })
         }

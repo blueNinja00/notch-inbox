@@ -17,6 +17,16 @@ function render(status) {
   for (const account of status.accounts || []) {
     const item = document.createElement('li');
     item.textContent = account;
+    const counts = (status.counts || {})[account];
+    if (counts) {
+      const detail = document.createElement('div');
+      detail.className = 'counts';
+      const parts = [];
+      if (counts.primary !== null && counts.primary !== undefined) parts.push(`Primary ${counts.primary}`);
+      if (counts.inbox !== null && counts.inbox !== undefined) parts.push(`whole inbox ${counts.inbox}`);
+      detail.textContent = parts.length ? `Gmail says unread: ${parts.join(' · ')}` : '';
+      item.appendChild(detail);
+    }
     list.appendChild(item);
   }
   when.textContent = status.at ? `Last checked ${new Date(status.at).toLocaleTimeString()}` : '';
@@ -37,6 +47,7 @@ function wholeEmails(status) {
   }
 }
 
+document.getElementById('version').textContent = `Version ${chrome.runtime.getManifest().version}`;
 chrome.storage.local.get('status').then((stored) => render(stored.status));
 // Keep up while the popup is open.
 chrome.storage.onChanged.addListener((changes, area) => {

@@ -169,6 +169,15 @@ struct LiveMailbox {
         return true
     }
 
+    /// For Copy Debug Info: what the notch holds for one account.
+    func stats(for account: String) -> (emails: Int, unread: Int, whole: Int, failed: Int) {
+        let mine = store.values.filter { $0.accountID == account }
+        return (mine.count,
+                mine.filter { $0.isUnread }.count,
+                mine.filter { whole[$0.id] != nil }.count,
+                mine.filter { failed[$0.id] != nil }.count)
+    }
+
     /// You opened this email in the notch: fetch its whole text next, even if it's read.
     mutating func markOpened(_ id: String) {
         guard store[id] != nil else { return }

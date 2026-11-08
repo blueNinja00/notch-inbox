@@ -29,6 +29,8 @@ final class Updater: ObservableObject {
     /// The newest release seen and GitHub's tag for that answer, to ask "anything newer?".
     private var latestSeen: ReleaseInfo?
     private var etag: String?
+    /// When GitHub was last asked, and what it said, for Copy Debug Info.
+    private(set) var lastCheck: (at: Date, result: String)?
 
     init(bundle: Bundle = .main) {
         let version = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
@@ -85,6 +87,13 @@ final class Updater: ObservableObject {
 
     private func finishCheck(release: ReleaseInfo?, status: Int, etag: String?, error: Error?, userInitiated: Bool) {
         isChecking = false
+        if let error = error {
+            lastCheck = (Date(), "failed: \(error.localizedDescription)")
+        } else if let release = release {
+            lastCheck = (Date(), "HTTP \(status), newest is build \(release.build)")
+        } else {
+            lastCheck = (Date(), status == 304 ? "HTTP 304, nothing new" : "HTTP \(status)")
+        }
         if status == 304, let known = latestSeen {
             settle(known.build > currentBuild ? .available(known) : .upToDate)
         } else if let release = release {

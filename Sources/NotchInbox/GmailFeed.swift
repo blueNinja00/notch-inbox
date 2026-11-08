@@ -20,6 +20,8 @@ struct GmailFeed: Equatable {
     /// Gmail's exact unread count. The feed itself lists only about 20 messages.
     let unreadCount: Int
     let entries: [Entry]
+    /// The feed's own title, e.g. "Gmail - Inbox for …", kept for Copy Debug Info.
+    var title: String = ""
 }
 
 /// Reads Gmail's Atom 0.3 feed (`/mail/u/N/feed/atom`).
@@ -109,7 +111,8 @@ final class GmailFeedParser: NSObject, XMLParserDelegate {
         guard let account = fromTitle ?? fromLinks else { return nil }
         return GmailFeed(account: account.lowercased(),
                          unreadCount: max(fullCount, entries.count),
-                         entries: entries)
+                         entries: entries,
+                         title: feedTitle)
     }
 
     private func nonEmpty(_ value: String?) -> String? {
@@ -146,7 +149,8 @@ extension GmailFeed {
         guard !extras.isEmpty else { return self }
         return GmailFeed(account: account,
                          unreadCount: unreadCount + extras.count,
-                         entries: (entries + extras).sorted { $0.date > $1.date })
+                         entries: (entries + extras).sorted { $0.date > $1.date },
+                         title: title)
     }
 
     /// Sent from google.com or one of its subdomains, e.g. no-reply@classroom.google.com.

@@ -77,7 +77,8 @@ struct PeekView: View {
                 ForEach(model.accounts) { account in
                     PeekTile(account: account,
                              unread: model.unreadCount(account.id),
-                             headline: model.headline(account.id))
+                             headline: model.headline(account.id),
+                             emptyText: model.isSample ? "All caught up" : "Nothing unread")
                 }
             }
             .padding(.top, 6)
@@ -94,6 +95,7 @@ struct PeekTile: View {
     let account: MailAccount
     let unread: Int
     let headline: MailMessage?
+    var emptyText = "All caught up"
     @State var hovering = false
 
     var body: some View {
@@ -113,7 +115,7 @@ struct PeekTile: View {
             Spacer(minLength: 0)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(headline?.sender ?? "All caught up")
+                Text(headline?.sender ?? emptyText)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.text2)
                 Text(headline?.subject ?? " ")

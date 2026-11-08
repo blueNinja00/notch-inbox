@@ -161,7 +161,13 @@ async function syncOnce() {
     }
   }
   status.accounts = feeds.map((feed) => feed.account).filter(Boolean);
+  status.counts = Object.fromEntries(feeds.filter((feed) => feed.account).map((feed) => [feed.account, {
+    primary: feed.primary ? unreadIn(feed.xml) : null,
+    inbox: feed.primary ? unreadIn(feed.extra) : unreadIn(feed.xml),
+  }]));
   status.at = Date.now();
+  console.info('[Notch Inbox Link] sync', new Date().toLocaleTimeString(), status.message,
+    JSON.stringify(status.counts), `asked for ${reply && Array.isArray(reply.want) ? reply.want.length : 0} whole emails`);
   status.fullEmails = fullEmails;
   status.wholeFetched = saved.wholeFetched || 0;
   await chrome.storage.local.set({ status });
@@ -193,9 +199,15 @@ async function readAccount(index) {
   const inbox = await getFeed(index, INBOX_FEED);
   const xml = primary || inbox;
   if (!xml) return null;
-  const feed = { index, account: accountIn(xml), xml };
+  const feed = { index, account: accountIn(xml), xml, primary: Boolean(primary) };
   if (primary && inbox) feed.extra = inbox; // the app picks Google's own mail out of it
   return feed;
+}
+
+// Gmail's unread count from a feed, for the popup and the console.
+function unreadIn(xml) {
+  const match = xml && /<fullcount>(\d+)<\/fullcount>/.exec(xml);
+  return match ? Number(match[1]) : null;
 }
 
 // The feed's own <title> ends with the signed-in address.
@@ -247,6 +259,7 @@ async function readWholeEmails(want, feeds, status) {
     const index = slots.get(item.account);
     const email = await readEmail(index, item, iks);
     await sendEmail({ account: item.account, id: item.id, ...email });
+    console.info('[Notch Inbox Link] whole email', item.account, email.error || 'ok', `(mode ${mode})`);
 
     if (email.error) {
       status.emailError = email.error;

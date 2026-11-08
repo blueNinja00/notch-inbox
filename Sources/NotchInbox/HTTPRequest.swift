@@ -86,6 +86,9 @@ struct FeedUpload: Decodable {
         /// (Classroom, Docs, Drive…) still shows when Gmail files it under Updates.
         /// Add-on 1.1 and later.
         let extra: String?
+        /// Whether `xml` is the Primary tab (false: Gmail had no Primary feed, so it's the
+        /// whole inbox). Add-on 1.3 and later.
+        let primary: Bool?
     }
 
     let feeds: [Feed]

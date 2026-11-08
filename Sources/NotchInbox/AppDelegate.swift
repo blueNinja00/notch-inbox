@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var inboxChoices: [String: InboxChoice] = [:]
     /// What each account's mail in the mailbox came from, to start it afresh when that changes.
     private var appliedViews: [String: InboxChoice] = [:]
+    /// The add-on's latest upload, for Copy Debug Info.
+    private var lastUpload: FeedUpload?
     private var lastSavedMailbox: Data?
     private var saveMailboxWork: DispatchWorkItem?
 
@@ -160,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Each minute's feeds. The answer asks the add-on for the whole emails still missing.
     private func received(_ feeds: [AccountFeeds], upload: FeedUpload) -> LinkReply {
         let addOn = BrowserExtensionInstaller.bundledVersion
+        lastUpload = upload
         guard !feeds.isEmpty else { return LinkReply(want: [], addon: addOn) }
         lastFeeds = feeds
         var showing: [GmailFeed] = []
@@ -317,6 +320,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showMailEverywhere()
     }
 
+    // MARK: Debugging
+
+    /// Copies a plain report of what the app and the browser add-on are doing: builds,
+    /// update checks, and per account what Gmail's feeds say and what the notch holds.
+    /// Counts and addresses only, no email contents.
+    @objc private func copyDebugInfo() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(debugReport(), forType: .string)
+        showUpdateNote("Debug info copied", clearAfter: 3)
+    }
+
+    private func debugReport() -> String {
+        var lines: [String] = []
+        lines.append("Notch Inbox build \(updater.currentBuild) · macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        var update = "Updates: \(AppDelegate.describe(updater.state))"
+        if let check = updater.lastCheck {
+            update += " · last check \(MailTime.label(for: check.at)) (\(check.result))"
+        }
+        lines.append(update)
+        let lastSync = lastFeedAt.map { MailTime.label(for: $0) } ?? "never"
+        if let upload = lastUpload {
+            lines.append("Browser add-on \(upload.version ?? "1.0") · whole emails: \(upload.fullEmails ?? "not supported") · last sync \(lastSync)")
+        } else {
+            lines.append("Browser add-on: not heard from since the app started · mail shown is from \(lastSync)")
+        }
+
+        lines.append("")
+        lines.append("Accounts:")
+        let shown = Set(mailbox.accounts.map { $0.id })
+        for (number, feed) in (lastUpload?.feeds ?? []).enumerated() {
+            guard let parsed = feed.parsed() else {
+                lines.append("\(number + 1). Gmail slot \(feed.index): its feed couldn't be read")
+                continue
+            }
+            let account = parsed.account
+            let view = inboxChoice(for: account) == .everything ? "whole inbox" : "Primary + Google mail"
+            let how = inboxChoices[account] == nil ? "default" : "chosen"
+            let place = mailbox.hidden.contains(account) ? "hidden" : (shown.contains(account) ? "in the notch" : "no room")
+            lines.append("\(number + 1). \(account) · Gmail slot \(feed.index) · \(place) · showing \(view) (\(how))")
+
+            let main = feed.primary == false ? "inbox (no Primary feed)" : "Primary"
+            var gmail = "   Gmail: \(main) \(parsed.main.unreadCount) unread, \(parsed.main.entries.count) listed"
+            if let inbox = parsed.inbox {
+                gmail += " · whole inbox \(inbox.unreadCount) unread, \(inbox.entries.count) listed"
+            } else {
+                gmail += " · whole inbox not sent"
+            }
+            lines.append(gmail)
+            lines.append("   Feed titles: \(parsed.main.title)" + (parsed.inbox.map { " | \($0.title)" } ?? ""))
+            let stats = mailbox.stats(for: account)
+            lines.append("   Notch: \(mailbox.unread[account] ?? 0) unread · \(stats.emails) emails kept (\(stats.unread) unread) · whole emails \(stats.whole) fetched, \(stats.failed) failed")
+        }
+        if lastUpload == nil {
+            for account in mailbox.linkedAccounts {
+                let stats = mailbox.stats(for: account)
+                lines.append("- \(account): \(mailbox.unread[account] ?? 0) unread, \(stats.emails) emails kept (saved copy)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func describe(_ state: Updater.State) -> String {
+        switch state {
+        case .idle: return "not checked yet"
+        case .checking: return "checking"
+        case .upToDate: return "up to date"
+        case .available(let release): return "build \(release.build) ready to install"
+        case .installing: return "installing"
+        case .failed(let message): return "failed (\(message))"
+        }
+    }
+
     // MARK: Keeping mail between launches
 
     /// Shows the mail from the last run straight away, before the add-on's next sync.
@@ -425,6 +500,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let setUp = NSMenuItem(title: "Set Up Browser Link…", action: #selector(setUpBrowserLink), keyEquivalent: "")
         setUp.target = self
         menu.addItem(setUp)
+        let debug = NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "")
+        debug.target = self
+        menu.addItem(debug)
         menu.addItem(NSMenuItem.separator())
 
         let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")

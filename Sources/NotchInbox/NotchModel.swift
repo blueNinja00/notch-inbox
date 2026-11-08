@@ -134,12 +134,30 @@ final class NotchModel: ObservableObject {
 
     // MARK: Moving between levels
 
+    /// The primary menu (tools, starting with Mail). Shown by hovering, it closes when the
+    /// pointer leaves; opened with a click, it stays until you click somewhere else.
+    @Published var homePinned = false
+
     func peek() {
-        if level == .rest { level = .peek }
+        if level == .rest {
+            homePinned = false
+            level = .peek
+        }
     }
 
     func unpeek() {
-        if level == .peek { level = .rest }
+        if level == .peek && !homePinned { level = .rest }
+    }
+
+    /// Opens the primary menu and keeps it open.
+    func goHome() {
+        homePinned = true
+        level = .peek
+    }
+
+    /// A click on the hover menu keeps it open.
+    func pinHome() {
+        if level == .peek { homePinned = true }
     }
 
     func openLanes() {
@@ -153,6 +171,7 @@ final class NotchModel: ObservableObject {
     func close() {
         level = .rest
         sentFrom = nil
+        homePinned = false
     }
 
     /// Expand one inbox, opening the given message (or the newest).

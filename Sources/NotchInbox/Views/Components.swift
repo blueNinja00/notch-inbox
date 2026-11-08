@@ -96,12 +96,15 @@ struct TopRow<Leading: View, Trailing: View>: View {
     }
 }
 
-/// "Mail" tab plus a slot for future notch modules.
+/// Back to the primary menu, then the "Mail" tab.
 struct ModuleTabs: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
         HStack(spacing: 4) {
+            IconButton(symbol: "square.grid.2x2", label: "All tools (Esc)", size: 28,
+                       action: { model.goHome() })
+
             HStack(spacing: 7) {
                 Image(systemName: "envelope")
                     .font(.system(size: 11.5, weight: .semibold))
@@ -113,8 +116,6 @@ struct ModuleTabs: View {
             .padding(.trailing, 12)
             .frame(height: 28)
             .background(Capsule().fill(Theme.raised))
-
-            IconButton(symbol: "plus", label: "Add a module (coming soon)", size: 28, tint: Theme.tertiary)
 
             if model.isSample {
                 SampleTag()
@@ -155,13 +156,7 @@ struct PanelActions: View {
             } else {
                 IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
             }
-            if model.minimised {
-                IconButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Show in the notch again",
-                           action: { model.setMinimised(false) })
-            } else {
-                IconButton(symbol: "arrow.down.right.and.arrow.up.left", label: "Minimise to a mail icon you can drag anywhere",
-                           action: { model.setMinimised(true) })
-            }
+            MinimiseButton(model: model)
             IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
                        action: { model.showAppMenu() })
         }
@@ -230,5 +225,20 @@ struct BackButton: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, 4)
+    }
+}
+
+/// Shrinks the notch to a small tab you can slide along the top of the screen, or puts it back.
+struct MinimiseButton: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        if model.minimised {
+            IconButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Back to the full notch",
+                       action: { model.setMinimised(false) })
+        } else {
+            IconButton(symbol: "arrow.down.right.and.arrow.up.left", label: "Minimise to a small tab you can slide along the top",
+                       action: { model.setMinimised(true) })
+        }
     }
 }

@@ -1,31 +1,26 @@
 import AppKit
 import SwiftUI
 
-/// Notch Inbox minimised: a small mail icon with the unread count, floating above other
-/// windows. Drag it anywhere (it remembers where); click it to open your inboxes at the
-/// notch; right-click it for the app menu.
+/// Notch Inbox minimised: a small notch-shaped tab with a mail icon, hanging from the top
+/// edge of the screen like the real notch. Drag it along the top (to another screen too);
+/// it remembers where. Click it to open the primary menu at the notch; right-click it for
+/// the app menu.
 final class MailIconController {
     var onOpen: (() -> Void)?
     var menu: (() -> NSMenu?)?
 
-    private var panel: NSPanel?
-    private let badge = MailIconBadge()
-    private static let originKey = "mailIconOrigin"
-    private static let size = CGSize(width: 64, height: 54)
+    private var panel: NotchPanel?
+    private static let positionKey = "miniNotchPosition"
+    /// The tab's body; the window adds the inward-curving shoulders on each side.
+    private static let bodyWidth: CGFloat = 52
+    private static let shoulder: CGFloat = 6
 
     var isShown: Bool { panel != nil }
 
-    /// The screen the icon is on, so the inboxes open at that screen's notch.
+    /// The screen the tab is on, so the primary menu opens at that screen's notch.
     var screen: NSScreen? {
         guard let frame = panel?.frame else { return nil }
-        let center = NSPoint(x: frame.midX, y: frame.midY)
-        return NSScreen.screens.first { $0.frame.contains(center) } ?? panel?.screen
-    }
-
-    func setUnread(_ count: Int) {
-        if badge.unread != count {
-            badge.unread = count
-        }
+        return MailIconController.screen(atX: frame.midX, nearY: frame.maxY)
     }
 
     func show() {
@@ -33,20 +28,13 @@ final class MailIconController {
             keepOnScreen()
             return
         }
-        let frame = NSRect(origin: MailIconController.startingOrigin(), size: MailIconController.size)
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-
-        let dragArea = MailIconDragView(frame: NSRect(origin: .zero, size: MailIconController.size))
+        let panel = NotchPanel(frame: NSRect(x: 0, y: 0, width: 80, height: 24))
+        let dragArea = MailIconDragView(frame: panel.contentRect(forFrameRect: panel.frame))
         dragArea.onClick = { [weak self] in
             self?.onOpen?()
+        }
+        dragArea.onDrag = { [weak self] in
+            self?.followPointer()
         }
         dragArea.onDragEnded = { [weak self] in
             self?.keepOnScreen()
@@ -54,15 +42,16 @@ final class MailIconController {
         dragArea.contextMenu = { [weak self] in
             self?.menu?()
         }
-        let picture = PassThroughHostingView(rootView: MailIconView(badge: badge))
+        let picture = PassThroughHostingView(rootView: MiniNotchView(shoulder: MailIconController.shoulder))
         picture.frame = dragArea.bounds
         picture.autoresizingMask = [.width, .height]
         dragArea.addSubview(picture)
+        dragArea.autoresizingMask = [.width, .height]
         panel.contentView = dragArea
-
-        panel.orderFrontRegardless()
         self.panel = panel
-        keepOnScreen()
+
+        place(atX: MailIconController.savedX(), on: MailIconController.savedScreen())
+        panel.orderFrontRegardless()
     }
 
     func hide() {
@@ -71,72 +60,89 @@ final class MailIconController {
         panel = nil
     }
 
-    /// Keeps the icon fully on a screen (after a drag, or when a display goes away) and
-    /// remembers where it is.
+    /// Snaps the tab to the top edge of the screen it's over, fully on screen and clear of
+    /// a camera notch, and remembers where it is.
     func keepOnScreen() {
         guard let panel = panel else { return }
-        var origin = panel.frame.origin
-        let center = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
-        if let visible = (NSScreen.screens.first { $0.frame.contains(center) } ?? NSScreen.main)?.visibleFrame {
-            origin.x = min(max(origin.x, visible.minX), visible.maxX - panel.frame.width)
-            origin.y = min(max(origin.y, visible.minY), visible.maxY - panel.frame.height)
-        }
-        if origin != panel.frame.origin {
-            panel.setFrameOrigin(origin)
-        }
-        UserDefaults.standard.set([Double(origin.x), Double(origin.y)], forKey: MailIconController.originKey)
+        let frame = panel.frame
+        place(atX: frame.midX, on: MailIconController.screen(atX: frame.midX, nearY: frame.maxY))
     }
 
-    /// Where the icon was left, if that's still on a screen; otherwise the top right of
-    /// the main screen, just under the menu bar.
-    private static func startingOrigin() -> NSPoint {
-        if let saved = UserDefaults.standard.array(forKey: originKey) as? [Double], saved.count == 2 {
-            let origin = NSPoint(x: saved[0], y: saved[1])
-            let center = NSPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-            if NSScreen.screens.contains(where: { $0.frame.contains(center) }) {
-                return origin
+    /// While dragging: follow the pointer along the top of whichever screen it's on.
+    private func followPointer() {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? MailIconController.screen(atX: mouse.x, nearY: mouse.y)
+        place(atX: mouse.x, on: screen, save: false, avoidNotch: false)
+    }
+
+    private func place(atX centerX: CGFloat, on screen: NSScreen?, save: Bool = true, avoidNotch: Bool = true) {
+        guard let panel = panel, let screen = screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let height = max(24, screen.frame.maxY - screen.visibleFrame.maxY)
+        let width = MailIconController.bodyWidth + MailIconController.shoulder * 2
+        var x = centerX - width / 2
+
+        if avoidNotch {
+            // Under a camera notch the tab would vanish: move it to whichever side is nearer.
+            let placement = NotchPlacement.placement(for: screen)
+            if placement.metrics.hasNotch {
+                let half = placement.metrics.notchWidth / 2 + 6
+                let notch = (screen.frame.midX - half)...(screen.frame.midX + half)
+                if notch.overlaps(x...(x + width)) {
+                    x = centerX < screen.frame.midX ? notch.lowerBound - width : notch.upperBound
+                }
             }
         }
-        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
-        return NSPoint(x: visible.maxX - size.width - 16, y: visible.maxY - size.height - 10)
+        x = min(max(x, screen.frame.minX), screen.frame.maxX - width)
+        panel.setFrame(NSRect(x: x, y: screen.frame.maxY - height, width: width, height: height), display: true)
+
+        if save {
+            // Saved as a share of the screen's width, so it lands in the same spot after the
+            // screen's resolution or arrangement changes.
+            let share = (x + width / 2 - screen.frame.minX) / screen.frame.width
+            UserDefaults.standard.set(["share": Double(share), "screen": Double(screen.displayID)],
+                                      forKey: MailIconController.positionKey)
+        }
+    }
+
+    private static func screen(atX x: CGFloat, nearY y: CGFloat) -> NSScreen? {
+        let columns = NSScreen.screens.filter { $0.frame.minX <= x && x < $0.frame.maxX }
+        return columns.min { abs($0.frame.maxY - y) < abs($1.frame.maxY - y) } ?? NSScreen.main
+    }
+
+    private static func savedScreen() -> NSScreen? {
+        let saved = UserDefaults.standard.dictionary(forKey: positionKey)
+        if let id = saved?["screen"] as? Double,
+           let screen = NSScreen.screens.first(where: { Double($0.displayID) == id }) {
+            return screen
+        }
+        return NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// Where the tab was left; at first, just right of the notch.
+    private static func savedX() -> CGFloat {
+        guard let screen = savedScreen() else { return 0 }
+        if let share = UserDefaults.standard.dictionary(forKey: positionKey)?["share"] as? Double {
+            return screen.frame.minX + CGFloat(share) * screen.frame.width
+        }
+        let notch = NotchPlacement.placement(for: screen).metrics.notchWidth
+        return screen.frame.midX + notch / 2 + 12 + bodyWidth / 2 + shoulder
     }
 }
 
-final class MailIconBadge: ObservableObject {
-    @Published var unread = 0
-}
-
-/// The round mail icon with a red unread badge.
-struct MailIconView: View {
-    @ObservedObject var badge: MailIconBadge
+/// The minimised tab: notch-black, flat against the top edge, with a mail icon. No numbers.
+struct MiniNotchView: View {
+    let shoulder: CGFloat
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Circle()
+        ZStack {
+            NotchShape(bottomRadius: 9, shoulder: shoulder)
                 .fill(Color.black)
-                .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
-                .overlay(
-                    Image(systemName: "envelope.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.text)
-                )
-                .frame(width: 40, height: 40)
-                .shadow(color: Color.black.opacity(0.35), radius: 5, x: 0, y: 2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .padding(EdgeInsets(top: 0, leading: 6, bottom: 6, trailing: 0))
-
-            if badge.unread > 0 {
-                Text(UnreadText.format(badge.unread))
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
-                    .foregroundStyle(Color.white)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, 5)
-                    .frame(minWidth: 18, minHeight: 18)
-                    .background(Capsule().fill(Color(hex: 0xFF453A)))
-            }
+            Image(systemName: "envelope.fill")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
         }
-        .frame(width: 64, height: 54)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
     }
 }
 
@@ -147,14 +153,14 @@ final class PassThroughHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-/// Click to open, drag to move, right-click for the menu.
+/// Click to open, drag to slide along the top, right-click for the menu.
 final class MailIconDragView: NSView {
     var onClick: (() -> Void)?
+    var onDrag: (() -> Void)?
     var onDragEnded: (() -> Void)?
     var contextMenu: (() -> NSMenu?)?
 
     private var grabbedAt: NSPoint?
-    private var startOrigin: NSPoint?
     private var dragging = false
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -163,27 +169,23 @@ final class MailIconDragView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         grabbedAt = NSEvent.mouseLocation
-        startOrigin = window?.frame.origin
         dragging = false
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let window = window, let grabbedAt = grabbedAt, let startOrigin = startOrigin else { return }
+        guard let grabbedAt = grabbedAt else { return }
         let now = NSEvent.mouseLocation
-        let dx = now.x - grabbedAt.x
-        let dy = now.y - grabbedAt.y
-        if !dragging && abs(dx) < 3 && abs(dy) < 3 {
+        if !dragging && abs(now.x - grabbedAt.x) < 3 && abs(now.y - grabbedAt.y) < 3 {
             return // still a click, not a drag
         }
         dragging = true
-        window.setFrameOrigin(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy))
+        onDrag?()
     }
 
     override func mouseUp(with event: NSEvent) {
         let wasDragging = dragging
         let wasPressed = grabbedAt != nil
         grabbedAt = nil
-        startOrigin = nil
         dragging = false
         if wasDragging {
             onDragEnded?()

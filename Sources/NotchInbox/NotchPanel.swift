@@ -184,7 +184,7 @@ final class NotchWindowController {
                 cancelPending()
             }
         case .peek:
-            if inside {
+            if inside || model.homePinned {
                 cancelPending()
             } else {
                 schedule(after: 0.2) { [weak self] in self?.model.unpeek() }
@@ -205,10 +205,13 @@ final class NotchWindowController {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         guard let panel = panel, panel.isKeyWindow, model.level != .rest else { return event }
 
-        if event.keyCode == 53 { // Escape steps back one level
-            if model.level == .detail {
+        if event.keyCode == 53 { // Escape steps back one level: email → inboxes → tools → closed
+            switch model.level {
+            case .detail:
                 model.back()
-            } else {
+            case .lanes:
+                model.goHome()
+            default:
                 model.close()
             }
             return nil

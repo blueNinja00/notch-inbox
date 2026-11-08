@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuBarOnlyItems: [NSMenuItem] = []
     private var minimiseItem: NSMenuItem?
 
-    /// Minimised: a small mail icon you can drag anywhere stands in for the notch.
+    /// Minimised: a small tab with a mail icon, slid anywhere along the top, stands in for the notch.
     private static let minimisedKey = "minimisedToIcon"
     private var minimised = UserDefaults.standard.bool(forKey: AppDelegate.minimisedKey)
     private let mailIcon = MailIconController()
@@ -257,19 +257,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func refreshMailIcon() {
-        minimiseItem?.title = minimised ? "Show in the Notch" : "Minimise to Mail Icon"
-        guard mailIcon.isShown else { return }
-        mailIcon.setUnread(models.first?.totalUnread ?? 0)
+        minimiseItem?.title = minimised ? "Show the Full Notch" : "Minimise the Notch"
     }
 
-    /// Clicking the mail icon opens the inboxes at the notch of the screen it's on, or
-    /// closes them if they're open.
+    /// Clicking the minimised tab opens the primary menu at the notch of the screen it's
+    /// on, or closes whatever is open there.
     private func openFromMailIcon() {
         let screen = mailIcon.screen
         let target = screens.values.first(where: { $0.screen == screen }) ?? screens.values.first
         guard let model = target?.model else { return }
         if model.level == .rest {
-            model.openLanes()
+            model.goHome()
         } else {
             model.close()
         }
@@ -597,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let minimise = NSMenuItem(title: minimised ? "Show in the Notch" : "Minimise to Mail Icon",
+        let minimise = NSMenuItem(title: minimised ? "Show the Full Notch" : "Minimise the Notch",
                                   action: #selector(toggleMinimised), keyEquivalent: "")
         minimise.target = self
         menu.addItem(minimise)

@@ -3,7 +3,7 @@ import Foundation
 /// The four sizes the notch moves through.
 enum NotchLevel: Equatable {
     case rest    // closed: the notch plus small unread "ears"
-    case peek    // hover: one tile per account
+    case peek    // the primary menu: one tile per tool (Mail first); hover or click
     case lanes   // click: one lane per inbox
     case detail  // click an inbox: it widens into list + full message
 }

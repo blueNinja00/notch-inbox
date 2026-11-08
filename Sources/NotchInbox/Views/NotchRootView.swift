@@ -42,7 +42,7 @@ struct NotchRootView: View {
             RestView(model: model)
                 .transition(.opacity)
         case .peek:
-            PeekView(model: model)
+            HomeView(model: model)
                 .transition(.opacity)
         case .lanes:
             LanesView(model: model)

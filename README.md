@@ -29,7 +29,7 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 
 Change either per account, or hide an account, in the app menu (sliders button) under the account's address.
 
-**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out at once; within about 30 seconds the add-on marks it read in Gmail too (the add-on's popup shows "Marked read in Gmail"). If Gmail hasn't caught up after 10 minutes, the notch shows it unread again.
+**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once; within about 30 seconds the add-on marks it read in Gmail too, then checks that Gmail took it (the add-on's popup shows "Marked read in Gmail"). If Gmail hasn't caught up after 10 minutes, the notch shows it unread again.
 
 The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
@@ -62,12 +62,13 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count) and **Notes** (how many, and the latest). More tools will join them. Click anywhere on it to keep it open.
+- **Assistant:** chat with Qwen, an AI that runs on your Mac through [Ollama](https://ollama.com), for everyday help: planning your day, summarising email, what's due, writing replies. It can see your newest emails and notes if you let it (a checkbox under the chat); nothing leaves your Mac. The first time, it shows the one Terminal command to download the right Qwen model for your Mac's memory.
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
 - **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
 - **Click the Mail tile:** it opens into three lanes, one per inbox. The grid button at the top left goes back to the primary menu.
 - **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
 - **Click outside, or press Esc** to close. Esc steps back one level: email → inboxes → primary menu → closed.
-- **Minimise:** the button beside the sliders (or **Minimise the Notch** in the menu) hides the numbers and everything at the notch, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open), right-click it for the menu, and choose **Show the Full Notch** to go back.
+- **Two modes:** the switch at the top right of the primary menu (or the app menu) picks between **Notch at the Top**, which opens when you hover, and **Mail Tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for the menu.
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 

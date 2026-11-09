@@ -356,26 +356,51 @@ async function sendEmail(email) {
 
 // ---- Marking read ----------------------------------------------------------------------------
 
-// Emails you read in the notch: mark them read in Gmail, the way Gmail's own page does. The
-// next sync shows whether it worked (the email leaves the unread feed); if not, the app asks
-// again for a while.
+// Emails you read in the notch: mark them read in Gmail, the way Gmail's own page does.
+// Gmail has had a few forms of this request over the years, so after sending, the add-on
+// checks the unread feed: if the emails are still there, it tries the next form next time
+// (the app keeps asking for about 10 minutes) and remembers whichever one works.
+const MARK_READ_FORMS = [
+  (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&view=up&act=rd&rt=j`, body: `t=${hex}` }),
+  (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&act=rd&t=${hex}`, body: `at=${encodeURIComponent(at)}` }),
+  (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&view=up&act=rd&rt=j&t=${hex}`, body: `t=${hex}&at=${encodeURIComponent(at)}` }),
+];
+
 async function markRead(items, feeds, status) {
   const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
-  const saved = await chrome.storage.local.get('iks');
+  const saved = await chrome.storage.local.get(['iks', 'markReadForm']);
   const iks = saved.iks || {};
-  let sent = 0;
+  const form = (saved.markReadForm || 0) % MARK_READ_FORMS.length;
+  const tried = [];
   let failed = 0;
   for (const item of items.slice(0, 20)) {
     if (!item || typeof item.id !== 'string' || !slots.has(item.account)) continue;
-    const ok = await markOneRead(slots.get(item.account), item, iks);
-    if (ok) sent += 1; else failed += 1;
-    console.info('[Notch Inbox Link] mark read', item.account, ok ? 'sent' : 'failed');
+    const index = slots.get(item.account);
+    if (await markOneRead(index, item, iks, form)) tried.push({ index, id: item.id });
+    else failed += 1;
   }
-  status.markRead = { sent, failed, at: Date.now() };
+
+  // Did Gmail take it? Look again a moment later.
+  let worked = 0;
+  if (tried.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    for (const index of new Set(tried.map((t) => t.index))) {
+      const listed = (await Promise.all([getFeed(index, PRIMARY_FEED), getFeed(index, INBOX_FEED)])).filter(Boolean);
+      if (listed.length === 0) continue;
+      for (const t of tried.filter((x) => x.index === index)) {
+        if (!listed.some((xml) => xml.includes(t.id))) worked += 1;
+      }
+    }
+    if (worked === 0) {
+      await chrome.storage.local.set({ markReadForm: form + 1 }); // try the next form next time
+    }
+  }
+  console.info('[Notch Inbox Link] mark read: form', form, 'sent', tried.length, 'worked', worked, 'failed', failed);
+  status.markRead = { sent: tried.length, worked, failed, at: Date.now() };
   await chrome.storage.local.set({ iks, status });
 }
 
-async function markOneRead(index, item, iks) {
+async function markOneRead(index, item, iks, form) {
   const ids = NotchMime.messageIds(item.id, item.link);
   if (!ids) return false;
   let ik = iks[item.account];
@@ -385,12 +410,13 @@ async function markOneRead(index, item, iks) {
   }
   const at = await gmailActionToken(index);
   if (!ik || !at) return false;
+  const request = MARK_READ_FORMS[form](ik, at, ids.hex);
   try {
-    const response = await fetch(`${GMAIL}${index}/?ui=2&ik=${ik}&at=${encodeURIComponent(at)}&act=rd&t=${ids.hex}`, {
+    const response = await fetch(`${GMAIL}${index}/?${request.query}`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
-      body: `at=${encodeURIComponent(at)}`,
+      body: request.body,
     });
     return response.ok;
   } catch (error) {

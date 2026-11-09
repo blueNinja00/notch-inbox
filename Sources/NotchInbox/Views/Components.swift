@@ -170,7 +170,6 @@ struct PanelActions: View {
             } else {
                 IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
             }
-            MinimiseButton(model: model)
             IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
                        action: { model.showAppMenu() })
         }
@@ -242,19 +241,34 @@ struct BackButton: View {
     }
 }
 
-/// Shrinks everything to the small tab at the top of the screen. If it's already
-/// minimised, this just closes the panel back into the tab.
-struct MinimiseButton: View {
+/// The two ways to show Notch Inbox: the notch at the top that opens when you hover, or
+/// a small mail tab you can slide along the top and click to open.
+struct ModeSwitch: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
-        IconButton(symbol: "minus", label: "Minimise to a small tab you can slide along the top",
-                   action: {
-                       if model.minimised {
-                           model.close()
-                       } else {
-                           model.setMinimised(true)
-                       }
-                   })
+        HStack(spacing: 2) {
+            option(symbol: "menubar.rectangle", label: "Notch at the top: opens when you hover",
+                   selected: !model.minimised, choose: { model.setMinimised(false) })
+            option(symbol: "envelope", label: "Mail tab: drag it along the top, click to open",
+                   selected: model.minimised, choose: { model.setMinimised(true) })
+        }
+        .padding(2)
+        .background(Capsule().fill(Theme.raised))
+    }
+
+    private func option(symbol: String, label: String, selected: Bool, choose: @escaping () -> Void) -> some View {
+        Button(action: choose) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(selected ? Theme.onAccent : Theme.secondary)
+                .frame(width: 30, height: 24)
+                .background(Capsule().fill(selected ? Theme.text : Color.clear))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(Text(label))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

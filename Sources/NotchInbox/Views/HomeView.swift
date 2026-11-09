@@ -20,13 +20,14 @@ struct HomeView: View {
             // Short: three tiles in a row. Dragged taller: Mail on the left with your
             // latest emails, Notes and the slot for more tools on the right.
             GeometryReader { area in
-                if area.size.height > 170 {
+                if area.size.height > 200 {
                     HStack(spacing: 8) {
                         MailToolTile(model: model)
                         VStack(spacing: 8) {
                             if let store = model.notesStore {
                                 NotesToolTile(model: model, store: store)
                             }
+                            AssistantToolTile(model: model, assistant: Assistant.shared)
                             MoreToolsTile(compact: true)
                                 .frame(height: 40)
                         }
@@ -37,10 +38,10 @@ struct HomeView: View {
                         MailToolTile(model: model)
                         if let store = model.notesStore {
                             NotesToolTile(model: model, store: store)
-                                .frame(width: min(max(area.size.width * 0.3, 180), 320))
+                                .frame(width: min(max(area.size.width * 0.24, 160), 300))
                         }
-                        MoreToolsTile(compact: false)
-                            .frame(width: 100)
+                        AssistantToolTile(model: model, assistant: Assistant.shared)
+                            .frame(width: min(max(area.size.width * 0.24, 160), 300))
                     }
                 }
             }
@@ -96,7 +97,8 @@ struct HomeActions: View {
                 UpdateNote(text: note)
                     .padding(.trailing, 4)
             }
-            MinimiseButton(model: model)
+            ModeSwitch(model: model)
+                .padding(.trailing, 4)
             IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
                        action: { model.showAppMenu() })
         }

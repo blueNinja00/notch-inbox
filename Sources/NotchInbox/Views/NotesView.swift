@@ -32,7 +32,6 @@ struct NotesView: View {
                     IconButton(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                                label: expanded ? "Make notes smaller" : "Expand notes",
                                action: { expanded ? model.back() : model.expandNotes() })
-                    MinimiseButton(model: model)
                     IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
                                action: { model.showAppMenu() })
                 }

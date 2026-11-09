@@ -32,8 +32,9 @@ function render(status) {
   when.textContent = status.at ? `Last checked ${new Date(status.at).toLocaleTimeString()}` : '';
   let whole = status.ok ? wholeEmails(status) : '';
   if (status.ok && status.markRead) {
-    const { sent, failed } = status.markRead;
-    whole += ` · Marked read in Gmail: ${sent}${failed ? ` (${failed} couldn’t be)` : ''}`;
+    const { sent, worked, failed } = status.markRead;
+    const missed = (sent || 0) - (worked || 0) + (failed || 0);
+    whole += ` · Marked read in Gmail: ${worked || 0}${missed ? ` (${missed} not yet, trying again)` : ''}`;
   }
   document.getElementById('whole').textContent = whole;
 }

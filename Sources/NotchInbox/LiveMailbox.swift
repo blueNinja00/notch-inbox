@@ -205,6 +205,17 @@ struct LiveMailbox {
         return true
     }
 
+    /// Unread counts as the notch shows them: Gmail's, minus emails you've read here that
+    /// Gmail hasn't caught up with yet, so the number drops the moment you read something.
+    var shownUnread: [String: Int] {
+        var counts = unread
+        for (id, _) in readHere {
+            guard let account = store[id]?.accountID, let count = counts[account] else { continue }
+            counts[account] = max(0, count - 1)
+        }
+        return counts
+    }
+
     /// Emails to mark read in Gmail: read here, still unread there.
     func toMarkRead(now: Date = Date()) -> [LinkReply.Wanted] {
         readHere

@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var accountItems: [NSMenuItem] = []
     /// "Open Inboxes", hidden when the menu opens from inside the notch.
     private var menuBarOnlyItems: [NSMenuItem] = []
-    private var minimiseItem: NSMenuItem?
+    private var modeItems: (notch: NSMenuItem, tab: NSMenuItem)?
 
     /// Minimised: a small tab with a mail icon, slid anywhere along the top, stands in for the notch.
     private static let minimisedKey = "minimisedToIcon"
@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         syncScreens()
         mailIcon.onOpen = { [weak self] in
             self?.openFromMailIcon()
+        }
+        Assistant.shared.context = { [weak self] in
+            self?.assistantContext() ?? ""
         }
         mailIcon.menu = { [weak self] in
             self?.appMenu
@@ -178,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         model.wholeEmails = wholeEmails
         if lastFeedAt != nil {
-            model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
+            model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.shownUnread)
         }
         model.pendingUpdate = updater.availableRelease?.build
         return model
@@ -253,12 +256,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let accounts = mailbox.accounts
         let messages = mailbox.messages
         for model in models {
-            model.showLive(accounts: accounts, messages: messages, unread: mailbox.unread)
+            model.showLive(accounts: accounts, messages: messages, unread: mailbox.shownUnread)
             if model.wholeEmails != wholeEmails {
                 model.wholeEmails = wholeEmails
             }
         }
         refreshMailIcon()
+    }
+
+    // MARK: Assistant
+
+    /// What Qwen may know about your day: your newest real emails and latest notes.
+    private func assistantContext() -> String {
+        var emails: [(account: String, sender: String, subject: String, date: Date, unread: Bool)] = []
+        if let model = models.first, !model.isSample {
+            let shown = Set(model.accounts.map { $0.id })
+            emails = model.messages
+                .filter { shown.contains($0.accountID) }
+                .sorted { $0.date > $1.date }
+                .prefix(20)
+                .map { (account: model.account($0.accountID)?.name ?? $0.accountID,
+                        sender: $0.sender, subject: $0.subject, date: $0.date, unread: $0.isUnread) }
+        }
+        let recentNotes = notes.notes
+            .filter { !$0.isEmpty }
+            .prefix(10)
+            .map { (title: $0.title, preview: $0.preview) }
+        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), now: Date())
     }
 
     // MARK: Minimised to a mail icon
@@ -282,7 +306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The minimised tab hides while the panel is open, and comes back when it closes.
     private func refreshMailIcon() {
-        minimiseItem?.title = minimised ? "Show the Full Notch" : "Minimise the Notch"
+        modeItems?.notch.state = minimised ? .off : .on
+        modeItems?.tab.state = minimised ? .on : .off
         guard minimised else { return }
         let somethingOpen = models.contains { $0.level != .rest }
         if somethingOpen {
@@ -330,8 +355,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func toggleMinimised() {
-        setMinimised(!minimised)
+    @objc private func useNotchMode() {
+        setMinimised(false)
+    }
+
+    @objc private func useTabMode() {
+        setMinimised(true)
     }
 
     private func refreshLinkItem() {
@@ -652,10 +681,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let minimise = NSMenuItem(title: minimised ? "Show the Full Notch" : "Minimise the Notch",
-                                  action: #selector(toggleMinimised), keyEquivalent: "")
-        minimise.target = self
-        menu.addItem(minimise)
+        // Two ways to show Notch Inbox.
+        let notchMode = NSMenuItem(title: "Notch at the Top (opens on hover)", action: #selector(useNotchMode), keyEquivalent: "")
+        notchMode.target = self
+        menu.addItem(notchMode)
+        let tabMode = NSMenuItem(title: "Mail Tab (drag along the top, click to open)", action: #selector(useTabMode), keyEquivalent: "")
+        tabMode.target = self
+        menu.addItem(tabMode)
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(title: "Quit Notch Inbox", action: #selector(quit), keyEquivalent: "q")
@@ -669,7 +701,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateItem = update
         linkItem = link
         menuBarOnlyItems = [open]
-        minimiseItem = minimise
+        modeItems = (notchMode, tabMode)
+        refreshMailIcon()
         updaterChanged(updater.state)
         refreshLinkItem()
     }

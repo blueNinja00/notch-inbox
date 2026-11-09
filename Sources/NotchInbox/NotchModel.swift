@@ -113,6 +113,7 @@ final class NotchModel: ObservableObject {
     enum Tool: Equatable {
         case mail
         case notes
+        case assistant
     }
 
     @Published var tool: Tool = .mail
@@ -160,6 +161,17 @@ final class NotchModel: ObservableObject {
             selectedNoteID = notesStore?.notes.first?.id
         }
         level = .lanes
+    }
+
+    /// The Qwen assistant.
+    func openAssistant() {
+        tool = .assistant
+        level = .lanes
+    }
+
+    func expandAssistant() {
+        tool = .assistant
+        level = .detail
     }
 
     /// Notes in the bigger, detail-sized panel.

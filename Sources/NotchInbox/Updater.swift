@@ -137,16 +137,25 @@ final class Updater: ObservableObject {
         }
 
         state = .installing
-        download(release.downloadURL, into: workFolder, attempt: 1) { [weak self] outcome in
+        download(release.downloadURLs, into: workFolder, attempt: 1) { [weak self] outcome in
             self?.finishInstall(outcome, replacing: appURL, workFolder: workFolder)
         }
     }
 
     /// GitHub sometimes answers a download with a server error (502, 503, 504) or drops the
-    /// connection; that passes in seconds. So try up to three times, waiting a little longer
-    /// each time, before saying it failed.
-    private func download(_ url: URL, into workFolder: URL, attempt: Int, done: @escaping (Result<URL, Error>) -> Void) {
-        URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, error in
+    /// connection. So it tries GitHub's API route first, then the usual link, each up to
+    /// three times, waiting a little longer each time, before saying it failed.
+    private func download(_ urls: [URL], into workFolder: URL, attempt: Int, done: @escaping (Result<URL, Error>) -> Void) {
+        guard let url = urls.first else {
+            DispatchQueue.main.async { done(.failure(UpdateError("There was nothing to download."))) }
+            return
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        if url.host == "api.github.com" {
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        }
+        URLSession.shared.downloadTask(with: request) { [weak self] tempURL, response, error in
             // The downloaded file is deleted when this callback returns, so move it first.
             let status = (response as? HTTPURLResponse)?.statusCode ?? (error == nil ? 200 : 0)
             if let tempURL = tempURL, error == nil, status < 400 {
@@ -165,8 +174,13 @@ final class Updater: ObservableObject {
             let passing = status >= 500 || status == 429 || status == 0
             if passing && attempt < 3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt * 3)) {
-                    self?.download(url, into: workFolder, attempt: attempt + 1, done: done)
+                    self?.download(urls, into: workFolder, attempt: attempt + 1, done: done)
                 }
+                return
+            }
+            if urls.count > 1 {
+                // This route isn't working: the next one, fresh.
+                self?.download(Array(urls.dropFirst()), into: workFolder, attempt: 1, done: done)
                 return
             }
             let failure = error ?? UpdateError(passing

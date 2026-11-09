@@ -9,7 +9,7 @@ It shows sample mail until you link your Gmail through the browser (below). **Se
 Paste this into Terminal (macOS 13 Ventura or later):
 
 ```sh
-curl -fL -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/releases/latest/download/NotchInbox.zip && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
+curl -fL -H "Accept: application/octet-stream" -o /tmp/NotchInbox.zip "$(curl -fsS https://api.github.com/repos/blueNinja00/notch-inbox/releases/latest | grep -o '"url": *"https://api.github.com/repos/blueNinja00/notch-inbox/releases/assets/[0-9]*"' | head -1 | grep -o 'https://[^"]*')" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
 ```
 
 It downloads the latest build, puts **Notch Inbox** in your Applications folder and starts it. To have it start when you log in, add it under **System Settings → General → Login Items**.

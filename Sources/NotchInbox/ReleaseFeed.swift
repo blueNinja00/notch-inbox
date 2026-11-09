@@ -5,6 +5,15 @@ struct ReleaseInfo: Equatable {
     let build: Int
     let notes: String
     let downloadURL: URL
+    /// The same file through GitHub's API (asked for with "Accept: application/octet-stream").
+    /// It goes straight to GitHub's file servers, and kept working when the usual link
+    /// answered 504.
+    var apiURL: URL? = nil
+
+    /// Where to download from, in order.
+    var downloadURLs: [URL] {
+        [apiURL, downloadURL].compactMap { $0 }
+    }
 }
 
 /// Reads GitHub's "latest release" response. Release tags look like "build-12",
@@ -14,6 +23,7 @@ enum ReleaseFeed {
         struct Asset: Decodable {
             let name: String
             let browserDownloadUrl: URL
+            let url: URL?
         }
 
         let tagName: String
@@ -29,7 +39,8 @@ enum ReleaseFeed {
               let asset = response.assets.first(where: { $0.name == assetName }) else {
             return nil
         }
-        return ReleaseInfo(build: build, notes: response.body ?? "", downloadURL: asset.browserDownloadUrl)
+        let api = asset.url.flatMap { $0.host == "api.github.com" ? $0 : nil }
+        return ReleaseInfo(build: build, notes: response.body ?? "", downloadURL: asset.browserDownloadUrl, apiURL: api)
     }
 
     static func buildNumber(from tag: String) -> Int? {

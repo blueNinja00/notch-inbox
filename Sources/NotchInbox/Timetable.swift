@@ -54,14 +54,22 @@ enum ClockTime {
         return "\(hour == 0 ? 12 : hour):\(String(format: "%02d", minutes % 60))"
     }
 
+    /// 960 → "4 pm", 990 → "4:30 pm": for hour blocks.
+    static func hour(_ minutes: Int) -> String {
+        let suffix = minutes / 60 % 24 < 12 ? " am" : " pm"
+        let hour = (minutes / 60) % 12
+        return (minutes % 60 == 0 ? "\(hour == 0 ? 12 : hour)" : short(minutes)) + suffix
+    }
+
     /// 530 → "8:50 am", 790 → "1:10 pm".
     static func long(_ minutes: Int) -> String {
         short(minutes) + (minutes / 60 % 24 < 12 ? " am" : " pm")
     }
 }
 
-/// Your school timetable: the periods of the day (classes and breaks), and what's on in
-/// each one, Monday to Friday. It can run over two weeks (Week A and Week B).
+/// Your timetable: the school day's periods (classes and breaks) with an hour block for each
+/// hour before and after school, for extracurriculars, and what's on in each, Monday to
+/// Friday (or the whole week). It can run over two weeks (Week A and Week B).
 struct Timetable: Codable, Equatable {
     struct Period: Codable, Equatable, Identifiable {
         var id: UUID
@@ -71,6 +79,13 @@ struct Timetable: Codable, Equatable {
         var end: Int
         /// Recess, lunch and the like: shown as a slim row across every day.
         var isBreak: Bool
+        /// An hour before or after school, for extracurriculars. Worked out from the school
+        /// day, never saved.
+        var isActivity = false
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, start, end, isBreak
+        }
 
         var times: String { "\(ClockTime.short(start))–\(ClockTime.short(end))" }
 
@@ -98,14 +113,14 @@ struct Timetable: Codable, Equatable {
         }
     }
 
-    /// Where a lesson sits: week of the cycle (0 = A, 1 = B), weekday (0 = Monday), period.
+    /// Where a lesson sits: week of the cycle (0 = A, 1 = B), day (0 = Monday … 6 = Sunday), period.
     struct Slot: Hashable {
         var week: Int
         var day: Int
         var period: UUID
     }
 
-    /// Oldest first, always in time order.
+    /// The school day's periods, in time order.
     private(set) var periods: [Period]
     /// Keyed "week-day-period".
     private(set) var lessons: [String: Lesson]
@@ -114,35 +129,147 @@ struct Timetable: Codable, Equatable {
     var twoWeeks: Bool
     /// A Monday of a Week A.
     var weekA: Date
+    /// How many hour blocks come before school, ending when school starts.
+    private(set) var beforeSchool: Int
+    /// How many hour blocks come after school, starting when school ends.
+    private(set) var afterSchool: Int
+    /// Saturday and Sunday too, for weekend activities.
+    var weekends: Bool
 
-    static let days = 5
-    static let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-    static let shortDayNames = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    static let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    static let shortDayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     static let colourCount = 8
+    static let standardBefore = 2
+    static let standardAfter = 5
+    static let maxBefore = 4
+    static let maxAfter = 8
 
     static func weekName(_ week: Int) -> String { week == 1 ? "Week B" : "Week A" }
 
-    /// A usual NSW high school day to start from: five periods, recess and lunch.
+    /// Days on the timetable: Monday to Friday, or the whole week.
+    var dayCount: Int { weekends ? 7 : 5 }
+
+    private static func period(_ name: String, _ start: String, _ end: String, isBreak: Bool = false) -> Period {
+        Period(id: UUID(), name: name, start: ClockTime.parse(start) ?? 0, end: ClockTime.parse(end) ?? 0, isBreak: isBreak)
+    }
+
+    /// School from 8 am to 4 pm: seven periods, recess and lunch.
+    static func standardSchoolDay() -> [Period] {
+        [
+            period("Period 1", "8:00", "9:00"),
+            period("Period 2", "9:00", "10:00"),
+            period("Period 3", "10:00", "11:00"),
+            period("Recess", "11:00", "11:20", isBreak: true),
+            period("Period 4", "11:20", "12:20"),
+            period("Period 5", "12:20", "1:20"),
+            period("Lunch", "1:20", "2:00", isBreak: true),
+            period("Period 6", "2:00", "3:00"),
+            period("Period 7", "3:00", "4:00"),
+        ]
+    }
+
+    /// The day build 15 started everyone on (8:50 to 2:50), to move it to the 8-to-4 day.
+    private static let firstStandard: [(String, Int, Int, Bool)] = [
+        ("Period 1", 530, 590, false), ("Period 2", 590, 650, false), ("Recess", 650, 670, true),
+        ("Period 3", 670, 730, false), ("Period 4", 730, 790, false), ("Lunch", 790, 830, true),
+        ("Period 5", 830, 890, false),
+    ]
+
+    /// A new timetable: school from 8 to 4, two hours before and five after for activities.
     static func standard(now: Date = Date(), calendar: Calendar = .current) -> Timetable {
-        func period(_ name: String, _ start: String, _ end: String, isBreak: Bool = false) -> Period {
-            Period(id: UUID(), name: name, start: ClockTime.parse(start) ?? 0, end: ClockTime.parse(end) ?? 0, isBreak: isBreak)
+        Timetable(periods: standardSchoolDay(), lessons: [:], subjectColours: [:], twoWeeks: false,
+                  weekA: monday(of: now, calendar: calendar), beforeSchool: standardBefore,
+                  afterSchool: standardAfter, weekends: false)
+    }
+
+    init(periods: [Period], lessons: [String: Lesson], subjectColours: [String: Int], twoWeeks: Bool,
+         weekA: Date, beforeSchool: Int, afterSchool: Int, weekends: Bool) {
+        self.periods = periods
+        self.lessons = lessons
+        self.subjectColours = subjectColours
+        self.twoWeeks = twoWeeks
+        self.weekA = weekA
+        self.beforeSchool = beforeSchool
+        self.afterSchool = afterSchool
+        self.weekends = weekends
+    }
+
+    /// Reads a saved timetable. One saved by build 15 has no hour blocks yet: it gets them,
+    /// and if its school day was still the one it started with, the 8-to-4 day, with every
+    /// lesson moved to the period of the same name.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        periods = try values.decode([Period].self, forKey: .periods)
+        lessons = try values.decode([String: Lesson].self, forKey: .lessons)
+        subjectColours = try values.decode([String: Int].self, forKey: .subjectColours)
+        twoWeeks = try values.decode(Bool.self, forKey: .twoWeeks)
+        weekA = try values.decode(Date.self, forKey: .weekA)
+        weekends = try values.decodeIfPresent(Bool.self, forKey: .weekends) ?? false
+        let before = try values.decodeIfPresent(Int.self, forKey: .beforeSchool)
+        let after = try values.decodeIfPresent(Int.self, forKey: .afterSchool)
+        beforeSchool = before ?? Timetable.standardBefore
+        afterSchool = after ?? Timetable.standardAfter
+        if before == nil && after == nil && hasFirstStandardDay {
+            useStandardSchoolDay()
         }
-        return Timetable(periods: [
-            period("Period 1", "8:50", "9:50"),
-            period("Period 2", "9:50", "10:50"),
-            period("Recess", "10:50", "11:10", isBreak: true),
-            period("Period 3", "11:10", "12:10"),
-            period("Period 4", "12:10", "1:10"),
-            period("Lunch", "1:10", "1:50", isBreak: true),
-            period("Period 5", "1:50", "2:50"),
-        ], lessons: [:], subjectColours: [:], twoWeeks: false, weekA: monday(of: now, calendar: calendar))
+    }
+
+    private var hasFirstStandardDay: Bool {
+        periods.count == Timetable.firstStandard.count && zip(periods, Timetable.firstStandard).allSatisfy { period, first in
+            period.name == first.0 && period.start == first.1 && period.end == first.2 && period.isBreak == first.3
+        }
     }
 
     var isEmpty: Bool { lessons.isEmpty }
 
+    /// When school starts and ends: the first and last period.
+    var schoolStart: Int { periods.first?.start ?? 8 * 60 }
+    var schoolEnd: Int { periods.map { $0.end }.max() ?? 16 * 60 }
+
+    /// Hour blocks before school have IDs that stay the same when school times change, so
+    /// what you put in them stays put: 1 is the hour just before school, 2 the one before that.
+    static func blockID(before: Bool, number: Int) -> UUID {
+        UUID(uuidString: String(format: "%08X-0000-4000-8000-%012X", before ? 0xB10C_BEF0 : 0xB10C_AF7E, number))!
+    }
+
+    /// Every row of the day, earliest first: hour blocks before school, the school day, hour
+    /// blocks after.
+    var rows: [Period] {
+        var rows: [Period] = []
+        let before = min(beforeSchool, schoolStart / 60)
+        if before > 0 {
+            for number in stride(from: before, through: 1, by: -1) {
+                let start = schoolStart - number * 60
+                rows.append(Period(id: Timetable.blockID(before: true, number: number), name: "Before school",
+                                   start: start, end: start + 60, isBreak: false, isActivity: true))
+            }
+        }
+        rows += periods
+        let after = min(afterSchool, (24 * 60 - schoolEnd) / 60)
+        if after > 0 {
+            for number in 1...after {
+                let start = schoolEnd + (number - 1) * 60
+                rows.append(Period(id: Timetable.blockID(before: false, number: number), name: "After school",
+                                   start: start, end: start + 60, isBreak: false, isActivity: true))
+            }
+        }
+        return rows
+    }
+
     func period(_ id: UUID?) -> Period? {
         guard let id = id else { return nil }
-        return periods.first { $0.id == id }
+        return rows.first { $0.id == id }
+    }
+
+    /// How many hour blocks before and after school (0 to 4 before, 0 to 8 after). What's
+    /// in a block you take away is kept, and comes back if you add it again.
+    mutating func setBlocks(before: Int? = nil, after: Int? = nil) {
+        if let before = before {
+            beforeSchool = max(0, min(Timetable.maxBefore, before))
+        }
+        if let after = after {
+            afterSchool = max(0, min(Timetable.maxAfter, after))
+        }
     }
 
     // MARK: Lessons
@@ -191,7 +318,7 @@ struct Timetable: Codable, Equatable {
         subjectColours = subjectColours.filter { inUse.contains($0.key) }
     }
 
-    /// Every subject on the timetable, A to Z, as you first typed it.
+    /// Every subject (and activity) on the timetable, A to Z, as you first typed it.
     var subjects: [String] {
         var seen: [String: String] = [:]
         for lesson in lessons.values {
@@ -243,9 +370,10 @@ struct Timetable: Codable, Equatable {
         subjectColours = [:]
     }
 
-    // MARK: Periods
+    // MARK: The school day
 
-    /// A new period after the last one, an hour long.
+    /// A new period at the end of the school day, an hour long (the hour blocks after school
+    /// move along).
     @discardableResult
     mutating func addPeriod() -> UUID {
         let start = periods.last?.end ?? 9 * 60
@@ -257,12 +385,14 @@ struct Timetable: Codable, Equatable {
         return period.id
     }
 
-    /// Saves a period's new name, times or kind. Times that end before they start are refused.
+    /// Saves a period's new name, times or kind. Times that end before they start are refused,
+    /// and so are hour blocks, which follow the school day.
     @discardableResult
     mutating func updatePeriod(_ period: Period) -> Bool {
         guard period.end > period.start, (0..<24 * 60).contains(period.start), period.end <= 24 * 60,
               let index = periods.firstIndex(where: { $0.id == period.id }) else { return false }
         var saved = period
+        saved.isActivity = false
         saved.name = period.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if saved.name.isEmpty {
             saved.name = periods[index].name
@@ -272,11 +402,38 @@ struct Timetable: Codable, Equatable {
         return true
     }
 
-    /// Takes a period out, with the lessons in it.
+    /// Takes a period out of the school day, with the lessons in it.
     mutating func removePeriod(_ id: UUID) {
+        guard periods.contains(where: { $0.id == id }) else { return }
         periods.removeAll { $0.id == id }
         let suffix = "-" + id.uuidString
         lessons = lessons.filter { !$0.key.hasSuffix(suffix) }
+    }
+
+    /// School from 8 to 4 again (seven periods, recess, lunch). Lessons move to the period of
+    /// the same name; the hour blocks follow.
+    mutating func useStandardSchoolDay() {
+        let fresh = Timetable.standardSchoolDay()
+        var moved: [String: Lesson] = [:]
+        for (key, lesson) in lessons {
+            var newKey = key
+            if let old = periods.first(where: { key.hasSuffix("-" + $0.id.uuidString) }) {
+                guard let match = fresh.first(where: { $0.name.lowercased() == old.name.lowercased() }) else { continue }
+                newKey = String(key.dropLast(old.id.uuidString.count)) + match.id.uuidString
+            }
+            moved[newKey] = lesson
+        }
+        periods = fresh
+        lessons = moved
+        let inUse = Set(moved.values.map { Timetable.subjectKey($0.subject) })
+        subjectColours = subjectColours.filter { inUse.contains($0.key) }
+    }
+
+    var hasStandardSchoolDay: Bool {
+        let fresh = Timetable.standardSchoolDay()
+        return periods.count == fresh.count && zip(periods, fresh).allSatisfy {
+            $0.name == $1.name && $0.start == $1.start && $0.end == $1.end && $0.isBreak == $1.isBreak
+        }
     }
 
     private mutating func sortPeriods() {
@@ -292,10 +449,16 @@ struct Timetable: Codable, Equatable {
         return calendar.date(byAdding: .day, value: -sinceMonday, to: start) ?? start
     }
 
-    /// 0 for Monday … 4 for Friday; nil at the weekend.
-    static func weekday(of date: Date, calendar: Calendar) -> Int? {
-        let day = (calendar.component(.weekday, from: date) + 5) % 7
-        return day < days ? day : nil
+    /// 0 for Monday … 6 for Sunday.
+    static func dayIndex(of date: Date, calendar: Calendar) -> Int {
+        (calendar.component(.weekday, from: date) + 5) % 7
+    }
+
+    /// The date's column on the timetable, or nil on a day it doesn't show (the weekend,
+    /// unless weekends are on).
+    func column(of date: Date, calendar: Calendar = .current) -> Int? {
+        let day = Timetable.dayIndex(of: date, calendar: calendar)
+        return day < dayCount ? day : nil
     }
 
     /// Which week of the cycle a date falls in: 0 (A) or 1 (B). Always 0 for one week.
@@ -318,9 +481,9 @@ struct Timetable: Codable, Equatable {
         calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
     }
 
-    /// A day's periods with what's on in each.
+    /// A day's rows with what's on in each.
     func day(_ day: Int, week: Int) -> [(period: Period, lesson: Lesson?)] {
-        periods.map { period in
+        rows.map { period in
             (period: period, lesson: period.isBreak ? nil : lesson(at: Slot(week: week, day: day, period: period.id)))
         }
     }
@@ -332,47 +495,51 @@ struct Timetable: Codable, Equatable {
         let week: Int
     }
 
-    /// The period going on now (a class or a break), on a school day.
+    /// What's on now: a class, a break, or an activity (an hour block with nothing in it
+    /// doesn't count).
     func now(at date: Date = Date(), calendar: Calendar = .current) -> Moment? {
-        guard let day = Timetable.weekday(of: date, calendar: calendar) else { return nil }
+        guard let day = column(of: date, calendar: calendar) else { return nil }
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
         let week = self.week(of: date, calendar: calendar)
-        guard let period = periods.first(where: { $0.contains(minute) }) else { return nil }
+        guard let period = rows.first(where: { $0.contains(minute) }) else { return nil }
         let lesson = period.isBreak ? nil : self.lesson(at: Slot(week: week, day: day, period: period.id))
+        // An empty hour block, or anything empty at the weekend, isn't "on".
+        if lesson == nil && (period.isActivity || day >= 5) { return nil }
         return Moment(period: period, lesson: lesson, day: day, week: week)
     }
 
-    /// The next class with something in it: later today, or on the next school day.
+    /// The next class or activity with something in it: later today, or on a coming day.
     func next(after date: Date = Date(), calendar: Calendar = .current) -> (moment: Moment, date: Date)? {
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
+        let rows = self.rows
         for offset in 0..<15 {
             guard let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: date)),
-                  let weekday = Timetable.weekday(of: day, calendar: calendar) else { continue }
+                  let column = column(of: day, calendar: calendar) else { continue }
             let week = self.week(of: day, calendar: calendar)
-            for period in periods where !period.isBreak && (offset > 0 || period.start > minute) {
-                if let lesson = lesson(at: Slot(week: week, day: weekday, period: period.id)) {
+            for period in rows where !period.isBreak && (offset > 0 || period.start > minute) {
+                if let lesson = lesson(at: Slot(week: week, day: column, period: period.id)) {
                     let at = calendar.date(byAdding: .minute, value: period.start, to: day) ?? day
-                    return (Moment(period: period, lesson: lesson, day: weekday, week: week), at)
+                    return (Moment(period: period, lesson: lesson, day: column, week: week), at)
                 }
             }
         }
         return nil
     }
 
-    /// "Monday (Week A): 8:50 am Maths in B12 with Ms Lee; …" for the assistant.
+    /// "Monday (Week A): 8:00 am Maths in B12 with Ms Lee; 5:00 pm Soccer at Oval" for the assistant.
     func summary(of date: Date, calendar: Calendar = .current) -> String? {
-        guard let day = Timetable.weekday(of: date, calendar: calendar) else { return nil }
+        guard let column = column(of: date, calendar: calendar) else { return nil }
         let week = self.week(of: date, calendar: calendar)
-        let classes = self.day(day, week: week).compactMap { entry -> String? in
+        let entries = day(column, week: week).compactMap { entry -> String? in
             guard let lesson = entry.lesson, !lesson.subject.isEmpty else { return nil }
             var line = "\(ClockTime.long(entry.period.start)) \(lesson.subject)"
-            if !lesson.room.isEmpty { line += " in \(lesson.room)" }
+            if !lesson.room.isEmpty { line += (entry.period.isActivity ? " at " : " in ") + lesson.room }
             if !lesson.teacher.isEmpty { line += " with \(lesson.teacher)" }
             return line
         }
-        guard !classes.isEmpty else { return nil }
-        let name = Timetable.dayNames[day] + (twoWeeks ? " (\(Timetable.weekName(week)))" : "")
-        return "\(name): " + classes.joined(separator: "; ")
+        guard !entries.isEmpty else { return nil }
+        let name = Timetable.dayNames[column] + (twoWeeks ? " (\(Timetable.weekName(week)))" : "")
+        return "\(name): " + entries.joined(separator: "; ")
     }
 }
 

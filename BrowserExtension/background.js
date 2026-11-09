@@ -6,8 +6,8 @@
 //   2. hand them to the Notch Inbox app on this Mac;
 //   3. open the emails the app asks for (Gmail's "Show original"), decode them (mime.js)
 //      and hand those over too, so the notch can show them in full;
-//   4. mark read in Gmail the emails you read in the notch (with Gmail's read action, or by
-//      opening them in Gmail in a background tab for a few seconds).
+//   4. mark read in Gmail the emails you read in the notch, out of sight (Gmail's read
+//      action, or opening them in a hidden Gmail frame for a few seconds).
 // It only talks to mail.google.com and 127.0.0.1 (this Mac).
 
 importScripts('mime.js');
@@ -190,7 +190,7 @@ async function syncOnce() {
   }
 
   if (reply && Array.isArray(reply.read) && reply.read.length > 0) {
-    await markRead(reply.read, feeds, status);
+    await markRead(reply.read, feeds, status, reply.tabs === true);
   }
   if (reply && Array.isArray(reply.want) && reply.want.length > 0) {
     await readWholeEmails(reply.want, feeds, status);
@@ -357,18 +357,25 @@ async function sendEmail(email) {
 
 // ---- Marking read ----------------------------------------------------------------------------
 
-// Emails you read in the notch get marked read in Gmail, in one of two ways:
+// Emails you read in the notch get marked read in Gmail, all out of sight:
 //   1. Gmail's own read action, sent quietly in the background. Gmail has had a few forms of
 //      it over the years; the add-on checks the unread feed afterwards and moves on to the
 //      next form if the email is still unread. If none of them work, it stops sending them
 //      (trying again after a week).
-//   2. Otherwise it opens the emails in Gmail itself, in a background tab, for a few seconds
-//      each, just as if you'd clicked them, then closes the tab. Each email gets two tries.
+//   2. Otherwise it opens the emails in Gmail in a hidden frame on a page Chrome keeps out of
+//      sight (offscreen.html), a few seconds each, as if you'd clicked them. No tab opens.
+//      Gmail normally refuses to load inside another page; for that hidden frame alone, and
+//      only while it's open, its "don't show me in a frame" headers are set aside. (You
+//      approved this. Gmail in your tabs is untouched.)
+//   3. Only if you turn it on in Notch Inbox (Settings → Gmail link), and the hidden frame
+//      didn't work either: a background tab, closed straight after.
+// Each email gets two tries each way.
 const ACTION_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
-const TAB_TRIES = 2;
-const TAB_EMAILS_PER_SYNC = 4;
+const TRIES = 2;
+const OPEN_PER_SYNC = 4;
 const TAB_LOAD_MS = 30 * 1000;
 const TAB_SETTLE_MS = 4000;
+const HIDDEN_RULE = 47823;
 
 const MARK_READ_FORMS = [
   (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&view=up&act=rd&rt=j`, body: `t=${hex}` }),
@@ -380,12 +387,13 @@ function pause(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function markRead(items, feeds, status) {
+async function markRead(items, feeds, status, allowTabs) {
   const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
-  const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'tabTries']);
+  const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'hiddenTries', 'tabTries']);
   const iks = saved.iks || {};
   const form = (saved.markReadForm || 0) % MARK_READ_FORMS.length;
   const action = saved.readAction || { state: 'unknown', misses: 0, at: 0 };
+  const hiddenTries = saved.hiddenTries || {};
   const tabTries = saved.tabTries || {};
 
   let left = items.slice(0, 20)
@@ -394,7 +402,15 @@ async function markRead(items, feeds, status) {
     .filter((entry) => entry.ids);
   const asked = left.length;
   let worked = 0;
-  let how = '';
+  const how = [];
+
+  // Forget emails the app isn't asking about any more.
+  const ids = new Set(items.map((item) => item && item.id));
+  for (const tries of [hiddenTries, tabTries]) {
+    for (const id of Object.keys(tries)) {
+      if (!ids.has(id)) delete tries[id];
+    }
+  }
 
   // 1. Gmail's read action, unless it's known not to work here.
   if (left.length > 0 && (action.state !== 'off' || Date.now() - action.at > ACTION_RETRY_MS)) {
@@ -410,7 +426,7 @@ async function markRead(items, feeds, status) {
       if (took.length > 0) {
         action.state = 'works';
         action.misses = 0;
-        how = 'action';
+        how.push('action');
       } else {
         action.misses = (action.misses || 0) + 1;
         await chrome.storage.local.set({ markReadForm: form + 1 }); // try the next form next time
@@ -421,32 +437,106 @@ async function markRead(items, feeds, status) {
     }
   }
 
-  // 2. Open what's still unread in Gmail, in a background tab.
-  const ids = new Set(items.map((item) => item && item.id));
-  for (const id of Object.keys(tabTries)) {
-    if (!ids.has(id)) delete tabTries[id]; // the app isn't asking any more
-  }
-  const toOpen = left.filter((entry) => (tabTries[entry.item.id] || 0) < TAB_TRIES).slice(0, TAB_EMAILS_PER_SYNC);
-  let opened = 0;
-  if (toOpen.length > 0) {
-    const pages = toOpen.map((entry) => {
-      const tries = tabTries[entry.item.id] || 0;
-      tabTries[entry.item.id] = tries + 1;
+  // 2. Gmail in a hidden frame, out of sight.
+  let hidden = 0;
+  const forHidden = left.filter((entry) => (hiddenTries[entry.item.id] || 0) < TRIES).slice(0, OPEN_PER_SYNC);
+  if (forHidden.length > 0) {
+    const pages = forHidden.map((entry) => {
+      const tries = hiddenTries[entry.item.id] || 0;
+      hiddenTries[entry.item.id] = tries + 1;
       return gmailPageFor(entry, tries);
     });
-    opened = await openInGmail(pages);
-    if (opened > 0) {
+    hidden = await openOutOfSight(pages);
+    if (hidden > 0) {
       await pause(2000);
-      const still = await stillUnread(toOpen);
-      const took = toOpen.filter((entry) => !still.has(entry.item.id)).length;
-      worked += took;
-      if (took > 0) how = how ? `${how}+tab` : 'tab';
+      const still = await stillUnread(forHidden);
+      const took = forHidden.filter((entry) => !still.has(entry.item.id));
+      worked += took.length;
+      if (took.length > 0) how.push('hidden');
+      left = left.filter((entry) => !took.includes(entry));
     }
   }
 
-  console.info('[Notch Inbox Link] mark read: asked', asked, 'worked', worked, 'opened in a tab', opened, 'action', action.state);
-  status.markRead = { asked, worked, opened, how, action: action.state, at: Date.now() };
-  await chrome.storage.local.set({ iks, status, readAction: action, tabTries });
+  // 3. A background tab, only if you've allowed it, once the hidden frame has had its tries.
+  let opened = 0;
+  if (allowTabs) {
+    const forTab = left
+      .filter((entry) => (hiddenTries[entry.item.id] || 0) >= TRIES && !forHidden.includes(entry))
+      .filter((entry) => (tabTries[entry.item.id] || 0) < TRIES)
+      .slice(0, OPEN_PER_SYNC);
+    if (forTab.length > 0) {
+      const pages = forTab.map((entry) => {
+        const tries = tabTries[entry.item.id] || 0;
+        tabTries[entry.item.id] = tries + 1;
+        return gmailPageFor(entry, tries);
+      });
+      opened = await openInGmail(pages);
+      if (opened > 0) {
+        await pause(2000);
+        const still = await stillUnread(forTab);
+        const took = forTab.filter((entry) => !still.has(entry.item.id)).length;
+        worked += took;
+        if (took > 0) how.push('tab');
+      }
+    }
+  }
+
+  console.info('[Notch Inbox Link] mark read: asked', asked, 'worked', worked, 'hidden', hidden, 'tab', opened, 'action', action.state);
+  status.markRead = { asked, worked, hidden, opened, how: how.join('+'), action: action.state, at: Date.now() };
+  await chrome.storage.local.set({ iks, status, readAction: action, hiddenTries, tabTries });
+}
+
+// Opens each page in Gmail in a hidden frame on the out-of-sight page, then closes that page.
+// Returns how many opened.
+async function openOutOfSight(pages) {
+  if (!chrome.offscreen || !chrome.declarativeNetRequest) return 0;
+  let opened = 0;
+  try {
+    // Only frames of mail.google.com that aren't in any tab (tab ID -1: the out-of-sight
+    // page), and only until this finishes.
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [HIDDEN_RULE],
+      addRules: [{
+        id: HIDDEN_RULE,
+        priority: 1,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'x-frame-options', operation: 'remove' },
+            { header: 'content-security-policy', operation: 'remove' },
+          ],
+        },
+        condition: { requestDomains: ['mail.google.com'], resourceTypes: ['sub_frame'], tabIds: [-1] },
+      }],
+    });
+    try {
+      await chrome.offscreen.createDocument({
+        url: 'offscreen.html',
+        reasons: ['IFRAME_SCRIPTING'],
+        justification: 'Opens emails you read in Notch Inbox in Gmail, out of sight, so Gmail marks them read.',
+      });
+    } catch (error) {
+      // Already open from a sync that was cut short: use it.
+    }
+    const reply = await chrome.runtime.sendMessage({
+      target: 'offscreen', type: 'open-gmail', pages, settle: TAB_SETTLE_MS, loadTimeout: TAB_LOAD_MS,
+    });
+    opened = (reply && reply.opened) || 0;
+  } catch (error) {
+    console.info('[Notch Inbox Link] couldn’t open Gmail out of sight:', error && error.message);
+  } finally {
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch (error) {
+      // not open
+    }
+    try {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [HIDDEN_RULE] });
+    } catch (error) {
+      // nothing to remove
+    }
+  }
+  return opened;
 }
 
 async function markOneRead(entry, iks, form) {
@@ -493,8 +583,8 @@ function gmailPageFor(entry, tries) {
   return `${GMAIL}${entry.index}/#all/${entry.ids.hex}`;
 }
 
-// Opens each page in one background tab (it doesn't take you away from what you're doing),
-// gives Gmail a few seconds to show the email, then closes the tab. Returns how many opened.
+// Only if you've allowed it: opens each page in one background tab (it doesn't take you away
+// from what you're doing), gives Gmail a few seconds, then closes the tab. Returns how many opened.
 async function openInGmail(pages) {
   let tab = null;
   let opened = 0;

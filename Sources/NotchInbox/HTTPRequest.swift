@@ -122,6 +122,9 @@ struct LinkReply: Encodable, Equatable {
     var addon: String? = nil
     /// Emails you read in the notch, for the add-on to mark read in Gmail.
     var read: [Wanted] = []
+    /// Whether the add-on may open a background tab when marking read out of sight fails
+    /// (Settings → Gmail link). Off unless you turn it on.
+    var tabs = false
 }
 
 /// One whole email from the add-on: its HTML and/or plain text, or why it couldn't be read.

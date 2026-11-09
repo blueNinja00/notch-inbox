@@ -504,12 +504,42 @@ struct TimetableSettings: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
     @State var confirmClear = false
+    @State var confirmStandard = false
 
     var body: some View {
         let table = store.timetable
 
         SettingsHeading(title: "Timetable",
                         detail: "Click a lesson in the timetable to edit it, or a period's name to change its times. It's kept on this Mac only.")
+        SettingsRow(title: "School day",
+                    detail: "\(ClockTime.long(table.schoolStart)) to \(ClockTime.long(table.schoolEnd)), from your periods.") {
+            if !table.hasStandardSchoolDay {
+                PillButton(title: confirmStandard ? "Click Again" : "Use 8 am to 4 pm", prominent: confirmStandard, action: {
+                    if confirmStandard {
+                        store.change { $0.useStandardSchoolDay() }
+                        confirmStandard = false
+                    } else {
+                        confirmStandard = true
+                    }
+                })
+                .help("Seven periods, recess and lunch. Lessons move to the period with the same name.")
+            }
+        }
+        VStack(alignment: .leading, spacing: 12) {
+            BlockCountRow(title: "Hour blocks before school",
+                          detail: table.beforeSchool == 0 ? "None" : "For extracurriculars from \(ClockTime.hour(max(0, table.schoolStart - table.beforeSchool * 60)))",
+                          count: table.beforeSchool, range: 0...Timetable.maxBefore,
+                          change: { count in store.change { $0.setBlocks(before: count) } })
+            BlockCountRow(title: "Hour blocks after school",
+                          detail: table.afterSchool == 0 ? "None" : "For extracurriculars until \(ClockTime.hour(min(24 * 60, table.schoolEnd + table.afterSchool * 60)))",
+                          count: table.afterSchool, range: 0...Timetable.maxAfter,
+                          change: { count in store.change { $0.setBlocks(after: count) } })
+            SettingsToggle(title: "Saturday and Sunday",
+                           detail: "For weekend sport, music and jobs.",
+                           isOn: Binding(get: { store.timetable.weekends },
+                                         set: { on in store.change { $0.weekends = on } }))
+        }
+        SettingsDivider()
         SettingsToggle(title: "Two-week timetable",
                        detail: "For schools with a Week A and a Week B. Each week has its own lessons.",
                        isOn: Binding(get: { store.timetable.twoWeeks },
@@ -526,7 +556,7 @@ struct TimetableSettings: View {
             }
         }
         SettingsDivider()
-        SettingsRow(title: "Clear every lesson", detail: "Periods and their times stay, ready for a new term.") {
+        SettingsRow(title: "Clear every lesson", detail: "Periods, times and hour blocks stay, ready for a new term.") {
             PillButton(title: confirmClear ? "Click Again to Clear" : "Clear Lessons", prominent: confirmClear, action: {
                 if confirmClear {
                     store.change { $0.clearLessons() }
@@ -538,7 +568,6 @@ struct TimetableSettings: View {
             .disabled(table.isEmpty && !confirmClear)
             .opacity(table.isEmpty && !confirmClear ? 0.5 : 1)
         }
-        SettingsDivider()
         PillButton(title: "Open Timetable", prominent: true, action: { model.openTimetable() })
     }
 }
@@ -567,6 +596,10 @@ struct GmailLinkSettings: View {
             PillButton(title: "Copy Debug Info", action: { settings.copyDebugInfo() })
         }
         SettingsDetail(text: "Copy Debug Info copies counts and addresses only, never what your emails say.")
+        SettingsDivider()
+        SettingsToggle(title: "Background tab as a last resort",
+                       detail: "Emails you read in the notch are marked read in Gmail out of sight. If that doesn't work for an email, this lets the add-on open it in a background tab for a few seconds instead.",
+                       isOn: $settings.markReadInTabs)
     }
 }
 

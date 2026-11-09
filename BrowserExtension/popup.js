@@ -34,7 +34,7 @@ function render(status) {
   if (status.ok && status.markRead) {
     const { asked, worked, how } = status.markRead;
     const missed = Math.max(0, (asked || 0) - (worked || 0));
-    const way = how === 'tab' ? ', by opening them in Gmail' : '';
+    const way = how === 'hidden' ? ', out of sight' : (how === 'tab' ? ', in a background tab' : '');
     whole += ` · Marked read in Gmail: ${worked || 0}${way}${missed ? ` (${missed} not yet, trying again)` : ''}`;
   }
   document.getElementById('whole').textContent = whole;

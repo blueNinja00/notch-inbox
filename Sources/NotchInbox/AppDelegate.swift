@@ -234,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveMailboxSoon()
         let toRead = mailbox.toMarkRead()
         BrowserLink.wantsSync = !toRead.isEmpty
-        return LinkReply(want: mailbox.wanted(), addon: addOn, read: toRead)
+        return LinkReply(want: mailbox.wanted(), addon: addOn, read: toRead, tabs: settings.markReadInTabs)
     }
 
     /// You opened a real email in the notch: it's read here at once, and in Gmail within

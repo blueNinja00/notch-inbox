@@ -29,12 +29,13 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 
 Change either per account, or hide an account, in **Settings → Mail accounts**.
 
-**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once. Within about 30 seconds the add-on marks it read in Gmail too, then checks Gmail's unread list to make sure it took:
+**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once. Within about 30 seconds the add-on marks it read in Gmail too, out of sight, then checks Gmail's unread list to make sure it took:
 
 1. First with Gmail's own read action, sent quietly in the background.
-2. If Gmail ignores that (it does for some accounts), the add-on opens the email in Gmail in a **background tab** for a few seconds, just as if you'd clicked it, then closes the tab. You may see a Gmail tab appear at the end of your tabs and disappear; it doesn't take you away from what you're doing. Each email gets two tries.
+2. If Gmail ignores that (it does for some accounts), the add-on opens the email in Gmail in a **hidden frame** on a page Chrome keeps out of sight, for a few seconds, just as if you'd clicked it. No tab opens. Gmail normally refuses to load inside another page; for that hidden frame only (frames of `mail.google.com` that aren't in any tab), and only while it's open, the add-on sets aside Gmail's "don't show me in a frame" headers. Gmail in your own tabs is untouched.
+3. Only if you turn on **Background tab as a last resort** in **Settings → Gmail link**: if the hidden frame doesn't work for an email, a background tab for a few seconds, closed straight after.
 
-The add-on's popup shows "Marked read in Gmail". If Gmail hasn't caught up after 10 minutes, the notch shows the email unread again.
+Each email gets two tries each way. The add-on's popup shows "Marked read in Gmail". If Gmail hasn't caught up after 10 minutes, the notch shows the email unread again.
 
 The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
@@ -66,7 +67,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch.
 - **Assistant:** who answers (below), which Claude model, and whether it may see your newest emails, notes and timetable.
-- **Timetable:** Week A and Week B, which week this is, and clearing every lesson for a new term.
+- **Timetable:** the school day, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
 - **Quit Notch Inbox**, at the bottom.
@@ -102,14 +103,16 @@ After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives,
 
 ## Timetable
 
-Click the Timetable tile on the primary menu. Periods run down the left and Monday to Friday across the top. Today's column is marked, the class on now is lit up with a **NOW** tag, and classes that have finished today fade.
+Click the Timetable tile on the primary menu. The day runs down the left: school from 8 am to 4 pm, with **hour blocks before and after school for your extracurriculars** (6 to 8 am and 4 to 9 pm to start with). Monday to Friday runs across the top. Today's column is marked, what's on now is lit up with a **NOW** tag, and what's finished today fades. A long day scrolls, starting where you are in it.
 
-- **Add or change a lesson:** click a slot. A panel on the right takes the subject, room and teacher, and saves as you type. Subjects you've used before appear as chips; picking one fills in its usual room and teacher too. Every lesson of a subject shares its colour; pick another colour in the same panel.
-- **Change a period:** click its name on the left (or a break band, like Recess). Change its name, start and end time ("8:50", "1:10 pm" or "13:10"; without am or pm, 1 to 6 o'clock count as afternoon), or make it a break. **+** at the top adds a period after the last one.
+- **Add or change a lesson or activity:** click a slot. A panel on the right takes the subject, room and teacher (for an hour block: the activity, where and with whom), and saves as you type. Subjects you've used before appear as chips; picking one fills in its usual room and teacher too. Every lesson of a subject shares its colour; pick another colour in the same panel.
+- **Change a period:** click its name on the left (or a break band, like Recess). Change its name, start and end time ("8:50", "1:10 pm" or "13:10"; without am or pm, 1 to 6 o'clock count as afternoon), or make it a break. **+** at the top adds a period at the end of the school day.
+- **Hour blocks:** click one's time on the left, or go to **Settings → Timetable**, to choose how many come before school (up to 4) and after (up to 8). They follow the school day, so if school ends at 3:30 they start at 3:30. Taking one away keeps what was in it.
+- **Weekends:** turn on **Saturday and Sunday** in **Settings → Timetable** for weekend sport, music or a job.
 - **Week A and Week B:** turn on **Two-week timetable** in **Settings → Timetable** and say which week this is. A switch at the top of the timetable shows either week, with a dot on this one.
 - **Esc** closes the side panel; **Done** or Return does too. The expand button makes the timetable bigger.
 
-It starts with a usual NSW school day (five periods, recess and lunch) to change to yours. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. If you let the assistant see your emails and notes, it sees today's and the next school day's classes too, so you can ask "What have I got tomorrow?".
+It starts with school from 8 am to 4 pm (seven periods, recess and lunch) to change to yours; **Use 8 am to 4 pm** in Settings puts it back, keeping lessons in the period of the same name. A timetable from build 15 moves to this day by itself, lessons included. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. If you let the assistant see your emails and notes, it sees today's and the next school day's classes too, so you can ask "What have I got tomorrow?".
 
 ## Sample mail
 

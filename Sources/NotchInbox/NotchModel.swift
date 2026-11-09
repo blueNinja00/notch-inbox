@@ -200,12 +200,13 @@ final class NotchModel: ObservableObject {
         level = .lanes
     }
 
-    /// The timetable, showing this week.
+    /// The timetable, showing this week, in the bigger panel (a whole day, extracurriculars
+    /// included, needs the room).
     func openTimetable() {
         tool = .timetable
         timetableWeek = timetableStore?.timetable.week(of: Date()) ?? 0
         timetableEdit = nil
-        level = .lanes
+        level = .detail
     }
 
     func expandTimetable() {

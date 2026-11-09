@@ -137,24 +137,42 @@ final class Updater: ObservableObject {
         }
 
         state = .installing
-        URLSession.shared.downloadTask(with: release.downloadURL) { [weak self] tempURL, response, error in
+        download(release.downloadURL, into: workFolder, attempt: 1) { [weak self] outcome in
+            self?.finishInstall(outcome, replacing: appURL, workFolder: workFolder)
+        }
+    }
+
+    /// GitHub sometimes answers a download with a server error (502, 503, 504) or drops the
+    /// connection; that passes in seconds. So try up to three times, waiting a little longer
+    /// each time, before saying it failed.
+    private func download(_ url: URL, into workFolder: URL, attempt: Int, done: @escaping (Result<URL, Error>) -> Void) {
+        URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, error in
             // The downloaded file is deleted when this callback returns, so move it first.
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-            var outcome: Result<URL, Error>
-            if let tempURL = tempURL, status < 400 {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? (error == nil ? 200 : 0)
+            if let tempURL = tempURL, error == nil, status < 400 {
                 let zip = workFolder.appendingPathComponent(Updater.assetName)
+                let outcome: Result<URL, Error>
                 do {
+                    try? FileManager.default.removeItem(at: zip)
                     try FileManager.default.moveItem(at: tempURL, to: zip)
                     outcome = .success(zip)
                 } catch {
                     outcome = .failure(error)
                 }
-            } else {
-                outcome = .failure(error ?? UpdateError("The download failed (HTTP \(status))."))
+                DispatchQueue.main.async { done(outcome) }
+                return
             }
-            DispatchQueue.main.async {
-                self?.finishInstall(outcome, replacing: appURL, workFolder: workFolder)
+            let passing = status >= 500 || status == 429 || status == 0
+            if passing && attempt < 3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt * 3)) {
+                    self?.download(url, into: workFolder, attempt: attempt + 1, done: done)
+                }
+                return
             }
+            let failure = error ?? UpdateError(passing
+                ? "GitHub didn't answer (HTTP \(status)) after 3 tries. Try Install again in a minute."
+                : "The download failed (HTTP \(status)).")
+            DispatchQueue.main.async { done(.failure(failure)) }
         }.resume()
     }
 

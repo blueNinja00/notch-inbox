@@ -392,8 +392,9 @@ async function sendEmail(email) {
 //      invisible frame to that tab: off the edge of the page, see-through and unclickable, so
 //      the tab looks and works as before. Gmail in the frame shows its list of unread mail,
 //      and hidden-frame.js ticks the emails and clicks Gmail's own "Mark as read" (any it can't
-//      find there, it opens). The add-on checks Gmail's unread list (giving Gmail up to a minute
-//      to tell Google), then takes the frame away. Three tries per email.
+//      find there, it opens). It waits until Gmail in the frame has told Google; then the
+//      add-on checks Gmail's unread list (for up to a minute) and takes the frame away. Three
+//      tries per email.
 //   3. Only if you turn it on in Notch Inbox (Settings → Gmail link), when there's no Gmail tab
 //      or the frame didn't work: a background tab, closed straight after. Two tries per email.
 // This runs alongside the syncs, since Gmail takes a while to start in the frame; one run at a time.
@@ -404,7 +405,7 @@ const IN_TAB_PER_RUN = 10;
 const OPEN_PER_SYNC = 4;
 const TAB_LOAD_MS = 30 * 1000;
 const TAB_SETTLE_MS = 4000;
-const FRAME_MS = 75 * 1000; // the frame's script gives itself a minute
+const FRAME_MS = 170 * 1000; // the frame's script gives itself two and a half minutes
 const FRAME_SILENT_MS = 30 * 1000; // stop waiting if it hasn't said a word by then
 const READ_CHECKS_MS = [2000, 3000, 5000, 10000, 20000, 20000]; // then Gmail's unread list, until it shows them read
 const NO_TAB_NOTE_MS = 10 * 60 * 1000;
@@ -812,7 +813,7 @@ async function removeLeftoverFrames() {
 }
 
 // Resolves 'done' once `count` frames have finished, 'silent' if none has said a word after
-// 30 seconds, or 'timeout' after 75.
+// 30 seconds, or 'timeout' after 170.
 function waitForFrames(count) {
   return new Promise((resolve) => {
     let settled = false;

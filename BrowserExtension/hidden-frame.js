@@ -6,15 +6,17 @@
 //   2. any it can't find there, it opens, as if you'd clicked it.
 // Chrome can hold back the timers of a tab you're not looking at for up to a minute, so it
 // moves on as soon as Gmail draws something (it watches the page for changes), and when it has
-// to pause, the add-on times the pause.
+// to pause, the add-on times the pause. After marking, it waits until Gmail has told Google
+// (hidden-frame-main.js notes what Gmail sends), so the frame isn't taken away first.
 // It tells the add-on what it did, for the mark-read log: counts and steps, never what an
 // email says.
 (() => {
   const NAME = 'notch-inbox-hidden'; // the name the add-on gives its frame
   if (window.top === window || window.name !== NAME) return;
 
-  const JOB_MS = 60 * 1000; // for the whole job
+  const JOB_MS = 150 * 1000; // for the whole job
   const START_MS = 35 * 1000; // for Gmail to start and show its list
+  const TELL_MS = 90 * 1000; // for Gmail to tell Google, after marking
   const GONE_MS = 4 * 60 * 1000; // after this the frame takes itself away, if the add-on hasn't
   const started = Date.now();
   const timeLeft = () => Math.max(0, started + JOB_MS - Date.now());
@@ -38,12 +40,78 @@
     send({ type: 'hidden-frame', index, state: String(state).slice(0, 200), after: seconds(), done }).catch(() => {});
   };
   const timer = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  // A pause timed by the add-on, which Chrome doesn't hold back.
-  const sleep = (ms) => {
-    const wanted = Math.max(0, Math.min(ms, timeLeft()));
-    return send({ type: 'hidden-wait', ms: wanted })
-      .then((reply) => (reply === 'waited' ? undefined : timer(wanted)), () => timer(wanted));
+  // A pause timed by the add-on, which Chrome doesn't hold back (in steps of up to 25 seconds).
+  const sleep = async (ms) => {
+    let left = Math.max(0, Math.min(ms, timeLeft()));
+    while (left > 0) {
+      const part = Math.min(left, 25000);
+      const reply = await send({ type: 'hidden-wait', ms: part }).catch(() => null);
+      if (reply !== 'waited') await timer(part);
+      left -= part;
+    }
   };
+
+  // What Gmail has sent Google from this frame (from hidden-frame-main.js): where each request
+  // went, how it ended, and whether it named an email being marked read.
+  const sentToGoogle = [];
+  let heardFromGmail = null;
+  document.addEventListener('notch-inbox-net', (event) => {
+    let entry = null;
+    try {
+      entry = JSON.parse(event.detail);
+    } catch (error) {
+      return;
+    }
+    if (!entry || entry.phase !== 'done') return;
+    sentToGoogle.push(entry);
+    if (heardFromGmail) heardFromGmail();
+  });
+  // The IDs Gmail may use for an email: the message's (hex, and as a number) and its conversation's.
+  const idsFor = (hex, row) => {
+    const ids = [hex];
+    try {
+      ids.push(BigInt(`0x${hex}`).toString());
+    } catch (error) {
+      // not a number after all
+    }
+    const thread = row && row.querySelector('[data-thread-id]');
+    const number = thread && (/(\d{6,25})/.exec(thread.getAttribute('data-thread-id') || '') || [])[1];
+    if (number) ids.push(number);
+    const legacy = row && row.querySelector('[data-legacy-thread-id]');
+    if (legacy && legacy.getAttribute('data-legacy-thread-id')) ids.push(legacy.getAttribute('data-legacy-thread-id'));
+    return Array.from(new Set(ids));
+  };
+  const watch = (ids) => {
+    document.dispatchEvent(new CustomEvent('notch-inbox-watch', { detail: JSON.stringify(ids) }));
+  };
+  // Waits until Gmail has sent Google a request naming the emails, since `since`. Returns what
+  // happened, for the log.
+  const toldGoogle = (since, ms) => new Promise((resolve) => {
+    let finished = false;
+    const told = () => sentToGoogle.find((entry) => entry.at >= since - 50 && entry.mentions === true);
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      heardFromGmail = null;
+      const found = told();
+      if (found) {
+        resolve(`Gmail told Google: ${found.method} ${found.path} → ${found.status}, ${((found.at - since) / 1000).toFixed(1)}s after`);
+        return;
+      }
+      const counts = new Map();
+      for (const entry of sentToGoogle.filter((e) => e.at >= since - 50 && e.method !== 'GET')) {
+        const key = `${entry.method} ${entry.path} → ${entry.status}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      const others = Array.from(counts).slice(0, 3).map(([key, count]) => (count > 1 ? `${key} ×${count}` : key)).join(', ');
+      resolve(`Gmail hadn't told Google after ${Math.round((Date.now() - since) / 1000)}s; since then it sent ${others || 'nothing'}`);
+    };
+    heardFromGmail = () => {
+      if (told()) finish();
+    };
+    heardFromGmail();
+    sleep(ms).then(finish);
+  });
 
   // Whether Gmail is showing an element: it keeps views it showed before in the page, out of view.
   const shown = (element) => Boolean(element) && element.isConnected && element.getClientRects().length > 0
@@ -155,8 +223,10 @@
     say(`showing the unread list: found ${found.length} of ${hexes.length}, ${bold.length} shown unread`);
     if (bold.length === 0) return found;
     let ticked = 0;
+    const ids = [];
     for (const hex of bold) {
       const row = rowFor(hex);
+      ids.push(...idsFor(hex, row));
       if (row && (await tick(row))) ticked += 1;
     }
     if (ticked === 0) {
@@ -168,16 +238,22 @@
       say(`ticked ${ticked}; Gmail didn’t offer "Mark as read"`);
       return found.filter((hex) => !isBold(hex));
     }
+    watch(ids);
+    const clicked = Date.now();
     fire(button, ['mousedown', 'mouseup', 'click']);
     await waitFor(() => (bold.every((hex) => !isBold(hex)) ? true : null), 8000);
     const marked = found.filter((hex) => !isBold(hex));
-    say(`ticked ${ticked} and clicked "Mark as read": ${bold.filter((hex) => !isBold(hex)).length} of ${bold.length} no longer shown unread`);
+    const cleared = bold.filter((hex) => !isBold(hex)).length;
+    say(`ticked ${ticked} and clicked "Mark as read": ${cleared} of ${bold.length} no longer shown unread`);
+    if (cleared > 0) say(await toldGoogle(clicked, Math.min(TELL_MS, timeLeft())));
     return marked;
   };
 
   // 2. Opens an email, the way a click on it would. Gmail counts an email you open as read.
   const openEmail = async (hex) => {
     const before = new Set(document.querySelectorAll('h2.hP'));
+    watch(idsFor(hex, rowFor(hex)));
+    const asked = Date.now();
     location.replace(`#all/${hex}`); // replace: no extra step in your tab's Back button
     const opened = await waitFor(() => {
       if (shown(document.querySelector(`[data-legacy-message-id="${hex}"]`))) return 'the email';
@@ -188,11 +264,11 @@
       say('Gmail didn’t open an email');
       return false;
     }
-    await sleep(2500); // time for Gmail to count it read and tell Google
+    await sleep(1500); // time for Gmail to count it read
     const markRead = toolbarButton('Mark as read');
     if (markRead) fire(markRead, ['mousedown', 'mouseup', 'click']);
     say(`opened ${opened}${markRead ? ' and clicked "Mark as read"' : ''}`);
-    await sleep(1500);
+    say(await toldGoogle(asked, Math.min(TELL_MS, timeLeft())));
     return true;
   };
 

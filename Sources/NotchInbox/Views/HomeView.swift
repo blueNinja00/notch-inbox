@@ -84,7 +84,7 @@ struct TodayLabel: View {
     }()
 }
 
-/// Update button, minimise and the app menu, at the top right of the primary menu.
+/// The Update button (when there is one) and Settings, at the top right of the primary menu.
 struct HomeActions: View {
     @ObservedObject var model: NotchModel
 
@@ -97,10 +97,7 @@ struct HomeActions: View {
                 UpdateNote(text: note)
                     .padding(.trailing, 4)
             }
-            ModeSwitch(model: model)
-                .padding(.trailing, 4)
-            IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
-                       action: { model.showAppMenu() })
+            SettingsButton(model: model)
         }
         .padding(.trailing, 4)
     }

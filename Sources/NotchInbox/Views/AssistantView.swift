@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The assistant: chat with Qwen, running on this Mac. Expand it for more room.
+/// The assistant: chat with Claude (or Qwen, on this Mac). Expand it for more room.
 struct AssistantView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var assistant: Assistant
@@ -21,14 +21,18 @@ struct AssistantView: View {
             TopRow(metrics: model.metrics) {
                 ToolTabs(model: model, symbol: "sparkles", title: "Assistant") {
                     if case .ready(let name) = assistant.status {
-                        Text(name)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.secondary)
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .frame(height: 20)
-                            .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-                            .help("Running on this Mac with Ollama")
+                        Button(action: { model.openSettings(.assistant) }) {
+                            Text(name)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 8)
+                                .frame(height: 20)
+                                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help(assistant.engine.title + ". Click to change in Settings.")
                     }
                 }
             } trailing: {
@@ -40,8 +44,7 @@ struct AssistantView: View {
                     IconButton(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                                label: expanded ? "Make smaller" : "Expand",
                                action: { expanded ? model.back() : model.expandAssistant() })
-                    IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
-                               action: { model.showAppMenu() })
+                    SettingsButton(model: model, section: .assistant)
                 }
                 .padding(.trailing, 4)
             }
@@ -50,12 +53,15 @@ struct AssistantView: View {
             case .ready:
                 chat
             case .checking:
-                Text("Looking for Qwen on this Mac…")
+                Text(assistant.engine == .claudeCode ? "Looking for Claude Code on this Mac…"
+                     : assistant.engine == .qwen ? "Looking for Qwen on this Mac…" : "Getting Claude ready…")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .noOllama, .noModel:
                 AssistantSetup(assistant: assistant)
+            case .noClaudeCode, .noKey:
+                ClaudeSetup(model: model, assistant: assistant)
             }
         }
         .padding(.horizontal, 12)
@@ -89,7 +95,7 @@ struct AssistantView: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Ask Qwen anything…", text: $assistant.draft, axis: .vertical)
+                TextField("Ask \(assistant.engine.name) anything…", text: $assistant.draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
@@ -107,10 +113,13 @@ struct AssistantView: View {
                 }
             }
 
-            Toggle(isOn: $assistant.usesContext) {
-                Text("Let Qwen see my newest emails and notes (they stay on this Mac)")
+            Toggle(isOn: $assistant.sharesContext) {
+                Text(assistant.engine.isClaude
+                     ? "Let Claude see my newest email subjects and notes (sent to Anthropic with your question)"
+                     : "Let Qwen see my newest emails and notes (they stay on this Mac)")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.tertiary)
+                    .lineLimit(1)
             }
             .toggleStyle(.checkbox)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -120,7 +129,7 @@ struct AssistantView: View {
     }
 }
 
-/// One message: yours on the right, Qwen's on the left.
+/// One message: yours on the right, the assistant's on the left.
 struct ChatBubble: View {
     let message: Assistant.Message
     let thinking: Bool
@@ -151,7 +160,7 @@ struct ChatBubble: View {
         }
     }
 
-    /// Bold, italics, code and links from Qwen's Markdown, keeping its line breaks.
+    /// Bold, italics, code and links from the answer's Markdown, keeping its line breaks.
     static func formatted(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
@@ -171,7 +180,9 @@ struct Suggestions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Ask about your day, your email or anything else. Qwen runs on this Mac.")
+            Text(assistant.engine.isClaude
+                 ? "Ask about your day, your email or anything else."
+                 : "Ask about your day, your email or anything else. Qwen runs on this Mac.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.tertiary)
             HStack(spacing: 6) {
@@ -197,41 +208,24 @@ struct AssistantSetup: View {
     @ObservedObject var assistant: Assistant
 
     var body: some View {
-        let pull = "ollama pull \(assistant.suggestedModel)"
+        let noOllama = assistant.status == .noOllama
 
         VStack(alignment: .leading, spacing: 10) {
-            Text(assistant.status == .noOllama ? "Set up Qwen on this Mac" : "One more step: download Qwen")
+            Text(noOllama ? "Set up Qwen on this Mac" : "One more step: download Qwen")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.text)
-            if assistant.status == .noOllama {
-                step(1, "Install Ollama from ollama.com (free), then open it.")
+            if noOllama {
+                SetupStep(number: 1, text: "Install Ollama from ollama.com (free), then open it.")
             }
-            step(assistant.status == .noOllama ? 2 : 1,
-                 "In Terminal, run this. It downloads the Qwen model that suits your Mac's memory:")
+            SetupStep(number: noOllama ? 2 : 1,
+                      text: "In Terminal, run this. It downloads the Qwen model that suits your Mac's memory (several GB, so use Wi-Fi):")
+            CommandBox(command: "ollama pull \(assistant.suggestedModel)")
+            SetupStep(number: noOllama ? 3 : 2, text: "When it's finished, click Check Again.")
             HStack(spacing: 8) {
-                Text(pull)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundStyle(Theme.text2)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.surface))
-                IconButton(symbol: "doc.on.doc", label: "Copy", size: 28, action: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(pull, forType: .string)
-                })
+                PillButton(title: "Check Again", prominent: true, action: { assistant.checkSetup() })
+                PillButton(title: "Use Claude instead", action: { assistant.engine = .claudeCode })
             }
-            step(assistant.status == .noOllama ? 3 : 2, "When it's finished, click Check Again.")
-            Button(action: { assistant.checkSetup() }) {
-                Text("Check Again")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 14)
-                    .frame(height: 30)
-                    .background(Capsule().fill(Theme.text))
-            }
-            .buttonStyle(.plain)
-            Text("Everything stays on your Mac: Qwen runs locally, and nothing you ask is sent anywhere.")
+            Text("Qwen runs on your Mac, and nothing you ask is sent anywhere.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.tertiary)
         }
@@ -239,8 +233,53 @@ struct AssistantSetup: View {
         .padding(.top, 10)
         .padding(.leading, 6)
     }
+}
 
-    private func step(_ number: Int, _ text: String) -> some View {
+/// What Claude needs before it can answer: Claude Code installed, or an API key.
+struct ClaudeSetup: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var assistant: Assistant
+
+    static let installCommand = "curl -fsSL https://claude.ai/install.sh | bash"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if assistant.status == .noClaudeCode {
+                Text("Set up Claude")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                SetupStep(number: 1, text: "Claude answers through Claude Code, signed in to your Claude account. In Terminal, install it:")
+                CommandBox(command: ClaudeSetup.installCommand)
+                SetupStep(number: 2, text: "Then type claude, press Return and sign in. When it's ready, click Check Again.")
+                HStack(spacing: 8) {
+                    PillButton(title: "Check Again", prominent: true, action: { assistant.checkSetup() })
+                    PillButton(title: "Use an API key instead", action: {
+                        assistant.engine = .claudeAPI
+                        model.openSettings(.assistant)
+                    })
+                }
+            } else {
+                Text("Add your Anthropic API key")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text("Paste a key from console.anthropic.com in Settings, or switch to your Claude plan there.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.body)
+                PillButton(title: "Open Assistant Settings", prominent: true, action: { model.openSettings(.assistant) })
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 10)
+        .padding(.leading, 6)
+    }
+}
+
+/// A numbered step in a setup guide.
+struct SetupStep: View {
+    let number: Int
+    let text: String
+
+    var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\(number)")
                 .font(.system(size: 11, weight: .bold))
@@ -252,6 +291,53 @@ struct AssistantSetup: View {
                 .foregroundStyle(Theme.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// A Terminal command to copy.
+struct CommandBox: View {
+    let command: String
+    @State var copied = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(command)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .textSelection(.enabled)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
+            IconButton(symbol: copied ? "checkmark" : "doc.on.doc", label: "Copy", size: 28, action: {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+                copied = true
+            })
+        }
+    }
+}
+
+/// A rounded button: white when it's the main thing to do, grey otherwise.
+struct PillButton: View {
+    let title: String
+    var prominent = false
+    var action: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(prominent ? Theme.onAccent : Theme.text2)
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(height: 28)
+                .background(Capsule().fill(prominent ? Theme.text.opacity(hovering ? 1 : 0.92) : (hovering ? Theme.hover : Theme.raised)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -273,11 +359,12 @@ struct AssistantToolTile: View {
                 Spacer(minLength: 0)
             }
             Spacer(minLength: 0)
-            Text(last.map { $0.text } ?? (assistant.status == .noOllama || assistant.status == .noModel ? "Set up Qwen" : "Ask Qwen anything"))
+            Text(last.map { $0.text } ?? (assistant.status.isReady || assistant.status == .checking
+                                            ? "Ask \(assistant.engine.name) anything" : "Set up \(assistant.engine.name)"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.text2)
                 .lineLimit(2)
-            Text("Runs on this Mac")
+            Text(assistant.engine.isClaude ? "Claude \(assistant.claudeModel.title)" : "Runs on this Mac")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.tertiary)
                 .lineLimit(1)

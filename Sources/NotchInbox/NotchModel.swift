@@ -27,9 +27,6 @@ final class NotchModel: ObservableObject {
     /// Opens a link in the browser (set by the app).
     var onOpenURL: ((URL) -> Void)?
 
-    /// Opens the app menu (updates, Gmail link, Quit) where you clicked. It's the same menu
-    /// as the envelope in the menu bar, which macOS hides behind the notch when space runs out.
-    var onShowAppMenu: (() -> Void)?
     /// A short update status shown beside the panel buttons after Check for Updates.
     @Published var updateNote: String? = nil
 
@@ -114,9 +111,12 @@ final class NotchModel: ObservableObject {
         case mail
         case notes
         case assistant
+        case settings
     }
 
     @Published var tool: Tool = .mail
+    /// The Settings section showing.
+    @Published var settingsSection: SettingsSection = .general
     /// The notes, shared by every screen (set by the app).
     var notesStore: NotesStore?
     @Published var selectedNoteID: UUID?
@@ -155,6 +155,21 @@ final class NotchModel: ObservableObject {
         onResized?(customSizes)
     }
 
+    /// Every panel back to its standard size (Settings → General).
+    func resetAllSizes() {
+        customSizes = [:]
+        onResized?(customSizes)
+    }
+
+    /// Settings, in the notch: a section per topic down the left.
+    func openSettings(_ section: SettingsSection? = nil) {
+        if let section = section {
+            settingsSection = section
+        }
+        tool = .settings
+        level = .lanes
+    }
+
     func openNotes() {
         tool = .notes
         if selectedNoteID == nil || notesStore?.note(selectedNoteID) == nil {
@@ -163,7 +178,7 @@ final class NotchModel: ObservableObject {
         level = .lanes
     }
 
-    /// The Qwen assistant.
+    /// The assistant (Claude or Qwen).
     func openAssistant() {
         tool = .assistant
         level = .lanes
@@ -329,9 +344,6 @@ final class NotchModel: ObservableObject {
         onInstallUpdate?()
     }
 
-    func showAppMenu() {
-        onShowAppMenu?()
-    }
 
     // MARK: Gmail in the browser
 

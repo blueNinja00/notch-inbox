@@ -2,10 +2,10 @@ import AppKit
 import Combine
 
 @main
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    /// Menu-bar-only app: no Dock icon and no app menu. A notch panel per screen and the
-    /// app menu (Gmail link, updates, Quit) are created at launch. The menu opens from the
-    /// envelope in the menu bar and from the menu button inside the open notch.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Menu-bar-only app: no Dock icon and no app menu. A notch panel per screen is created
+    /// at launch. Settings (Gmail link, accounts, assistant, updates, Quit) open inside the
+    /// notch from the gear button; the envelope in the menu bar has a short menu too.
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private static let accountOrderKey = "linkedAccountOrder"
-    /// Choices you made in the menu. (Version 2: build 5's automatic guesses are dropped.)
+    /// Choices you made in Settings. (Version 2: build 5's automatic guesses are dropped.)
     private static let inboxChoicesKey = "inboxChoices.v2"
     private static let hiddenAccountsKey = "hiddenAccounts"
 
@@ -43,15 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var saveMailboxWork: DispatchWorkItem?
 
     private var statusItem: NSStatusItem?
+    /// The envelope's short menu (Open, Settings, Quit), also on the mail tab's right-click.
     private var appMenu: NSMenu?
-    private var versionItem: NSMenuItem?
-    private var updateItem: NSMenuItem?
-    private var linkItem: NSMenuItem?
-    /// One item per linked account, with its choices, rebuilt each time the menu opens.
-    private var accountItems: [NSMenuItem] = []
-    /// "Open Inboxes", hidden when the menu opens from inside the notch.
-    private var menuBarOnlyItems: [NSMenuItem] = []
-    private var modeItems: (notch: NSMenuItem, tab: NSMenuItem)?
+    /// What Settings shows, and what its buttons do.
+    private let settings = AppSettings.shared
 
     /// Minimised: a small tab with a mail icon, slid anywhere along the top, stands in for the notch.
     private static let minimisedKey = "minimisedToIcon"
@@ -72,8 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var models: [NotchModel] { screens.values.map { $0.model } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Claude Code runs as a separate program; if it quits before reading your question,
+        // writing to it must fail quietly instead of ending this app.
+        signal(SIGPIPE, SIG_IGN)
         endOtherCopies()
         restoreMailbox()
+        connectSettings()
         installStatusItem()
 
         syncScreens()
@@ -83,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Assistant.shared.context = { [weak self] in
             self?.assistantContext() ?? ""
         }
+        Assistant.shared.checkSetup()
         mailIcon.menu = { [weak self] in
             self?.appMenu
         }
@@ -164,9 +164,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onInstallUpdate = { [weak self] in
             self?.installUpdate()
         }
-        model.onShowAppMenu = { [weak self] in
-            self?.showAppMenuAtPointer()
-        }
         model.onOpenMessage = { [weak self] id in
             self?.readInNotch(id)
         }
@@ -206,7 +203,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // different, it reloads itself to catch up.
         let addOn = BrowserExtensionInstaller.installedVersion
         lastUpload = upload
-        guard !feeds.isEmpty else { return LinkReply(want: [], addon: addOn) }
+        guard !feeds.isEmpty else {
+            refreshSettings()
+            return LinkReply(want: [], addon: addOn)
+        }
         lastFeeds = feeds
         var showing: [GmailFeed] = []
         for account in feeds {
@@ -227,7 +227,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         lastFeedAt = Date()
         showMailEverywhere()
-        refreshLinkItem()
         saveMailboxSoon()
         let toRead = mailbox.toMarkRead()
         BrowserLink.wantsSync = !toRead.isEmpty
@@ -262,11 +261,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         refreshMailIcon()
+        refreshSettings()
     }
 
     // MARK: Assistant
 
-    /// What Qwen may know about your day: your newest real emails and latest notes.
+    /// What the assistant may know about your day: your newest real emails and latest notes.
     private func assistantContext() -> String {
         var emails: [(account: String, sender: String, subject: String, date: Date, unread: Bool)] = []
         if let model = models.first, !model.isSample {
@@ -306,8 +306,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The minimised tab hides while the panel is open, and comes back when it closes.
     private func refreshMailIcon() {
-        modeItems?.notch.state = minimised ? .off : .on
-        modeItems?.tab.state = minimised ? .on : .off
         guard minimised else { return }
         let somethingOpen = models.contains { $0.level != .rest }
         if somethingOpen {
@@ -355,32 +353,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func useNotchMode() {
-        setMinimised(false)
-    }
+    // MARK: Settings
 
-    @objc private func useTabMode() {
-        setMinimised(true)
-    }
-
-    private func refreshLinkItem() {
-        guard let item = linkItem else { return }
-        guard let last = lastFeedAt else {
-            item.title = "Gmail: not linked yet"
-            return
+    /// What Settings' buttons do.
+    private func connectSettings() {
+        settings.build = updater.currentBuild
+        settings.onChooseInbox = { [weak self] account, choice in
+            self?.chooseInbox(choice, for: account)
         }
-        let count = mailbox.linkedAccounts.count
-        let accounts = "\(count) account\(count == 1 ? "" : "s")"
-        if Date().timeIntervalSince(last) > 5 * 60 {
-            item.title = "Gmail link paused · last update \(MailTime.label(for: last))"
-        } else if wholeEmails == .addOnNeedsReload {
-            item.title = "Gmail linked · reload the add-on in Chrome to finish updating"
-        } else {
-            item.title = "Gmail linked · \(accounts) · updated \(MailTime.label(for: last))"
+        settings.onSetHidden = { [weak self] account, hidden in
+            self?.setHidden(hidden, for: account)
+        }
+        settings.onCheckForUpdates = { [weak self] in
+            self?.checkForUpdates()
+        }
+        settings.onInstallUpdate = { [weak self] in
+            self?.installUpdate()
+        }
+        settings.onSetUpBrowserLink = { [weak self] in
+            self?.setUpBrowserLink()
+        }
+        settings.onCopyDebugInfo = { [weak self] in
+            self?.copyDebugInfo()
+        }
+        settings.onShowAddOnFolder = { [weak self] in
+            self?.showAddOnFolder()
+        }
+        settings.onQuit = { [weak self] in
+            self?.quit()
+        }
+        refreshSettings()
+    }
+
+    /// Keeps Settings' accounts and Gmail link status in step with the mailbox.
+    private func refreshSettings() {
+        let shown = mailbox.accounts
+        var colors: [String: UInt32] = [:]
+        for account in shown {
+            colors[account.id] = account.colorHex
+        }
+        let accounts = AppSettings.accounts(linked: mailbox.linkedAccounts, shown: shown.map { $0.id },
+                                            hidden: mailbox.hidden, choices: { self.inboxChoice(for: $0) },
+                                            unread: mailbox.unread, colors: colors)
+        if settings.accounts != accounts {
+            settings.accounts = accounts
+        }
+        var link = AppSettings.LinkStatus()
+        link.lastSync = lastFeedAt
+        link.accounts = mailbox.linkedAccounts.count
+        link.addOnRunning = lastUpload.map { $0.version ?? "1.0" }
+        link.addOnInstalled = BrowserExtensionInstaller.installedVersion
+        link.needsReload = wholeEmails == .addOnNeedsReload
+        if settings.link != link {
+            settings.link = link
+        }
+        let checked = updater.lastCheck?.at
+        if settings.lastUpdateCheck != checked {
+            settings.lastUpdateCheck = checked
         }
     }
 
-    // MARK: Accounts in the menu
+    // MARK: Accounts
 
     private static func loadInboxChoices() -> [String: InboxChoice] {
         let saved = UserDefaults.standard.dictionary(forKey: AppDelegate.inboxChoicesKey) as? [String: String] ?? [:]
@@ -395,68 +428,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         inboxChoices[account] ?? InboxChoice.starting(for: account)
     }
 
-    /// Under the Gmail line: each linked account, with what the notch shows of it.
-    private func rebuildAccountItems() {
-        guard let menu = appMenu, let link = linkItem else { return }
-        accountItems.forEach { menu.removeItem($0) }
-        accountItems = []
-
-        let shown = Set(mailbox.accounts.map { $0.id })
-        var position = menu.index(of: link) + 1
-        for account in mailbox.linkedAccounts {
-            let choice = inboxChoice(for: account)
-            let isHidden = mailbox.hidden.contains(account)
-            let summary: String
-            if isHidden {
-                summary = "hidden"
-            } else if !shown.contains(account) {
-                summary = "no room"
-            } else {
-                summary = choice == .everything ? "whole inbox" : "Primary"
-            }
-
-            let submenu = NSMenu()
-            submenu.autoenablesItems = false
-            submenu.addItem(choiceItem("Primary tab, plus Classroom and other Google mail", .primary, account, current: choice))
-            submenu.addItem(choiceItem("Whole inbox (every tab)", .everything, account, current: choice))
-            submenu.addItem(NSMenuItem.separator())
-            let show = NSMenuItem(title: "Show in the Notch", action: #selector(toggleAccountShown(_:)), keyEquivalent: "")
-            show.target = self
-            show.representedObject = account
-            show.state = isHidden ? .off : .on
-            submenu.addItem(show)
-            if !isHidden && !shown.contains(account) {
-                let room = NSMenuItem(title: "The notch has room for three accounts. Hide one to show this one.",
-                                      action: nil, keyEquivalent: "")
-                room.isEnabled = false
-                submenu.addItem(room)
-            }
-
-            let item = NSMenuItem(title: "\(account) · \(summary)", action: nil, keyEquivalent: "")
-            item.submenu = submenu
-            menu.insertItem(item, at: position)
-            position += 1
-            accountItems.append(item)
-        }
-    }
-
-    private func choiceItem(_ title: String, _ choice: InboxChoice, _ account: String, current: InboxChoice) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(chooseInbox(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = "\(choice.rawValue) \(account)"
-        item.state = choice == current ? .on : .off
-        return item
-    }
-
-    @objc private func chooseInbox(_ sender: NSMenuItem) {
-        guard let value = sender.representedObject as? String,
-              let space = value.firstIndex(of: " "),
-              let choice = InboxChoice(rawValue: String(value[..<space])) else { return }
-        let account = String(value[value.index(after: space)...])
+    /// Primary (plus Google mail) or the whole inbox, for one account.
+    private func chooseInbox(_ choice: InboxChoice, for account: String) {
         let before = inboxChoice(for: account)
         inboxChoices[account] = choice
         saveInboxChoices()
-        guard choice != before else { return }
+        guard choice != before else {
+            refreshSettings()
+            return
+        }
         // Swap the account's mail straight away from the latest feeds.
         mailbox.forget(account)
         appliedViews[account] = choice
@@ -465,12 +445,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         saveMailboxSoon()
     }
 
-    @objc private func toggleAccountShown(_ sender: NSMenuItem) {
-        guard let account = sender.representedObject as? String else { return }
-        if mailbox.hidden.contains(account) {
-            mailbox.hidden.remove(account)
-        } else {
+    private func setHidden(_ hidden: Bool, for account: String) {
+        if hidden {
             mailbox.hidden.insert(account)
+        } else {
+            mailbox.hidden.remove(account)
         }
         UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
         showMailEverywhere()
@@ -494,7 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Copies a plain report of what the app and the browser add-on are doing: builds,
     /// update checks, and per account what Gmail's feeds say and what the notch holds.
     /// Counts and addresses only, no email contents.
-    @objc private func copyDebugInfo() {
+    private func copyDebugInfo() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(debugReport(), forType: .string)
         showUpdateNote("Debug info copied", clearAfter: 3)
@@ -509,6 +488,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         lines.append(update)
         lines.append("Browser link: \(browserLink.status)")
+        let assistant = Assistant.shared
+        lines.append("Assistant: \(assistant.engine.title) · \(assistant.modelName) · \(assistant.status)"
+                     + (assistant.engine == .claudeCode ? " · Claude Code at \(assistant.claudePath ?? "not found")" : ""))
         let copies = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count
         lines.append("Copies of the app running: \(copies) · app at \(Bundle.main.bundlePath)")
         lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")
@@ -608,7 +590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func setUpBrowserLink() {
+    private func setUpBrowserLink() {
         // Close any open notch first, so it doesn't sit on top of the instructions.
         for model in models where model.level != .rest {
             model.close()
@@ -616,6 +598,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.showBrowserLinkSteps()
         }
+    }
+
+    /// Puts the add-on's folder in place and shows it in Finder.
+    private func showAddOnFolder() {
+        if let folder = try? BrowserExtensionInstaller.install() {
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        }
+        refreshSettings()
     }
 
     private func showBrowserLinkSteps() {
@@ -645,114 +635,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    // MARK: App menu
+    // MARK: Menu bar
 
-    /// The app has no Dock icon, so its menu (Gmail link, updates, Quit) lives in the menu
-    /// bar's envelope and behind the menu button in the open notch.
+    /// The envelope in the menu bar (often hidden behind the notch) has a short menu:
+    /// open the notch, open Settings, quit. Everything else is in Settings.
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "envelope", accessibilityDescription: "Notch Inbox")
 
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.delegate = self
-
-        let version = NSMenuItem(title: "Notch Inbox", action: nil, keyEquivalent: "")
-        version.isEnabled = false
-        menu.addItem(version)
-
-        let update = NSMenuItem(title: "Check for Updates…", action: nil, keyEquivalent: "")
-        update.target = self
-        menu.addItem(update)
-        menu.addItem(NSMenuItem.separator())
-
-        let link = NSMenuItem(title: "Gmail: not linked yet", action: nil, keyEquivalent: "")
-        link.isEnabled = false
-        menu.addItem(link)
-
-        let setUp = NSMenuItem(title: "Set Up Browser Link…", action: #selector(setUpBrowserLink), keyEquivalent: "")
-        setUp.target = self
-        menu.addItem(setUp)
-        let debug = NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "")
-        debug.target = self
-        menu.addItem(debug)
-        menu.addItem(NSMenuItem.separator())
-
-        let open = NSMenuItem(title: "Open Inboxes", action: #selector(openInboxes), keyEquivalent: "")
+        let open = NSMenuItem(title: "Open Notch Inbox", action: #selector(openFromMenu), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        // Two ways to show Notch Inbox.
-        let notchMode = NSMenuItem(title: "Notch at the Top (opens on hover)", action: #selector(useNotchMode), keyEquivalent: "")
-        notchMode.target = self
-        menu.addItem(notchMode)
-        let tabMode = NSMenuItem(title: "Mail Tab (drag along the top, click to open)", action: #selector(useTabMode), keyEquivalent: "")
-        tabMode.target = self
-        menu.addItem(tabMode)
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
-
-        let quit = NSMenuItem(title: "Quit Notch Inbox", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Notch Inbox", action: #selector(quitFromMenu), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
         item.menu = menu
         statusItem = item
         appMenu = menu
-        versionItem = version
-        updateItem = update
-        linkItem = link
-        menuBarOnlyItems = [open]
-        modeItems = (notchMode, tabMode)
-        refreshMailIcon()
         updaterChanged(updater.state)
-        refreshLinkItem()
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === appMenu else { return }
-        refreshLinkItem()
-        rebuildAccountItems()
+    /// The notch on the screen you're using: where the pointer is, or the mail tab's screen.
+    private func notchNearPointer() -> NotchModel? {
+        let mouse = NSEvent.mouseLocation
+        let target = screens.values.first(where: { $0.screen.frame.contains(mouse) }) ?? screens.values.first
+        return target?.model
     }
 
-    /// The menu button inside the notch opens the same menu where you clicked.
-    private func showAppMenuAtPointer() {
-        guard let menu = appMenu else { return }
-        let point = NSEvent.mouseLocation
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.menuBarOnlyItems.forEach { $0.isHidden = true }
-            _ = menu.popUp(positioning: nil, at: point, in: nil)
-            self.menuBarOnlyItems.forEach { $0.isHidden = false }
-        }
+    @objc private func openFromMenu() {
+        notchNearPointer()?.goHome()
     }
 
-    /// Keeps the menu and every notch's Update button in step with the updater.
+    @objc private func openSettingsFromMenu() {
+        notchNearPointer()?.openSettings()
+    }
+
+    @objc private func quitFromMenu() {
+        quit()
+    }
+
+    /// Keeps Settings and every notch's Update button in step with the updater.
     private func updaterChanged(_ state: Updater.State) {
         let build = updater.currentBuild
-        versionItem?.title = build > 0 ? "Notch Inbox · Build \(build)" : "Notch Inbox · local build"
-        updateItem?.toolTip = nil
-
-        switch state {
-        case .idle:
-            setUpdateItem("Check for Updates…", action: #selector(checkForUpdates))
-        case .checking:
-            setUpdateItem("Checking for Updates…", action: nil)
-        case .upToDate:
-            setUpdateItem("Check for Updates…", action: #selector(checkForUpdates))
-            if build > 0 {
-                versionItem?.title = "Notch Inbox · Build \(build) · up to date"
-            }
-        case .available(let release):
-            setUpdateItem("Install Update (Build \(release.build))", action: #selector(installUpdate))
-            updateItem?.toolTip = release.notes.isEmpty ? nil : release.notes
-        case .installing:
-            setUpdateItem("Installing Update…", action: nil)
-        case .failed(let message):
-            setUpdateItem("Couldn't Update — Try Again", action: #selector(checkForUpdates))
-            updateItem?.toolTip = message
-        }
-
+        settings.build = build
+        settings.lastUpdateCheck = updater.lastCheck?.at
+        let status: AppSettings.UpdateStatus
         if !updater.canInstall {
-            setUpdateItem("Updates work in the installed app", action: nil)
+            status = .unavailable
+        } else {
+            switch state {
+            case .idle: status = .idle
+            case .checking: status = .checking
+            case .upToDate: status = .upToDate
+            case .available(let release): status = .available(build: release.build, notes: release.notes)
+            case .installing: status = .installing
+            case .failed(let message): status = .failed(message)
+            }
+        }
+        if settings.update != status {
+            settings.update = status
         }
 
         var pending: Int? = nil
@@ -798,30 +746,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: clear)
     }
 
-    private func setUpdateItem(_ title: String, action: Selector?) {
-        updateItem?.title = title
-        updateItem?.action = action
-        updateItem?.isEnabled = action != nil
-    }
-
-    @objc private func checkForUpdates() {
+    private func checkForUpdates() {
         userAskedForUpdate = true
         updater.check(userInitiated: true)
     }
 
-    @objc private func installUpdate() {
+    private func installUpdate() {
         userAskedForUpdate = true
         updater.install()
     }
 
-    /// Opens the notch on the screen you clicked the menu on.
-    @objc private func openInboxes() {
-        let mouse = NSEvent.mouseLocation
-        let target = screens.values.first(where: { $0.screen.frame.contains(mouse) }) ?? screens.values.first
-        target?.model.openLanes()
-    }
-
-    @objc private func quit() {
+    private func quit() {
         NSApp.terminate(nil)
     }
 }

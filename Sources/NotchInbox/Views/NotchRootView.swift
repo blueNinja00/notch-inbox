@@ -49,7 +49,10 @@ struct NotchRootView: View {
             HomeView(model: model)
                 .transition(.opacity)
         case .lanes, .detail:
-            if model.tool == .notes, let store = model.notesStore {
+            if model.tool == .settings {
+                SettingsView(model: model, settings: AppSettings.shared, assistant: Assistant.shared)
+                    .transition(.opacity)
+            } else if model.tool == .notes, let store = model.notesStore {
                 NotesView(model: model, store: store, expanded: level == .detail)
                     .transition(.opacity)
             } else if model.tool == .assistant {

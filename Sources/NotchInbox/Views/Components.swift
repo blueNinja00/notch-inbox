@@ -148,7 +148,7 @@ struct SampleTag: View {
             .padding(.horizontal, 8)
             .frame(height: 20)
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-            .help("Showing made-up mail. To see your Gmail, click the menu button at the top right and choose Set Up Browser Link….")
+            .help("Showing made-up mail. To see your Gmail, open Settings (the gear at the top right) → Gmail link.")
     }
 }
 
@@ -170,10 +170,19 @@ struct PanelActions: View {
             } else {
                 IconButton(symbol: "square.and.pencil", label: "New message in Gmail", action: { model.composeInGmail() })
             }
-            IconButton(symbol: "slider.horizontal.3", label: "Menu: updates, Gmail link, Quit",
-                       action: { model.showAppMenu() })
+            SettingsButton(model: model)
         }
         .padding(.trailing, 4)
+    }
+}
+
+/// The gear at the top right of every panel: opens Settings in the notch.
+struct SettingsButton: View {
+    @ObservedObject var model: NotchModel
+    var section: SettingsSection? = nil
+
+    var body: some View {
+        IconButton(symbol: "gearshape", label: "Settings", action: { model.openSettings(section) })
     }
 }
 
@@ -238,37 +247,5 @@ struct BackButton: View {
         }
         .buttonStyle(.plain)
         .padding(.leading, 4)
-    }
-}
-
-/// The two ways to show Notch Inbox: the notch at the top that opens when you hover, or
-/// a small mail tab you can slide along the top and click to open.
-struct ModeSwitch: View {
-    @ObservedObject var model: NotchModel
-
-    var body: some View {
-        HStack(spacing: 2) {
-            option(symbol: "menubar.rectangle", label: "Notch at the top: opens when you hover",
-                   selected: !model.minimised, choose: { model.setMinimised(false) })
-            option(symbol: "envelope", label: "Mail tab: drag it along the top, click to open",
-                   selected: model.minimised, choose: { model.setMinimised(true) })
-        }
-        .padding(2)
-        .background(Capsule().fill(Theme.raised))
-    }
-
-    private func option(symbol: String, label: String, selected: Bool, choose: @escaping () -> Void) -> some View {
-        Button(action: choose) {
-            Image(systemName: symbol)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(selected ? Theme.onAccent : Theme.secondary)
-                .frame(width: 30, height: 24)
-                .background(Capsule().fill(selected ? Theme.text : Color.clear))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(Text(label))
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

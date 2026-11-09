@@ -2,7 +2,7 @@
 
 A menu-bar app that turns the MacBook notch into one inbox for three email accounts. Hover to peek, click to see all three side by side, click an inbox to expand it.
 
-It shows sample mail until you link your Gmail through the browser (below). A settings page comes next.
+It shows sample mail until you link your Gmail through the browser (below). **Settings** open inside the notch from the gear at its top right.
 
 ## Install
 
@@ -18,7 +18,7 @@ It downloads the latest build, puts **Notch Inbox** in your Applications folder 
 
 Notch Inbox reads your mail through the browser where your Gmail accounts are already signed in (Chrome, Arc, Brave or Edge). No passwords, nothing to sign in to again.
 
-1. Open the notch, click the menu button at its top right (the sliders icon) and choose **Set Up Browser Link…**. Finder opens with the **Notch Inbox Link** folder selected.
+1. Open the notch, click the gear at its top right, choose **Gmail link** and click **Set Up Browser Link…**. Finder opens with the **Notch Inbox Link** folder selected.
 2. In the browser, open `chrome://extensions` (Arc: `arc://extensions`) and turn on **Developer mode**.
 3. Drag the **Notch Inbox Link** folder onto that page.
 
@@ -27,7 +27,7 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 - **Primary tab, plus Google mail** for everyday accounts: Google Classroom, Docs, Drive and Calendar notices are included even when Gmail files them under Updates.
 - **Whole inbox** (every tab) for an address made for receipts or sign-ups (a catch-all, say), since Gmail files that mail outside Primary.
 
-Change either per account, or hide an account, in the app menu (sliders button) under the account's address.
+Change either per account, or hide an account, in **Settings → Mail accounts**.
 
 **Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once; within about 30 seconds the add-on marks it read in Gmail too, then checks that Gmail took it (the add-on's popup shows "Marked read in Gmail"). If Gmail hasn't caught up after 10 minutes, the notch shows it unread again.
 
@@ -50,11 +50,32 @@ The app keeps a copy of what the notch shows in `~/Library/Application Support/N
 Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every 2 minutes. When one is ready:
 
 - an **Update** button appears at the top right of the open notch, and
-- **Install Update** appears in the app menu.
+- **Settings → Updates** shows the new build, its notes and an **Install** button.
 
-Click either one to download the new build, swap it in and restart. Nothing installs without your click. The app menu also has **Check for Updates…** and shows which build you're running.
+Click either one to download the new build, swap it in and restart. Nothing installs without your click. **Settings → Updates** also has **Check for Updates** and shows which build you're running.
 
-**The app menu** opens from the menu button (sliders icon) at the top right of the open notch. The same menu sits under an envelope icon in the menu bar, but on a MacBook macOS hides menu-bar icons that don't fit beside the notch, so the notch's button is the reliable way in.
+## Settings
+
+Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
+
+- **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
+- **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch.
+- **Assistant:** who answers (below), which Claude model, and whether it may see your newest emails and notes.
+- **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
+- **Updates:** your build, checking and installing.
+- **Quit Notch Inbox**, at the bottom.
+
+An envelope in the menu bar has a short menu too (Open, Settings…, Quit), as does right-clicking the mail tab. On a MacBook, macOS hides menu-bar icons that don't fit beside the notch, so the gear is the reliable way in.
+
+## The assistant
+
+Ask about your day, your email or anything else. In **Settings → Assistant**, pick who answers:
+
+- **Claude, with your Claude plan** (the default): answers through [Claude Code](https://claude.com/claude-code) on your Mac, signed in to your Claude account, so it counts toward your plan's usage and needs no API key. Install it once in Terminal with `curl -fsSL https://claude.ai/install.sh | bash`, then type `claude` and sign in. Each question runs Claude Code with no tools, skills or MCP servers, in a folder of its own, and nothing is saved to your Claude Code history.
+- **Claude, with an API key:** paste a key from [console.anthropic.com](https://console.anthropic.com); you pay Anthropic per question. The key is kept in `~/Library/Application Support/Notch Inbox`, readable only by you.
+- **Qwen, on this Mac:** runs locally through [Ollama](https://ollama.com); free and private, but slower and less capable. Settings shows the one Terminal command to download the right Qwen model for your Mac's memory (several GB).
+
+For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **Share my newest emails and notes** lets the assistant see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
 
 ## Using it
 
@@ -62,19 +83,19 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count) and **Notes** (how many, and the latest). More tools will join them. Click anywhere on it to keep it open.
-- **Assistant:** chat with Qwen, an AI that runs on your Mac through [Ollama](https://ollama.com), for everyday help: planning your day, summarising email, what's due, writing replies. It can see your newest emails and notes if you let it (a checkbox under the chat); nothing leaves your Mac. The first time, it shows the one Terminal command to download the right Qwen model for your Mac's memory.
+- **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
 - **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
 - **Click the Mail tile:** it opens into three lanes, one per inbox. The grid button at the top left goes back to the primary menu.
 - **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
 - **Click outside, or press Esc** to close. Esc steps back one level: email → inboxes → primary menu → closed.
-- **Two modes:** the switch at the top right of the primary menu (or the app menu) picks between **Notch at the Top**, which opens when you hover, and **Mail Tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for the menu.
+- **Two modes:** **Settings → General** picks between **Notch at the top**, which opens when you hover, and **Mail tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for a short menu.
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 
 ## Sample mail
 
-Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Search, snooze and settings are placeholders for now.
+Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Search and snooze are placeholders for now.
 
 ## Building it yourself (optional)
 
@@ -89,7 +110,9 @@ open "build/Notch Inbox.app"
 
 | File | What it does |
 |---|---|
-| `AppDelegate.swift` | Launch; the app menu, in the notch and in the menu bar |
+| `AppDelegate.swift` | Launch; connects Settings to the mailbox, updater and browser link; the menu-bar envelope |
+| `AppSettings.swift`, `Views/SettingsView.swift` | Settings inside the notch |
+| `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
@@ -103,6 +126,6 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The copy of the notch's mail kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, peek, lanes, expanded inbox |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, notes, assistant, settings |
 | `Theme.swift` | Colours from the design |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |

@@ -33,10 +33,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'app') syncIfAppRestarted();
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === 'sync-now') {
     sync().then(sendResponse);
     return true; // answers asynchronously
+  }
+  // What the hidden Gmail frame shows, from hidden-frame.js, for the mark-read log.
+  if (message && message.type === 'hidden-frame' && sender && sender.id === chrome.runtime.id) {
+    trace(`inside the hidden Gmail (${message.after}s): ${String(message.state).slice(0, 200)}`);
   }
   return false;
 });
@@ -375,6 +379,7 @@ const TRIES = 2;
 const OPEN_PER_SYNC = 4;
 const TAB_LOAD_MS = 30 * 1000;
 const TAB_SETTLE_MS = 4000;
+const HIDDEN_SETTLE_MS = 9000; // Gmail starts more slowly out of sight
 const HIDDEN_RULE = 47823;
 
 const MARK_READ_FORMS = [
@@ -472,8 +477,18 @@ async function markReadSteps(items, feeds, status, allowTabs) {
   // 1. Gmail's read action, unless it's known not to work here.
   if (left.length > 0 && (action.state !== 'off' || Date.now() - action.at > ACTION_RETRY_MS)) {
     const sent = [];
+    let refused = 0;
     for (const entry of left) {
       if (await markOneRead(entry, iks, form)) sent.push(entry);
+      else refused += 1;
+    }
+    if (sent.length === 0 && refused > 0) {
+      // Gmail turned it down (it answers 404 now): try the next form, and stop after all of them.
+      action.misses = (action.misses || 0) + 1;
+      await chrome.storage.local.set({ markReadForm: form + 1 });
+      if (action.misses >= MARK_READ_FORMS.length) action.state = 'off';
+      action.at = Date.now();
+      trace(`the action was refused (${action.misses} of ${MARK_READ_FORMS.length} forms)${action.state === 'off' ? '; not sending it again for a week' : ''}`);
     }
     if (sent.length > 0) {
       await pause(1500);
@@ -495,7 +510,8 @@ async function markReadSteps(items, feeds, status, allowTabs) {
     }
   }
 
-  // 2. Gmail in a hidden frame, out of sight.
+  // 2. Gmail in a hidden frame, out of sight. (hidden-frame-main.js tells Gmail in that
+  // frame that it's in view; hidden-frame.js reports what it shows, for the log.)
   let hidden = 0;
   const forHidden = left.filter((entry) => (hiddenTries[entry.item.id] || 0) < TRIES).slice(0, OPEN_PER_SYNC);
   if (forHidden.length > 0) {
@@ -585,7 +601,7 @@ async function openOutOfSight(pages) {
     let reply;
     try {
       reply = await chrome.runtime.sendMessage({
-        target: 'offscreen', type: 'open-gmail', pages, settle: TAB_SETTLE_MS, loadTimeout: TAB_LOAD_MS,
+        target: 'offscreen', type: 'open-gmail', pages, settle: HIDDEN_SETTLE_MS, loadTimeout: TAB_LOAD_MS,
       });
     } finally {
       stopWatching();

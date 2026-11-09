@@ -1,3 +1,5 @@
+let markReadStatus = null;
+
 function render(status) {
   const state = document.getElementById('state');
   const list = document.getElementById('accounts');
@@ -31,13 +33,17 @@ function render(status) {
   }
   when.textContent = status.at ? `Last checked ${new Date(status.at).toLocaleTimeString()}` : '';
   let whole = status.ok ? wholeEmails(status) : '';
-  if (status.ok && status.markRead) {
-    const { asked, worked, how } = status.markRead;
+  const marked = markReadStatus || status.markRead;
+  if (status.ok && marked) {
+    const { asked, worked, how } = marked;
     const missed = Math.max(0, (asked || 0) - (worked || 0));
-    const way = how === 'hidden' ? ', out of sight' : (how === 'tab' ? ', in a background tab' : '');
+    const way = how === 'hidden' ? ', out of sight in your Gmail tab' : (how === 'tab' ? ', in a background tab' : '');
     whole += ` · Marked read in Gmail: ${worked || 0}${way}${missed ? ` (${missed} not yet, trying again)` : ''}`;
   }
   document.getElementById('whole').textContent = whole;
+  // Marking read needs a Gmail tab to work in, out of sight.
+  document.getElementById('needsTab').hidden = !(status.ok && marked && marked.noGmailTab
+    && Math.max(0, (marked.asked || 0) - (marked.worked || 0)) > 0);
 }
 
 function wholeEmails(status) {
@@ -62,14 +68,20 @@ function renderLog(lines) {
 }
 
 document.getElementById('version').textContent = `Version ${chrome.runtime.getManifest().version}`;
-chrome.storage.local.get(['status', 'readLog']).then((stored) => {
-  render(stored.status);
+let lastStatus = null;
+chrome.storage.local.get(['status', 'readLog', 'markReadStatus']).then((stored) => {
+  markReadStatus = stored.markReadStatus || null;
+  lastStatus = stored.status;
+  render(lastStatus);
   renderLog(stored.readLog);
 });
 // Keep up while the popup is open.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.status) render(changes.status.newValue);
-  if (area === 'local' && changes.readLog) renderLog(changes.readLog.newValue);
+  if (area !== 'local') return;
+  if (changes.markReadStatus) markReadStatus = changes.markReadStatus.newValue || null;
+  if (changes.status) lastStatus = changes.status.newValue;
+  if (changes.status || changes.markReadStatus) render(lastStatus);
+  if (changes.readLog) renderLog(changes.readLog.newValue);
 });
 
 document.getElementById('copyLog').addEventListener('click', async () => {
@@ -81,5 +93,6 @@ document.getElementById('copyLog').addEventListener('click', async () => {
 
 document.getElementById('sync').addEventListener('click', async () => {
   document.getElementById('state').textContent = 'Syncing…';
-  render(await chrome.runtime.sendMessage({ type: 'sync-now' }));
+  lastStatus = await chrome.runtime.sendMessage({ type: 'sync-now' });
+  render(lastStatus);
 });

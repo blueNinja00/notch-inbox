@@ -12,6 +12,7 @@
   ul { margin: 8px 0; padding-left: 18px; }
   .muted { color: #6e6e73; font-size: 12px; margin-top: 6px; }
   #whole { font-size: 12px; margin-top: 6px; }
+  .note { font-size: 12px; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #fff4e5; color: #8a4b00; }
   .counts { color: #6e6e73; font-size: 11.5px; }
   button { margin-top: 10px; font: inherit; padding: 4px 12px; }
   details { margin-top: 10px; font-size: 12px; }
@@ -26,6 +27,7 @@
 <ul id="accounts"></ul>
 <div class="muted" id="when"></div>
 <div id="whole"></div>
+<div id="needsTab" class="note" hidden>To mark emails you read in the notch read in Gmail, keep Gmail open in a tab (any account; a pinned tab is ideal). The add-on works in it out of sight. If Chrome puts it to sleep, add mail.google.com under “Always keep these sites active” in Chrome’s Performance settings.</div>
 <div class="muted">Reads the unread mail of each Gmail account signed in here (the Primary tab, plus Google Classroom and other mail from Google), opens it in full and passes it only to Notch Inbox on this Mac.</div>
 <button id="sync" type="button">Sync now</button>
 <details id="logBox">

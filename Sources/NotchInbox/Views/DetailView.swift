@@ -7,7 +7,7 @@ struct DetailView: View {
 
     var body: some View {
         let metrics = model.metrics
-        let size = metrics.bodySize(.detail)
+        let size = model.size(.detail)
         let activeIndex = model.accounts.firstIndex(where: { $0.id == model.activeAccountID }) ?? 0
         let leftRails = Array(model.accounts.prefix(activeIndex))
         let rightRails = Array(model.accounts.dropFirst(activeIndex + 1))

@@ -9,7 +9,7 @@ struct NotchRootView: View {
         let metrics = model.metrics
         let level = model.level
         let ears = model.restEars
-        let outline = metrics.outlineSize(level, ears: ears)
+        let outline = model.outline(level)
         let shape = NotchShape(bottomRadius: metrics.bottomRadius(level),
                                shoulder: metrics.shoulder(level, ears: ears))
         // Minimised to the mail icon: nothing at the notch until it's opened.
@@ -23,6 +23,10 @@ struct NotchRootView: View {
                 content(for: level)
                     .frame(width: outline.width, height: outline.height, alignment: .top)
                     .clipShape(shape)
+                if level != .rest {
+                    ResizeHandles(model: model, level: level)
+                        .frame(width: outline.width, height: outline.height)
+                }
             }
             .frame(width: outline.width, height: outline.height)
             .opacity(hidden ? 0 : 1)
@@ -44,12 +48,17 @@ struct NotchRootView: View {
         case .peek:
             HomeView(model: model)
                 .transition(.opacity)
-        case .lanes:
-            LanesView(model: model)
-                .transition(.opacity)
-        case .detail:
-            DetailView(model: model)
-                .transition(.opacity)
+        case .lanes, .detail:
+            if model.tool == .notes, let store = model.notesStore {
+                NotesView(model: model, store: store, expanded: level == .detail)
+                    .transition(.opacity)
+            } else if level == .lanes {
+                LanesView(model: model)
+                    .transition(.opacity)
+            } else {
+                DetailView(model: model)
+                    .transition(.opacity)
+            }
         }
     }
 }

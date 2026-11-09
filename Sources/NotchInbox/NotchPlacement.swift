@@ -19,12 +19,14 @@ struct NotchPlacement {
            let left = screen.auxiliaryTopLeftArea,
            let right = screen.auxiliaryTopRightArea {
             let width = screen.frame.width - left.width - right.width
-            let metrics = NotchMetrics(notchWidth: width, notchHeight: screen.safeAreaInsets.top, hasNotch: true)
+            let metrics = NotchMetrics(notchWidth: width, notchHeight: screen.safeAreaInsets.top, hasNotch: true,
+                                       screenSize: screen.frame.size)
             return NotchPlacement(screen: screen, metrics: metrics)
         }
 
         let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-        let metrics = NotchMetrics(notchWidth: 190, notchHeight: max(menuBarHeight, 24), hasNotch: false)
+        let metrics = NotchMetrics(notchWidth: 190, notchHeight: max(menuBarHeight, 24), hasNotch: false,
+                                   screenSize: screen.frame.size)
         return NotchPlacement(screen: screen, metrics: metrics)
     }
 }

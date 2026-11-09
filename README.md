@@ -59,11 +59,13 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
-- **Hover the notch:** the primary menu drops down, with one tile per tool. Mail is the first (total unread, the newest email, each inbox's count); more tools will join it. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count) and **Notes** (how many, and the latest). More tools will join them. Click anywhere on it to keep it open.
+- **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
+- **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
 - **Click the Mail tile:** it opens into three lanes, one per inbox. The grid button at the top left goes back to the primary menu.
 - **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
 - **Click outside, or press Esc** to close. Esc steps back one level: email → inboxes → primary menu → closed.
-- **Minimise:** the button beside the sliders (or **Minimise the Notch** in the menu) hides the numbers and everything at the notch, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu, right-click it for the menu, and choose **Show the Full Notch** to go back.
+- **Minimise:** the button beside the sliders (or **Minimise the Notch** in the menu) hides the numbers and everything at the notch, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open), right-click it for the menu, and choose **Show the Full Notch** to go back.
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 

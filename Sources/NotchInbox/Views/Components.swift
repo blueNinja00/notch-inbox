@@ -101,14 +101,30 @@ struct ModuleTabs: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
+        ToolTabs(model: model, symbol: "envelope", title: "Mail") {
+            if model.isSample {
+                SampleTag()
+            }
+        }
+    }
+}
+
+/// A tool's top-left corner: the grid button back to the primary menu, then the tool's name.
+struct ToolTabs<Extra: View>: View {
+    @ObservedObject var model: NotchModel
+    let symbol: String
+    let title: String
+    @ViewBuilder var extra: () -> Extra
+
+    var body: some View {
         HStack(spacing: 4) {
             IconButton(symbol: "square.grid.2x2", label: "All tools (Esc)", size: 28,
                        action: { model.goHome() })
 
             HStack(spacing: 7) {
-                Image(systemName: "envelope")
+                Image(systemName: symbol)
                     .font(.system(size: 11.5, weight: .semibold))
-                Text("Mail")
+                Text(title)
                     .font(.system(size: 12.5, weight: .semibold))
             }
             .foregroundStyle(Theme.text)
@@ -117,9 +133,7 @@ struct ModuleTabs: View {
             .frame(height: 28)
             .background(Capsule().fill(Theme.raised))
 
-            if model.isSample {
-                SampleTag()
-            }
+            extra()
         }
         .padding(.leading, 4)
     }
@@ -228,17 +242,19 @@ struct BackButton: View {
     }
 }
 
-/// Shrinks the notch to a small tab you can slide along the top of the screen, or puts it back.
+/// Shrinks everything to the small tab at the top of the screen. If it's already
+/// minimised, this just closes the panel back into the tab.
 struct MinimiseButton: View {
     @ObservedObject var model: NotchModel
 
     var body: some View {
-        if model.minimised {
-            IconButton(symbol: "arrow.up.left.and.arrow.down.right", label: "Back to the full notch",
-                       action: { model.setMinimised(false) })
-        } else {
-            IconButton(symbol: "arrow.down.right.and.arrow.up.left", label: "Minimise to a small tab you can slide along the top",
-                       action: { model.setMinimised(true) })
-        }
+        IconButton(symbol: "minus", label: "Minimise to a small tab you can slide along the top",
+                   action: {
+                       if model.minimised {
+                           model.close()
+                       } else {
+                           model.setMinimised(true)
+                       }
+                   })
     }
 }

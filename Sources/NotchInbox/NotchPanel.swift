@@ -130,7 +130,7 @@ final class NotchWindowController {
         if model.minimised && level == .rest {
             return .zero
         }
-        let outline = model.metrics.outlineSize(level, ears: model.restEars)
+        let outline = model.outline(level)
         let screenFrame = screen.frame
         let rect = NSRect(x: screenFrame.midX - outline.width / 2,
                           y: screenFrame.maxY - outline.height,
@@ -217,11 +217,32 @@ final class NotchWindowController {
             return nil
         }
 
+        // The app has no menu bar of its own, so copy, paste, select all and undo are
+        // passed to the text you're editing here.
+        if panel.firstResponder is NSText,
+           event.modifierFlags.intersection([.command, .control, .option]) == .command,
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            let action: Selector?
+            switch key {
+            case "x": action = #selector(NSText.cut(_:))
+            case "c": action = #selector(NSText.copy(_:))
+            case "v": action = #selector(NSText.paste(_:))
+            case "a": action = #selector(NSText.selectAll(_:))
+            case "z": action = event.modifierFlags.contains(.shift) ? Selector(("redo:")) : Selector(("undo:"))
+            default: action = nil
+            }
+            if let action = action, NSApp.sendAction(action, to: nil, from: panel) {
+                return nil
+            }
+        }
+
         // Leave every other key alone while you're typing a reply.
         if panel.firstResponder is NSText { return event }
 
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
-        guard modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased() else {
+        // Mail's shortcuts only apply in Mail.
+        guard model.tool == .mail, model.level != .peek, modifiers.isEmpty,
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
             return event
         }
 

@@ -107,6 +107,82 @@ final class NotchModel: ObservableObject {
         onMinimise?(on)
     }
 
+    // MARK: Tools and sizes
+
+    /// Which tool the open panel shows. Inboxes and notes both use the lanes and detail sizes.
+    enum Tool: Equatable {
+        case mail
+        case notes
+    }
+
+    @Published var tool: Tool = .mail
+    /// The notes, shared by every screen (set by the app).
+    var notesStore: NotesStore?
+    @Published var selectedNoteID: UUID?
+
+    /// Sizes you've dragged each open level to; missing means the standard size.
+    @Published var customSizes: [NotchLevel: CGSize] = [:]
+    /// Called when you let go after dragging, to remember the size and share it.
+    var onResized: (([NotchLevel: CGSize]) -> Void)?
+
+    /// The panel's size at a level: as dragged, else standard.
+    func size(_ level: NotchLevel) -> CGSize {
+        guard level != .rest, let custom = customSizes[level] else {
+            return metrics.bodySize(level, ears: restEars)
+        }
+        return metrics.clamp(custom, for: level)
+    }
+
+    /// The panel's black outline at a level: its size plus the curved shoulders.
+    func outline(_ level: NotchLevel) -> CGSize {
+        let body = size(level)
+        return CGSize(width: body.width + metrics.shoulder(level, ears: restEars) * 2, height: body.height)
+    }
+
+    func resize(_ level: NotchLevel, to size: CGSize) {
+        guard level != .rest else { return }
+        customSizes[level] = metrics.clamp(size, for: level)
+    }
+
+    func finishResizing() {
+        onResized?(customSizes)
+    }
+
+    /// Back to the standard size (double-click the corner grip).
+    func resetSize(_ level: NotchLevel) {
+        customSizes[level] = nil
+        onResized?(customSizes)
+    }
+
+    func openNotes() {
+        tool = .notes
+        if selectedNoteID == nil || notesStore?.note(selectedNoteID) == nil {
+            selectedNoteID = notesStore?.notes.first?.id
+        }
+        level = .lanes
+    }
+
+    /// Notes in the bigger, detail-sized panel.
+    func expandNotes() {
+        tool = .notes
+        level = .detail
+    }
+
+    func newNote() {
+        guard let store = notesStore else { return }
+        store.removeEmpty(except: nil)
+        selectedNoteID = store.add().id
+        if tool != .notes || level == .rest || level == .peek {
+            tool = .notes
+            level = .lanes
+        }
+    }
+
+    func selectNote(_ id: UUID) {
+        notesStore?.removeEmpty(except: id)
+        selectedNoteID = id
+    }
+
     /// Width of each ear beside the closed notch: wide enough for every unread count.
     var restEars: CGFloat {
         minimised ? 0 : NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
@@ -161,6 +237,7 @@ final class NotchModel: ObservableObject {
     }
 
     func openLanes() {
+        tool = .mail
         level = .lanes
     }
 
@@ -172,10 +249,12 @@ final class NotchModel: ObservableObject {
         level = .rest
         sentFrom = nil
         homePinned = false
+        notesStore?.removeEmpty(except: nil)
     }
 
     /// Expand one inbox, opening the given message (or the newest).
     func open(accountID: String, messageID: String? = nil) {
+        tool = .mail
         let target = messageID ?? inbox(accountID).first?.id
         activeAccountID = accountID
         openMessageID = target

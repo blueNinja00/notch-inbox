@@ -7,7 +7,7 @@ struct HomeView: View {
 
     var body: some View {
         let metrics = model.metrics
-        let size = metrics.bodySize(.peek)
+        let size = model.size(.peek)
 
         VStack(spacing: 0) {
             TopRow(metrics: metrics) {
@@ -19,10 +19,14 @@ struct HomeView: View {
 
             HStack(spacing: 8) {
                 MailToolTile(model: model)
+                if let store = model.notesStore {
+                    NotesToolTile(model: model, store: store)
+                        .frame(width: 180)
+                }
                 MoreToolsTile()
-                    .frame(width: 150)
+                    .frame(width: 100)
             }
-            .frame(height: 96)
+            .frame(maxHeight: .infinity)
             .padding(.top, 6)
         }
         .padding(.horizontal, 12)
@@ -133,11 +137,12 @@ struct MailToolTile: View {
                             Circle()
                                 .fill(account.color)
                                 .frame(width: 6, height: 6)
-                            Text("\(account.name) \(UnreadText.format(model.unreadCount(account.id)))")
+                            Text(UnreadText.format(model.unreadCount(account.id)))
                                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                                 .foregroundStyle(Theme.tertiary)
                                 .lineLimit(1)
                         }
+                        .help(account.name)
                     }
                 }
                 .padding(.top, 5)
@@ -164,7 +169,7 @@ struct MoreToolsTile: View {
         VStack(spacing: 6) {
             Image(systemName: "plus")
                 .font(.system(size: 14, weight: .semibold))
-            Text("More tools\ncoming soon")
+            Text("More\nsoon")
                 .font(.system(size: 11.5, weight: .medium))
                 .multilineTextAlignment(.center)
         }

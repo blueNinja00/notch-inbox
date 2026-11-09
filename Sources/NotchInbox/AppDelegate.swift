@@ -57,6 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let minimisedKey = "minimisedToIcon"
     private var minimised = UserDefaults.standard.bool(forKey: AppDelegate.minimisedKey)
     private let mailIcon = MailIconController()
+    /// Notes, shared by every screen's notch.
+    private let notes = NotesStore()
+    /// Sizes the open panel has been dragged to, by level.
+    private static let panelSizesKey = "panelSizes"
+
     private var subscriptions = Set<AnyCancellable>()
 
     /// Set when you ask for an update check or install, so the notch can say how it went.
@@ -110,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         saveMailboxNow()
+        notes.saveNow()
     }
 
     // MARK: Screens
@@ -165,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.onMinimise = { [weak self] on in
             self?.setMinimised(on)
         }
+        model.notesStore = notes
+        model.customSizes = AppDelegate.loadPanelSizes()
+        model.onResized = { [weak self] sizes in
+            self?.panelResized(sizes)
+        }
         model.wholeEmails = wholeEmails
         if lastFeedAt != nil {
             model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.unread)
@@ -176,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Only one notch is open at a time: opening one closes any other.
     private func panelLevelChanged(_ level: NotchLevel, on id: CGDirectDisplayID) {
         DispatchQueue.main.async { [weak self] in
-            self?.refreshMailIcon() // sample mail can change counts too
+            self?.refreshMailIcon()
         }
         guard level == .lanes || level == .detail else { return }
         for (other, controller) in screens where other != id && controller.model.level != .rest {
@@ -256,8 +267,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshMailIcon()
     }
 
+    /// The minimised tab hides while the panel is open, and comes back when it closes.
     private func refreshMailIcon() {
         minimiseItem?.title = minimised ? "Show the Full Notch" : "Minimise the Notch"
+        guard minimised else { return }
+        let somethingOpen = models.contains { $0.level != .rest }
+        if somethingOpen {
+            mailIcon.conceal()
+        } else {
+            mailIcon.reveal()
+        }
+    }
+
+    // MARK: Panel sizes
+
+    private static func loadPanelSizes() -> [NotchLevel: CGSize] {
+        let saved = UserDefaults.standard.dictionary(forKey: panelSizesKey) as? [String: [Double]] ?? [:]
+        var sizes: [NotchLevel: CGSize] = [:]
+        for (key, value) in saved {
+            if let level = NotchLevel(rawValue: key), value.count == 2 {
+                sizes[level] = CGSize(width: value[0], height: value[1])
+            }
+        }
+        return sizes
+    }
+
+    /// Remembers a dragged size and gives every screen's notch the same one.
+    private func panelResized(_ sizes: [NotchLevel: CGSize]) {
+        var saved: [String: [Double]] = [:]
+        for (level, size) in sizes {
+            saved[level.rawValue] = [Double(size.width), Double(size.height)]
+        }
+        UserDefaults.standard.set(saved, forKey: AppDelegate.panelSizesKey)
+        for model in models where model.customSizes != sizes {
+            model.customSizes = sizes
+        }
     }
 
     /// Clicking the minimised tab opens the primary menu at the notch of the screen it's

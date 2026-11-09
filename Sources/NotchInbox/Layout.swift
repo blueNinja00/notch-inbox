@@ -1,7 +1,7 @@
 import Foundation
 
 /// The four sizes the notch moves through.
-enum NotchLevel: Equatable {
+enum NotchLevel: String, Equatable {
     case rest    // closed: the notch plus small unread "ears"
     case peek    // the primary menu: one tile per tool (Mail first); hover or click
     case lanes   // click: one lane per inbox
@@ -13,6 +13,8 @@ struct NotchMetrics: Equatable {
     var notchWidth: CGFloat
     var notchHeight: CGFloat
     var hasNotch: Bool
+    /// The screen's size, which caps how big you can drag the open panel.
+    var screenSize = CGSize(width: 1512, height: 982)
 
     /// The narrowest an ear gets. Ears widen to fit the unread counts they show.
     static let earWidth: CGFloat = 56
@@ -73,10 +75,34 @@ struct NotchMetrics: Equatable {
         return CGSize(width: body.width + shoulder(level, ears: ears) * 2, height: body.height)
     }
 
-    /// The transparent window fits the largest level plus room for its shadow.
+    /// The smallest you can drag each open level to.
+    func minimumSize(_ level: NotchLevel) -> CGSize {
+        switch level {
+        case .rest: return bodySize(.rest)
+        case .peek: return CGSize(width: 520, height: topRow + 104)
+        case .lanes: return CGSize(width: 640, height: topRow + 220)
+        case .detail: return CGSize(width: 820, height: topRow + 340)
+        }
+    }
+
+    /// The biggest you can drag the panel: nearly the whole screen.
+    var maximumSize: CGSize {
+        CGSize(width: max(bodySize(.detail).width, min(screenSize.width - 32, 2000)),
+               height: max(bodySize(.detail).height, min(screenSize.height - 60, 1400)))
+    }
+
+    /// A dragged size kept between the level's minimum and the screen's limit.
+    func clamp(_ size: CGSize, for level: NotchLevel) -> CGSize {
+        let low = minimumSize(level)
+        let high = maximumSize
+        return CGSize(width: min(max(size.width, low.width), high.width),
+                      height: min(max(size.height, low.height), high.height))
+    }
+
+    /// The transparent window fits the biggest the panel can be dragged to, plus its shadow.
     var windowSize: CGSize {
-        let largest = outlineSize(.detail)
-        return CGSize(width: largest.width + NotchMetrics.shadowMargin * 2,
+        let largest = maximumSize
+        return CGSize(width: largest.width + shoulder(.detail) * 2 + NotchMetrics.shadowMargin * 2,
                       height: largest.height + NotchMetrics.shadowMargin * 1.5)
     }
 }

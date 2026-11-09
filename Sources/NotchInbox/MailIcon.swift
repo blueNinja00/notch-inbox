@@ -60,6 +60,19 @@ final class MailIconController {
         panel = nil
     }
 
+    /// Out of sight while the panel is open; it keeps its place.
+    func conceal() {
+        panel?.orderOut(nil)
+    }
+
+    func reveal() {
+        if let panel = panel {
+            panel.orderFrontRegardless()
+        } else {
+            show()
+        }
+    }
+
     /// Snaps the tab to the top edge of the screen it's over, fully on screen and clear of
     /// a camera notch, and remembers where it is.
     func keepOnScreen() {

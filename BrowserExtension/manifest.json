@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Notch Inbox Link",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Passes your unread Gmail, in full, to the Notch Inbox app on this Mac. Nothing is sent anywhere else.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAko/U9Nb8pZxMDkP4XcXAPd5P2TxeGRl932/yv1r8/7sDKnQltV+VaxNI4NmCcg6zh6cLhZSYmmHMgzsaatcvj4olrXxjtsTziQH7BmTwHR3g7xS/fzluDUYCyZ/qOCJkf6Zygi4+OfHoJMbAfZnuz2q9slyHOTxE2ZqHwo8Rsc94dWXiTfSJY6LXIVJhdkmiqcf3Hx9LjHhFw3OfoV3R6zoL6uXPD70ksB4vcAEl9EGY7ASkMdVlIEL8z8XxmNa1ZEXoTGFuViquH5FrYyzaC6ztNWcUG0d72ucn3gZixYLQCisfD0nBXyVW50b7eItFKHE0OKCu4dWLWzaGfYegWQIDAQAB",
   "minimum_chrome_version": "120",
   "permissions": [
     "alarms",
-    "storage"
+    "storage",
+    "cookies"
   ],
   "host_permissions": [
     "https://mail.google.com/*",

@@ -17,6 +17,15 @@ final class BrowserLink {
     /// update, say) and sync straight away.
     private static let launchID = UUID().uuidString
 
+    /// Set when the app has something for the add-on (an email to mark read), so its
+    /// 30-second check syncs straight away instead of waiting for the minute.
+    static var wantsSync: Bool {
+        get { wantsSyncLock.lock(); defer { wantsSyncLock.unlock() }; return wantsSyncValue }
+        set { wantsSyncLock.lock(); wantsSyncValue = newValue; wantsSyncLock.unlock() }
+    }
+    private static var wantsSyncValue = false
+    private static let wantsSyncLock = NSLock()
+
     /// Whether the add-on can reach the app, and if not why, for Copy Debug Info.
     private(set) var status = "starting"
 
@@ -150,8 +159,9 @@ final class BrowserLink {
             + "Access-Control-Allow-Methods: POST, OPTIONS\r\n"
             + "Access-Control-Allow-Headers: Content-Type\r\n"
             + "Access-Control-Allow-Private-Network: true\r\n"
-            + "Access-Control-Expose-Headers: X-Notch-Launch\r\n"
+            + "Access-Control-Expose-Headers: X-Notch-Launch, X-Notch-Wants\r\n"
             + "X-Notch-Launch: \(launchID)\r\n"
+            + "X-Notch-Wants: \(wantsSync ? 1 : 0)\r\n"
             + "Connection: close\r\n\r\n"
         var message = Data(head.utf8)
         if let json = json {

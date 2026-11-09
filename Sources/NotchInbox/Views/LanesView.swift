@@ -35,29 +35,11 @@ struct LaneColumn: View {
 
     var body: some View {
         let messages = model.inbox(account.id)
-        let cards = Array(messages.prefix(4))
-        let more = messages.count - cards.count
 
         VStack(alignment: .leading, spacing: 4) {
             LaneHeader(account: account,
                        unread: model.unreadCount(account.id),
                        action: { model.open(accountID: account.id) })
-
-            ForEach(cards) { message in
-                LaneCard(message: message,
-                         action: { model.open(accountID: account.id, messageID: message.id) })
-            }
-
-            if more > 0 {
-                Button(action: { model.open(accountID: account.id) }) {
-                    Text("+ \(more) more")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.tertiary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                }
-                .buttonStyle(.plain)
-            }
 
             if messages.isEmpty {
                 Text(model.isSample ? "All caught up" : "Nothing unread. New mail shows up here as it arrives.")
@@ -65,9 +47,19 @@ struct LaneColumn: View {
                     .foregroundStyle(Theme.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
+                Spacer(minLength: 0)
+            } else {
+                // Every email the notch has for this inbox, filling the lane; scroll for more.
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(messages) { message in
+                            LaneCard(message: message,
+                                     action: { model.open(accountID: account.id, messageID: message.id) })
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
             }
-
-            Spacer(minLength: 0)
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

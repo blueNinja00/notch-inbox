@@ -28,6 +28,10 @@ struct LiveMailbox {
     private var failed: [String: Date] = [:]
     /// Emails you opened in the notch: their whole text is fetched first.
     private var opened: Set<String> = []
+    /// Emails you read in the notch that Gmail still lists as unread, and when you read them.
+    private var readHere: [String: Date] = [:]
+    /// How long the notch waits for Gmail to mark an email read before showing it unread again.
+    static let readGrace: TimeInterval = 10 * 60
     /// Accounts you chose to keep out of the notch.
     var hidden: Set<String> = []
 
@@ -35,7 +39,7 @@ struct LiveMailbox {
         self.order = order
     }
 
-    mutating func apply(_ feeds: [GmailFeed]) {
+    mutating func apply(_ feeds: [GmailFeed], now: Date = Date()) {
         for feed in feeds {
             let account = feed.account
             if !order.contains(account) {
@@ -44,17 +48,29 @@ struct LiveMailbox {
             unread[account] = feed.unreadCount
 
             let stillUnread = Set(feed.entries.map { $0.id })
-            for (id, message) in store where message.accountID == account && message.isUnread && !stillUnread.contains(id) {
-                store[id]?.isUnread = false
+            for (id, message) in store where message.accountID == account && !stillUnread.contains(id) {
+                if message.isUnread {
+                    store[id]?.isUnread = false
+                }
+                readHere[id] = nil // Gmail has caught up
             }
             for entry in feed.entries {
+                // Opened in the notch a moment ago: stays read while Gmail catches up.
+                var waiting = false
+                if let openedAt = readHere[entry.id] {
+                    if now.timeIntervalSince(openedAt) < LiveMailbox.readGrace {
+                        waiting = true
+                    } else {
+                        readHere[entry.id] = nil
+                    }
+                }
                 store[entry.id] = MailMessage(id: entry.id,
                                               accountID: account,
                                               sender: entry.senderName,
                                               subject: entry.subject,
                                               body: entry.summary.isEmpty ? [] : [entry.summary],
                                               date: entry.date,
-                                              isUnread: true,
+                                              isUnread: !waiting,
                                               link: entry.link)
             }
 
@@ -64,6 +80,7 @@ struct LiveMailbox {
             }
         }
         // Whole emails and notes for messages that are gone.
+        readHere = readHere.filter { store[$0.key] != nil }
         whole = whole.filter { store[$0.key] != nil }
         failed = failed.filter { store[$0.key] != nil }
         opened = opened.filter { store[$0] != nil }
@@ -176,6 +193,25 @@ struct LiveMailbox {
                 mine.filter { $0.isUnread }.count,
                 mine.filter { whole[$0.id] != nil }.count,
                 mine.filter { failed[$0.id] != nil }.count)
+    }
+
+    /// You read this email in the notch: show it read now, and ask the add-on to mark it
+    /// read in Gmail too. Returns false if it was already read.
+    @discardableResult
+    mutating func markReadHere(_ id: String, now: Date = Date()) -> Bool {
+        guard let message = store[id], message.isUnread else { return false }
+        store[id]?.isUnread = false
+        readHere[id] = now
+        return true
+    }
+
+    /// Emails to mark read in Gmail: read here, still unread there.
+    func toMarkRead(now: Date = Date()) -> [LinkReply.Wanted] {
+        readHere
+            .filter { now.timeIntervalSince($0.value) < LiveMailbox.readGrace }
+            .compactMap { id, _ in store[id] }
+            .sorted { $0.date > $1.date }
+            .map { LinkReply.Wanted(account: $0.accountID, id: $0.id, link: $0.link?.absoluteString, unread: true, opened: true) }
     }
 
     /// You opened this email in the notch: fetch its whole text next, even if it's read.

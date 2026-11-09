@@ -30,7 +30,12 @@ function render(status) {
     list.appendChild(item);
   }
   when.textContent = status.at ? `Last checked ${new Date(status.at).toLocaleTimeString()}` : '';
-  document.getElementById('whole').textContent = status.ok ? wholeEmails(status) : '';
+  let whole = status.ok ? wholeEmails(status) : '';
+  if (status.ok && status.markRead) {
+    const { sent, failed } = status.markRead;
+    whole += ` · Marked read in Gmail: ${sent}${failed ? ` (${failed} couldn’t be)` : ''}`;
+  }
+  document.getElementById('whole').textContent = whole;
 }
 
 function wholeEmails(status) {

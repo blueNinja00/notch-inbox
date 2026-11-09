@@ -5,7 +5,8 @@
 //      Classroom and other mail from Google that Gmail files under Updates isn't missed;
 //   2. hand them to the Notch Inbox app on this Mac;
 //   3. open the emails the app asks for (Gmail's "Show original"), decode them (mime.js)
-//      and hand those over too, so the notch can show them in full.
+//      and hand those over too, so the notch can show them in full;
+//   4. mark read in Gmail the emails you read in the notch.
 // It only talks to mail.google.com and 127.0.0.1 (this Mac).
 
 importScripts('mime.js');
@@ -48,10 +49,11 @@ function start() {
 }
 
 async function syncIfAppRestarted() {
-  const launch = await appLaunch();
-  if (!launch) return;
+  const app = await appState();
+  if (!app) return;
   const saved = await chrome.storage.local.get('appLaunch');
-  if (saved.appLaunch !== launch) sync();
+  // Just started (after an update, say), or waiting on something such as an email to mark read.
+  if (saved.appLaunch !== app.launch || app.wants) sync();
 }
 
 // Gmail retitles its tab ("Inbox (3) - you@gmail.com - Gmail") the moment mail arrives or
@@ -82,12 +84,14 @@ function retryForApp() {
   appRetries += 1;
 }
 
-// The app's launch ID when it's running (any non-empty value for older versions), else null.
-async function appLaunch() {
+// When the app is running: its launch ID (any value for older versions) and whether it's
+// waiting on something. Null when it isn't running.
+async function appState() {
   try {
     const response = await fetch(`${APP}/feeds`, { method: 'OPTIONS' });
     if (!response.ok) return null;
-    return (response.headers && response.headers.get('X-Notch-Launch')) || 'running';
+    const header = (name) => (response.headers && response.headers.get(name)) || null;
+    return { launch: header('X-Notch-Launch') || 'running', wants: header('X-Notch-Wants') === '1' };
   } catch (error) {
     return null;
   }
@@ -117,15 +121,15 @@ function keepAwake() {
 
 async function syncOnce() {
   // Nothing to do while the app isn't running: don't read Gmail for nobody.
-  const launch = await appLaunch();
-  if (!launch) {
+  const app = await appState();
+  if (!app) {
     const status = { ok: false, message: 'Notch Inbox isn’t running on this Mac.', accounts: [], at: Date.now() };
     await chrome.storage.local.set({ status });
     retryForApp();
     return status;
   }
   appRetries = 0;
-  await chrome.storage.local.set({ appLaunch: launch });
+  await chrome.storage.local.set({ appLaunch: app.launch });
 
   const feeds = [];
   const seen = new Set();
@@ -184,6 +188,9 @@ async function syncOnce() {
     return status;
   }
 
+  if (reply && Array.isArray(reply.read) && reply.read.length > 0) {
+    await markRead(reply.read, feeds, status);
+  }
   if (reply && Array.isArray(reply.want) && reply.want.length > 0) {
     await readWholeEmails(reply.want, feeds, status);
   }
@@ -345,4 +352,61 @@ async function sendEmail(email) {
   } catch (error) {
     // Notch Inbox quit in the meantime; it asks again next time.
   }
+}
+
+// ---- Marking read ----------------------------------------------------------------------------
+
+// Emails you read in the notch: mark them read in Gmail, the way Gmail's own page does. The
+// next sync shows whether it worked (the email leaves the unread feed); if not, the app asks
+// again for a while.
+async function markRead(items, feeds, status) {
+  const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
+  const saved = await chrome.storage.local.get('iks');
+  const iks = saved.iks || {};
+  let sent = 0;
+  let failed = 0;
+  for (const item of items.slice(0, 20)) {
+    if (!item || typeof item.id !== 'string' || !slots.has(item.account)) continue;
+    const ok = await markOneRead(slots.get(item.account), item, iks);
+    if (ok) sent += 1; else failed += 1;
+    console.info('[Notch Inbox Link] mark read', item.account, ok ? 'sent' : 'failed');
+  }
+  status.markRead = { sent, failed, at: Date.now() };
+  await chrome.storage.local.set({ iks, status });
+}
+
+async function markOneRead(index, item, iks) {
+  const ids = NotchMime.messageIds(item.id, item.link);
+  if (!ids) return false;
+  let ik = iks[item.account];
+  if (!ik) {
+    ik = await findIk(index, item.account);
+    if (ik) iks[item.account] = ik;
+  }
+  const at = await gmailActionToken(index);
+  if (!ik || !at) return false;
+  try {
+    const response = await fetch(`${GMAIL}${index}/?ui=2&ik=${ik}&at=${encodeURIComponent(at)}&act=rd&t=${ids.hex}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      body: `at=${encodeURIComponent(at)}`,
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+// Gmail's action token for an account: its GMAIL_AT cookie, or failing that, from its page.
+async function gmailActionToken(index) {
+  try {
+    const cookie = await chrome.cookies.get({ url: `${GMAIL}${index}/`, name: 'GMAIL_AT' });
+    if (cookie && cookie.value) return cookie.value;
+  } catch (error) {
+    // cookies not available: fall back to the page
+  }
+  const page = await getText(`${GMAIL}${index}/`);
+  const match = page && (/GM_ACTION_TOKEN\s*=\s*"([^"]+)"/.exec(page) || /[?&;]at=([A-Za-z0-9_-]{10,})/.exec(page));
+  return match ? match[1] : null;
 }

@@ -165,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.showAppMenuAtPointer()
         }
         model.onOpenMessage = { [weak self] id in
-            self?.mailbox.markOpened(id)
+            self?.readInNotch(id)
         }
         model.minimised = minimised
         model.onMinimise = { [weak self] on in
@@ -226,7 +226,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showMailEverywhere()
         refreshLinkItem()
         saveMailboxSoon()
-        return LinkReply(want: mailbox.wanted(), addon: addOn)
+        let toRead = mailbox.toMarkRead()
+        BrowserLink.wantsSync = !toRead.isEmpty
+        return LinkReply(want: mailbox.wanted(), addon: addOn, read: toRead)
+    }
+
+    /// You opened a real email in the notch: it's read here at once, and in Gmail within
+    /// about 30 seconds (the add-on marks it), and its whole text is fetched first.
+    private func readInNotch(_ id: String) {
+        mailbox.markOpened(id)
+        if mailbox.markReadHere(id) {
+            BrowserLink.wantsSync = true
+            showMailEverywhere()
+            saveMailboxSoon()
+        }
     }
 
     /// A whole email (or news that it couldn't be fetched) from the add-on.

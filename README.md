@@ -29,6 +29,8 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 
 Change either per account, or hide an account, in the app menu (sliders button) under the account's address.
 
+**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out at once; within about 30 seconds the add-on marks it read in Gmail too (the add-on's popup shows "Marked read in Gmail"). If Gmail hasn't caught up after 10 minutes, the notch shows it unread again.
+
 The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
 **Whole emails.** Click an email in the notch to read all of it there, laid out the way its sender designed it: a Classroom assignment with its class, due date and **Open** button, a newsletter, a receipt. Links open in the browser. To reply, forward or archive, click **Reply in Gmail** (or press **O**).

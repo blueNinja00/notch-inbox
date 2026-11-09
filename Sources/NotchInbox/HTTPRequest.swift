@@ -120,6 +120,8 @@ struct LinkReply: Encodable, Equatable {
 
     var want: [Wanted] = []
     var addon: String? = nil
+    /// Emails you read in the notch, for the add-on to mark read in Gmail.
+    var read: [Wanted] = []
 }
 
 /// One whole email from the add-on: its HTML and/or plain text, or why it couldn't be read.

@@ -266,9 +266,15 @@ final class NotchModel: ObservableObject {
         selectedNoteID = id
     }
 
-    /// Width of each ear beside the closed notch: wide enough for every unread count.
+    /// The phone plugged into the Mac by cable ("iPhone"), if any: a red dot beside the notch.
+    @Published var phoneConnected: String?
+
+    /// Width of each ear beside the closed notch: wide enough for every unread count, and
+    /// for the red phone dot.
     var restEars: CGFloat {
-        minimised ? 0 : NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
+        guard !minimised else { return 0 }
+        let counts = NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
+        return phoneConnected == nil ? counts : max(counts, NotchMetrics.dotEarWidth)
     }
 
     func account(_ id: String) -> MailAccount? {

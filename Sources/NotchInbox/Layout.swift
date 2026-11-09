@@ -18,6 +18,8 @@ struct NotchMetrics: Equatable {
 
     /// The narrowest an ear gets. Ears widen to fit the unread counts they show.
     static let earWidth: CGFloat = 56
+    /// Ears just wide enough for the red phone dot, when nothing is unread.
+    static let dotEarWidth: CGFloat = 26
     static let shadowMargin: CGFloat = 48
 
     /// How wide each ear must be to show these unread counts in full, side by side.

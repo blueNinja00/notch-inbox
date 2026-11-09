@@ -11,8 +11,20 @@ struct HomeView: View {
 
         VStack(spacing: 0) {
             TopRow(metrics: metrics) {
-                TodayLabel()
-                    .padding(.leading, 6)
+                HStack(spacing: 10) {
+                    TodayLabel()
+                    if let phone = model.phoneConnected {
+                        HStack(spacing: 5) {
+                            PhoneDot(size: 6)
+                            Text(phone)
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(Theme.secondary)
+                                .lineLimit(1)
+                        }
+                        .help("\(phone) is connected to this Mac by cable")
+                    }
+                }
+                .padding(.leading, 6)
             } trailing: {
                 HomeActions(model: model)
             }

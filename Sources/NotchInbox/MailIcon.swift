@@ -145,6 +145,7 @@ final class MailIconController {
 /// The minimised tab: notch-black, flat against the top edge, with a mail icon. No numbers.
 struct MiniNotchView: View {
     let shoulder: CGFloat
+    @ObservedObject var phone = PhoneCableWatcher.shared
 
     var body: some View {
         ZStack {
@@ -153,6 +154,13 @@ struct MiniNotchView: View {
             Image(systemName: "envelope.fill")
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(Theme.text2)
+                .overlay(alignment: .topTrailing) {
+                    // A phone plugged in by cable.
+                    if phone.phone != nil {
+                        PhoneDot(size: 6)
+                            .offset(x: 4, y: -3)
+                    }
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()

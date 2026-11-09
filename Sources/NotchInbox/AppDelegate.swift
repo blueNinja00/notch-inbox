@@ -85,6 +85,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.assistantContext() ?? ""
         }
         Assistant.shared.checkSetup()
+        // A red dot by the notch while a phone is plugged in by cable.
+        PhoneCableWatcher.shared.$phone
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] phone in self?.phoneChanged(phone) }
+            .store(in: &subscriptions)
+        PhoneCableWatcher.shared.start()
         mailIcon.menu = { [weak self] in
             self?.appMenu
         }
@@ -171,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.readInNotch(id)
         }
         model.minimised = minimised
+        model.phoneConnected = PhoneCableWatcher.shared.phone
         model.onMinimise = { [weak self] on in
             self?.setMinimised(on)
         }
@@ -299,6 +306,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             break
         }
         return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), classes: classes, now: now)
+    }
+
+    // MARK: Phone by cable
+
+    private func phoneChanged(_ phone: String?) {
+        for model in models where model.phoneConnected != phone {
+            model.phoneConnected = phone
+        }
     }
 
     // MARK: Minimised to a mail icon

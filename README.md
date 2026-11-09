@@ -89,6 +89,7 @@ For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
+- **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes; nothing is read from the phone.
 - **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Click anywhere on it to keep it open.
 - **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
 - **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
@@ -134,6 +135,7 @@ open "build/Notch Inbox.app"
 | `AppDelegate.swift` | Launch; connects Settings to the mailbox, updater and browser link; the menu-bar envelope |
 | `AppSettings.swift`, `Views/SettingsView.swift` | Settings inside the notch |
 | `Timetable.swift`, `Views/TimetableView.swift` | The timetable: periods, lessons, Week A/B, now and next |
+| `PhoneCable.swift`, `PhoneCableWatcher.swift` | The red dot while a phone is plugged in by USB |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |

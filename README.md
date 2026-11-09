@@ -35,7 +35,9 @@ Change either per account, or hide an account, in **Settings → Mail accounts**
 2. If Gmail ignores that (it does for some accounts), the add-on opens the email in Gmail in a **hidden frame** on a page Chrome keeps out of sight, for a few seconds, just as if you'd clicked it. No tab opens. Gmail normally refuses to load inside another page; for that hidden frame only (frames of `mail.google.com` that aren't in any tab), and only while it's open, the add-on sets aside Gmail's "don't show me in a frame" headers. Gmail in your own tabs is untouched.
 3. Only if you turn on **Background tab as a last resort** in **Settings → Gmail link**: if the hidden frame doesn't work for an email, a background tab for a few seconds, closed straight after.
 
-Each email gets two tries each way. The add-on's popup shows "Marked read in Gmail". If Gmail hasn't caught up after 10 minutes, the notch shows the email unread again.
+Each email gets two tries each way.
+
+**If emails stay unread in Gmail:** the add-on keeps a log of every attempt: whether it found Gmail's account key and token, what Gmail answered, what happened to the hidden frame's requests (a redirect to a sign-in page, say), and whether Gmail still listed the email as unread afterwards. See it in the add-on's popup under **Marking read in Gmail: log** (with **Copy log**), or in **Settings → Gmail link → Copy Debug Info**, which includes it. It holds times, account numbers, the end of each email's ID and the start of Gmail's replies, never what an email says. The add-on's popup shows "Marked read in Gmail". If Gmail hasn't caught up after 10 minutes, the notch shows the email unread again.
 
 The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
@@ -66,8 +68,8 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 
 - **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch.
-- **Assistant:** who answers (below), which Claude model, and whether it may see your newest emails, notes and timetable.
-- **Timetable:** the school day, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
+- **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable, and whether it may see your newest emails and notes.
+- **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
 - **Quit Notch Inbox**, at the bottom.
@@ -82,7 +84,7 @@ Ask about your day, your email or anything else. In **Settings → Assistant**, 
 - **Claude, with an API key:** paste a key from [console.anthropic.com](https://console.anthropic.com); you pay Anthropic per question. The key is kept in `~/Library/Application Support/Notch Inbox`, readable only by you.
 - **Qwen, on this Mac:** runs locally through [Ollama](https://ollama.com); free and private, but slower and less capable. Settings shows the one Terminal command to download the right Qwen model for your Mac's memory (several GB).
 
-For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **Share my emails, notes and timetable** lets the assistant see the senders, subjects and times of your 20 newest emails, your latest notes, and today's and the next school day's classes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
+For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **See and change my timetable** (on to start with) lets it read your timetable and change it when you ask. **Share my newest emails and notes** lets it see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
 
 ## Using it
 
@@ -104,16 +106,18 @@ After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives,
 
 ## Timetable
 
-Click the Timetable tile on the primary menu. The day runs down the left: school from 8 am to 4 pm, with **hour blocks before and after school for your extracurriculars** (6 to 8 am and 4 to 9 pm to start with). Monday to Friday runs across the top. Today's column is marked, what's on now is lit up with a **NOW** tag, and what's finished today fades. A long day scrolls, starting where you are in it.
+Click the Timetable tile on the primary menu. Your day runs down the left, from 6 am to 10 pm: **school as one block from 8 am to 4 pm**, with an **hour block for each hour before and after school, for your extracurriculars**. School is filled in on weekdays; change a day's block to "Excursion", say, by clicking it. Monday to Friday runs across the top. Today's column is marked, what's on now is lit up with a **NOW** tag, and what's finished today fades. A long day scrolls, starting where you are in it.
 
 - **Add or change a lesson or activity:** click a slot. A panel on the right takes the subject, room and teacher (for an hour block: the activity, where and with whom), and saves as you type. Subjects you've used before appear as chips; picking one fills in its usual room and teacher too. Every lesson of a subject shares its colour; pick another colour in the same panel.
 - **Change a period:** click its name on the left (or a break band, like Recess). Change its name, start and end time ("8:50", "1:10 pm" or "13:10"; without am or pm, 1 to 6 o'clock count as afternoon), or make it a break. **+** at the top adds a period at the end of the school day.
+- **Ask the assistant:** "add soccer on Tuesdays at 5", "clear Friday evening", "I have swim squad Monday and Wednesday at 6 am". It makes the change and says what it changed (Settings → Assistant → **See and change my timetable**, on to start with).
+- **School as periods instead:** **Settings → Timetable → School: Periods** splits it into seven periods, recess and lunch; **One block** puts it back.
 - **Hour blocks:** click one's time on the left, or go to **Settings → Timetable**, to choose how many come before school (up to 4) and after (up to 8). They follow the school day, so if school ends at 3:30 they start at 3:30. Taking one away keeps what was in it.
 - **Weekends:** turn on **Saturday and Sunday** in **Settings → Timetable** for weekend sport, music or a job.
 - **Week A and Week B:** turn on **Two-week timetable** in **Settings → Timetable** and say which week this is. A switch at the top of the timetable shows either week, with a dot on this one.
 - **Esc** closes the side panel; **Done** or Return does too. The expand button makes the timetable bigger.
 
-It starts with school from 8 am to 4 pm (seven periods, recess and lunch) to change to yours; **Use 8 am to 4 pm** in Settings puts it back, keeping lessons in the period of the same name. A timetable from build 15 moves to this day by itself, lessons included. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. If you let the assistant see your emails and notes, it sees today's and the next school day's classes too, so you can ask "What have I got tomorrow?".
+A timetable from an earlier build moves to this day by itself: if its school day was still the starting one, school becomes the one block, and activities you'd added stay in their hours. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. With **See and change my timetable** on, the assistant sees your timetable (with Claude, it's sent to Anthropic with each question), so you can ask "What have I got tomorrow?".
 
 ## Sample mail
 
@@ -134,7 +138,8 @@ open "build/Notch Inbox.app"
 |---|---|
 | `AppDelegate.swift` | Launch; connects Settings to the mailbox, updater and browser link; the menu-bar envelope |
 | `AppSettings.swift`, `Views/SettingsView.swift` | Settings inside the notch |
-| `Timetable.swift`, `Views/TimetableView.swift` | The timetable: periods, lessons, Week A/B, now and next |
+| `Timetable.swift`, `Views/TimetableView.swift` | The timetable: school, hour blocks, lessons, Week A/B, now and next |
+| `TimetableAgent.swift` | What the assistant is told about the timetable, and making the changes it asks for |
 | `PhoneCable.swift`, `PhoneCableWatcher.swift` | The red dot while a phone is plugged in by USB |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |

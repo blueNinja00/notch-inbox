@@ -339,10 +339,15 @@ struct AssistantSettings: View {
         }
 
         SettingsDivider()
-        SettingsToggle(title: "Share my emails, notes and timetable",
+        SettingsToggle(title: "See and change my timetable",
                        detail: assistant.engine.isClaude
-                           ? "Senders, subjects and times of your 20 newest emails, your latest notes and today's classes are sent to Anthropic with each question. Off keeps them on this Mac."
-                           : "Qwen sees senders, subjects and times of your newest emails, your latest notes and today's classes. They stay on this Mac.",
+                           ? "Ask things like \"add soccer on Tuesdays at 5\". Your timetable is sent to Anthropic with each question; changes are made only when you ask."
+                           : "Ask things like \"add soccer on Tuesdays at 5\". Your timetable stays on this Mac; changes are made only when you ask.",
+                       isOn: $assistant.editsTimetable)
+        SettingsToggle(title: "Share my newest emails and notes",
+                       detail: assistant.engine.isClaude
+                           ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
+                           : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
     }
 
@@ -504,26 +509,27 @@ struct TimetableSettings: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
     @State var confirmClear = false
-    @State var confirmStandard = false
 
     var body: some View {
         let table = store.timetable
 
         SettingsHeading(title: "Timetable",
-                        detail: "Click a lesson in the timetable to edit it, or a period's name to change its times. It's kept on this Mac only.")
-        SettingsRow(title: "School day",
-                    detail: "\(ClockTime.long(table.schoolStart)) to \(ClockTime.long(table.schoolEnd)), from your periods.") {
-            if !table.hasStandardSchoolDay {
-                PillButton(title: confirmStandard ? "Click Again" : "Use 8 am to 4 pm", prominent: confirmStandard, action: {
-                    if confirmStandard {
-                        store.change { $0.useStandardSchoolDay() }
-                        confirmStandard = false
+                        detail: "Your day from 6 am to 10 pm: school, and an hour block for each hour around it. Click a slot in the timetable to fill it in, or ask the assistant to. It's kept on this Mac.")
+        SettingsRow(title: "School",
+                    detail: "\(ClockTime.long(table.schoolStart)) to \(ClockTime.long(table.schoolEnd)). Click School in the timetable to change its times.") {
+            ChoiceSegments(options: [
+                ChoiceSegments<Bool>.Option(value: true, title: "One block", help: "School as one block, 8 am to 4 pm"),
+                ChoiceSegments<Bool>.Option(value: false, title: "Periods", help: "Seven periods, recess and lunch, 8 am to 4 pm"),
+            ], selected: table.schoolIsOneBlock, choose: { oneBlock in
+                guard oneBlock != store.timetable.schoolIsOneBlock else { return }
+                store.change { table in
+                    if oneBlock {
+                        table.useSchoolBlock()
                     } else {
-                        confirmStandard = true
+                        table.useSchoolPeriods()
                     }
-                })
-                .help("Seven periods, recess and lunch. Lessons move to the period with the same name.")
-            }
+                }
+            })
         }
         VStack(alignment: .leading, spacing: 12) {
             BlockCountRow(title: "Hour blocks before school",

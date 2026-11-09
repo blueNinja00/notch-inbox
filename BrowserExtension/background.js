@@ -142,7 +142,7 @@ async function syncOnce() {
     feeds.push(feed);
   }
 
-  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedAt', 'wholeFetched']);
+  const saved = await chrome.storage.local.get(['fullEmails', 'reloadedAt', 'wholeFetched', 'readLog']);
   const fullEmails = saved.fullEmails || 'unknown';
   let status;
   let reply = null;
@@ -153,7 +153,7 @@ async function syncOnce() {
       const response = await fetch(`${APP}/feeds`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feeds, version: VERSION, fullEmails }),
+        body: JSON.stringify({ feeds, version: VERSION, fullEmails, log: (saved.readLog || []).slice(-40) }),
       });
       if (response.ok) {
         status = { ok: true, message: 'Linked to Notch Inbox.' };
@@ -387,7 +387,58 @@ function pause(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A step-by-step log of marking read, for working out what Gmail does with each attempt. It
+// holds times, account slots, the end of each email's ID, HTTP statuses and the start of
+// Gmail's replies: never what an email says. The popup shows it; the app's Copy Debug Info
+// includes it.
+const LOG_LINES = 80;
+let traceLines = null;
+
+function trace(text) {
+  const line = `${new Date().toLocaleTimeString()} ${text}`;
+  console.info('[Notch Inbox Link]', line);
+  if (traceLines) traceLines.push(line);
+}
+
+function idTail(id) {
+  return `…${String(id).slice(-6)}`;
+}
+
+// The start of a reply, on one line.
+function snippet(text, length = 120) {
+  return JSON.stringify(String(text || '').slice(0, length));
+}
+
+// A URL with what's in its query left out: "mail.google.com/mail?account_id&message_id".
+function shortURL(url) {
+  try {
+    const parsed = new URL(url);
+    const keys = [...parsed.searchParams.keys()];
+    return parsed.host + parsed.pathname + (keys.length ? `?${keys.join('&')}` : '');
+  } catch (error) {
+    return '(unreadable URL)';
+  }
+}
+
+async function saveTrace() {
+  if (!traceLines || traceLines.length === 0) return;
+  const saved = await chrome.storage.local.get('readLog');
+  await chrome.storage.local.set({ readLog: (saved.readLog || []).concat(traceLines).slice(-LOG_LINES) });
+}
+
 async function markRead(items, feeds, status, allowTabs) {
+  traceLines = [];
+  try {
+    await markReadSteps(items, feeds, status, allowTabs);
+  } catch (error) {
+    trace(`stopped: ${error && error.message}`);
+  } finally {
+    await saveTrace();
+    traceLines = null;
+  }
+}
+
+async function markReadSteps(items, feeds, status, allowTabs) {
   const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
   const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'hiddenTries', 'tabTries']);
   const iks = saved.iks || {};
@@ -403,6 +454,12 @@ async function markRead(items, feeds, status, allowTabs) {
   const asked = left.length;
   let worked = 0;
   const how = [];
+  trace(`asked to mark ${items.length} read; ${asked} usable: ${left.map((e) => `u/${e.index} ${idTail(e.item.id)}`).join(', ')}`
+    + `; action ${action.state} (form ${form}), tabs ${allowTabs ? 'allowed' : 'off'}`);
+  if (asked > 0) {
+    const listed = await stillUnread(left);
+    trace(`before: Gmail lists ${listed.size} of ${asked} as unread`);
+  }
 
   // Forget emails the app isn't asking about any more.
   const ids = new Set(items.map((item) => item && item.id));
@@ -422,6 +479,7 @@ async function markRead(items, feeds, status, allowTabs) {
       await pause(1500);
       const still = await stillUnread(sent);
       const took = sent.filter((entry) => !still.has(entry.item.id));
+      trace(`after the action: ${took.length} of ${sent.length} no longer unread`);
       worked += took.length;
       if (took.length > 0) {
         action.state = 'works';
@@ -451,6 +509,7 @@ async function markRead(items, feeds, status, allowTabs) {
       await pause(2000);
       const still = await stillUnread(forHidden);
       const took = forHidden.filter((entry) => !still.has(entry.item.id));
+      trace(`after the hidden Gmail: ${took.length} of ${forHidden.length} no longer unread`);
       worked += took.length;
       if (took.length > 0) how.push('hidden');
       left = left.filter((entry) => !took.includes(entry));
@@ -470,11 +529,13 @@ async function markRead(items, feeds, status, allowTabs) {
         tabTries[entry.item.id] = tries + 1;
         return gmailPageFor(entry, tries);
       });
+      trace(`background tab: opening ${pages.length}`);
       opened = await openInGmail(pages);
       if (opened > 0) {
         await pause(2000);
         const still = await stillUnread(forTab);
         const took = forTab.filter((entry) => !still.has(entry.item.id)).length;
+        trace(`after the tab: ${took} of ${forTab.length} no longer unread`);
         worked += took;
         if (took > 0) how.push('tab');
       }
@@ -518,10 +579,21 @@ async function openOutOfSight(pages) {
     } catch (error) {
       // Already open from a sync that was cut short: use it.
     }
-    const reply = await chrome.runtime.sendMessage({
-      target: 'offscreen', type: 'open-gmail', pages, settle: TAB_SETTLE_MS, loadTimeout: TAB_LOAD_MS,
-    });
+    const seen = [];
+    const stopWatching = watchHiddenFrame(seen);
+    trace(`hidden Gmail: opening ${pages.map(shortURL).join(', ')}`);
+    let reply;
+    try {
+      reply = await chrome.runtime.sendMessage({
+        target: 'offscreen', type: 'open-gmail', pages, settle: TAB_SETTLE_MS, loadTimeout: TAB_LOAD_MS,
+      });
+    } finally {
+      stopWatching();
+    }
     opened = (reply && reply.opened) || 0;
+    trace(`hidden Gmail: ${opened} of ${pages.length} loaded`);
+    for (const line of seen.slice(0, 16)) trace(`hidden Gmail: ${line}`);
+    if (seen.length === 0) trace('hidden Gmail: no requests seen');
   } catch (error) {
     console.info('[Notch Inbox Link] couldn’t open Gmail out of sight:', error && error.message);
   } finally {
@@ -546,9 +618,13 @@ async function markOneRead(entry, iks, form) {
     ik = await findIk(index, item.account);
     if (ik) iks[item.account] = ik;
   }
-  const at = await gmailActionToken(index);
-  if (!ik || !at) return false;
-  const request = MARK_READ_FORMS[form](ik, at, ids.hex);
+  const token = await gmailActionToken(index);
+  const what = `action form ${form} u/${index} ${idTail(item.id)}: account key ${ik ? 'found' : 'missing'}, token ${token.from}`;
+  if (!ik || !token.value) {
+    trace(`${what}, not sent`);
+    return false;
+  }
+  const request = MARK_READ_FORMS[form](ik, token.value, ids.hex);
   try {
     const response = await fetch(`${GMAIL}${index}/?${request.query}`, {
       method: 'POST',
@@ -556,8 +632,17 @@ async function markOneRead(entry, iks, form) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
       body: request.body,
     });
+    let reply = '';
+    try {
+      reply = await response.text();
+    } catch (error) {
+      // no body
+    }
+    const type = (response.headers && response.headers.get && response.headers.get('content-type')) || '?';
+    trace(`${what}, HTTP ${response.status} ${type}, ${reply.length} bytes: ${snippet(reply)}`);
     return response.ok;
   } catch (error) {
+    trace(`${what}, failed: ${error && error.message}`);
     return false;
   }
 }
@@ -581,6 +666,31 @@ function gmailPageFor(entry, tries) {
   const link = String(entry.item.link || '').replace(/^http:\/\//, 'https://');
   if (tries === 0 && /^https:\/\/mail\.google\.com\/mail[/?]/.test(link)) return link;
   return `${GMAIL}${entry.index}/#all/${entry.ids.hex}`;
+}
+
+// What happens to the hidden frame's own requests: statuses, redirects (to a sign-in page,
+// say) and errors. Just the frame's pages on mail.google.com, not tabs.
+function watchHiddenFrame(out) {
+  if (!chrome.webRequest) {
+    out.push('(can’t watch requests)');
+    return () => {};
+  }
+  const filter = { urls: ['https://mail.google.com/*'], types: ['sub_frame'], tabId: -1 };
+  const onHeaders = (details) => {
+    const names = (details.responseHeaders || []).map((header) => header.name.toLowerCase());
+    const blocks = ['x-frame-options', 'content-security-policy'].filter((name) => names.includes(name));
+    out.push(`${shortURL(details.url)} → ${details.statusCode}${blocks.length ? ` (Gmail sent ${blocks.join(' and ')}, set aside)` : ''}`);
+  };
+  const onRedirect = (details) => out.push(`${shortURL(details.url)} → sent on to ${shortURL(details.redirectUrl)}`);
+  const onError = (details) => out.push(`${shortURL(details.url)} → error ${details.error}`);
+  chrome.webRequest.onHeadersReceived.addListener(onHeaders, filter, ['responseHeaders']);
+  chrome.webRequest.onBeforeRedirect.addListener(onRedirect, filter);
+  chrome.webRequest.onErrorOccurred.addListener(onError, filter);
+  return () => {
+    chrome.webRequest.onHeadersReceived.removeListener(onHeaders);
+    chrome.webRequest.onBeforeRedirect.removeListener(onRedirect);
+    chrome.webRequest.onErrorOccurred.removeListener(onError);
+  };
 }
 
 // Only if you've allowed it: opens each page in one background tab (it doesn't take you away
@@ -644,14 +754,15 @@ function waitForTab(tabID) {
 }
 
 // Gmail's action token for an account: its GMAIL_AT cookie, or failing that, from its page.
+// Says where it came from, for the log.
 async function gmailActionToken(index) {
   try {
     const cookie = await chrome.cookies.get({ url: `${GMAIL}${index}/`, name: 'GMAIL_AT' });
-    if (cookie && cookie.value) return cookie.value;
+    if (cookie && cookie.value) return { value: cookie.value, from: 'GMAIL_AT cookie' };
   } catch (error) {
     // cookies not available: fall back to the page
   }
   const page = await getText(`${GMAIL}${index}/`);
   const match = page && (/GM_ACTION_TOKEN\s*=\s*"([^"]+)"/.exec(page) || /[?&;]at=([A-Za-z0-9_-]{10,})/.exec(page));
-  return match ? match[1] : null;
+  return match ? { value: match[1], from: 'Gmail page' } : { value: null, from: 'missing (no GMAIL_AT cookie, none on the page)' };
 }

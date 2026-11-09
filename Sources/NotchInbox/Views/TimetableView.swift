@@ -27,7 +27,9 @@ struct TimetableView: View {
                 }
             } trailing: {
                 HStack(spacing: 2) {
-                    IconButton(symbol: "plus", label: "Add a period", action: { model.addPeriod() })
+                    if !table.schoolIsOneBlock {
+                        IconButton(symbol: "plus", label: "Add a period", action: { model.addPeriod() })
+                    }
                     IconButton(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                                label: expanded ? "Make the timetable smaller" : "Expand the timetable",
                                action: { expanded ? model.back() : model.expandTimetable() })
@@ -137,7 +139,7 @@ struct TimetableGrid: View {
                                             .frame(height: sectionHeight)
                                     }
                                     TimetableRow(model: model, table: table, period: period, today: today, minute: minute,
-                                                 labelWidth: labelWidth, classHeight: heights.classHeight,
+                                                 labelWidth: labelWidth, classHeight: heights.classHeight * TimetableGrid.weight(period),
                                                  breakHeight: heights.breakHeight, gap: gap)
                                         .id(period.id)
                                 }
@@ -168,10 +170,17 @@ struct TimetableGrid: View {
 
     private let sectionHeight: CGFloat = 12
 
+    /// How tall a row is next to an hour-long one: longer stretches (school as one block) are
+    /// taller, up to a little over twice.
+    static func weight(_ period: Timetable.Period) -> CGFloat {
+        let hours = CGFloat(period.end - period.start) / 60
+        return min(2.2, max(1, hours / 2))
+    }
+
     /// Classes and hour blocks share the height left after the slim break rows; long days scroll.
     private func rowHeights(rows: [Timetable.Period], height: CGFloat) -> (classHeight: CGFloat, breakHeight: CGFloat, scrolls: Bool) {
         let breaks = CGFloat(rows.filter { $0.isBreak }.count)
-        let classes = CGFloat(max(1, rows.filter { !$0.isBreak }.count))
+        let classes = max(1, rows.filter { !$0.isBreak }.reduce(CGFloat(0)) { $0 + TimetableGrid.weight($1) })
         var sections: CGFloat = 0
         for (index, row) in rows.enumerated() where index > 0 && rows[index - 1].isActivity != row.isActivity {
             sections += 1

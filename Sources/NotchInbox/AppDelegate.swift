@@ -84,6 +84,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Assistant.shared.context = { [weak self] in
             self?.assistantContext() ?? ""
         }
+        Assistant.shared.timetableDescription = { [weak self] in
+            guard let self = self else { return "" }
+            return TimetableAgent.describe(self.timetable.timetable, now: Date())
+        }
+        Assistant.shared.applyTimetable = { [weak self] plan in
+            guard let self = self else { return [] }
+            var changes: [String] = []
+            self.timetable.change { changes = TimetableAgent.apply(plan, to: &$0, now: Date()) }
+            return changes
+        }
         Assistant.shared.checkSetup()
         // A red dot by the notch while a phone is plugged in by cable.
         PhoneCableWatcher.shared.$phone
@@ -293,19 +303,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { !$0.isEmpty }
             .prefix(10)
             .map { (title: $0.title, preview: $0.preview) }
-        // Today's classes and the next school day's.
-        var classes: [String] = []
-        let now = Date()
-        if let today = timetable.timetable.summary(of: now) {
-            classes.append("Today, " + today)
-        }
-        for offset in 1...7 {
-            guard let day = Calendar.current.date(byAdding: .day, value: offset, to: now),
-                  let summary = timetable.timetable.summary(of: day) else { continue }
-            classes.append((offset == 1 ? "Tomorrow, " : "Next school day, ") + summary)
-            break
-        }
-        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), classes: classes, now: now)
+        // The timetable goes in separately, with its own setting (and so the assistant can change it).
+        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), now: Date())
     }
 
     // MARK: Phone by cable
@@ -563,6 +562,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let stats = mailbox.stats(for: account)
                 lines.append("- \(account): \(mailbox.unread[account] ?? 0) unread, \(stats.emails) emails kept (saved copy)")
             }
+        }
+
+        // Marking read in Gmail: what the app is asking for, and what the add-on did about it.
+        lines.append("")
+        lines.append("Marking read in Gmail:")
+        let pending = mailbox.toMarkRead()
+        let tails = pending.prefix(8).map { "…" + String($0.id.suffix(6)) }.joined(separator: ", ")
+        lines.append("Read in the notch, still unread in Gmail (asked of the add-on): \(pending.count)" + (pending.isEmpty ? "" : " (\(tails))"))
+        lines.append("Background tab as a last resort: \(settings.markReadInTabs ? "on" : "off")")
+        if let log = lastUpload?.log, !log.isEmpty {
+            lines.append("Add-on's log:")
+            lines += log.suffix(40).map { "  " + $0 }
+        } else {
+            lines.append("Add-on's log: nothing yet (add-on 1.9 or later keeps one once it marks something read)")
         }
         return lines.joined(separator: "\n")
     }

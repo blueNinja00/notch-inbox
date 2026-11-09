@@ -17,8 +17,9 @@ final class Assistant: ObservableObject {
         var raw: String
         var failed = false
 
+        /// Without reasoning or a timetable change block (the app applies those).
         var text: String {
-            role == .assistant ? AssistantPrompt.withoutThinking(raw) : raw
+            role == .assistant ? TimetableAgent.hidden(AssistantPrompt.withoutThinking(raw)) : raw
         }
     }
 
@@ -73,16 +74,25 @@ final class Assistant: ObservableObject {
         }
     }
 
+    /// Whether the assistant sees your timetable and may change it when you ask.
+    @Published var editsTimetable: Bool {
+        didSet { UserDefaults.standard.set(editsTimetable, forKey: Assistant.timetableKey) }
+    }
+
     /// "sk-ant-…a1b2" when an API key is saved.
     @Published private(set) var apiKeyHint: String?
     /// Where Claude Code was found.
     @Published private(set) var claudePath: String?
 
-    /// What the assistant may know about your day (set by the app).
+    /// What the assistant may know about your day: newest emails and notes (set by the app).
     var context: (() -> String)?
+    /// The timetable in words, and making the changes the assistant asks for (set by the app).
+    var timetableDescription: (() -> String)?
+    var applyTimetable: ((TimetableAgent.Plan) -> [String])?
 
     private static let engineKey = "assistantEngine"
     private static let claudeModelKey = "assistantClaudeModel"
+    private static let timetableKey = "assistantEditsTimetable"
     private let ollama = URL(string: "http://127.0.0.1:11434")!
     private var qwenModel: String?
     private var answering: Task<Void, Never>?
@@ -93,6 +103,7 @@ final class Assistant: ObservableObject {
         self.engine = engine
         claudeModel = defaults.string(forKey: Assistant.claudeModelKey).flatMap(ClaudeModel.init(rawValue:)) ?? .standard
         sharesContext = Assistant.loadSharing(for: engine)
+        editsTimetable = defaults.object(forKey: Assistant.timetableKey) == nil ? true : defaults.bool(forKey: Assistant.timetableKey)
         apiKeyHint = APIKeyFile.read().map(APIKeyFile.hint(for:))
     }
 
@@ -196,7 +207,9 @@ final class Assistant: ObservableObject {
             draft = ""
         }
 
-        let shared = sharesContext ? (context?() ?? "") : ""
+        let timetable = editsTimetable ? (timetableDescription?() ?? "") : ""
+        let shared = [sharesContext ? (context?() ?? "") : "", timetable].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let canEdit = !timetable.isEmpty
         var history = messages.map { (role: $0.role, text: $0.text, failed: $0.failed) }
         history.append((role: .user, text: question, failed: false))
         let turns = ClaudeStream.turns(from: history)
@@ -211,12 +224,12 @@ final class Assistant: ObservableObject {
             guard let self = self else { return }
             switch engine {
             case .claudeCode:
-                await self.askClaudeCode(model: model, context: shared, turns: turns)
+                await self.askClaudeCode(model: model, context: shared, turns: turns, timetable: canEdit)
             case .claudeAPI:
-                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true)
+                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true, timetable: canEdit)
                 await self.askAnthropic(model: model, system: system, turns: turns)
             case .qwen:
-                let system = AssistantPrompt.system(now: Date(), context: shared)
+                let system = AssistantPrompt.system(now: Date(), context: shared, timetable: canEdit)
                 await self.askQwen(system: system, turns: turns)
             }
         }
@@ -235,13 +248,13 @@ final class Assistant: ObservableObject {
 
     // MARK: Claude Code
 
-    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn]) async {
+    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn], timetable: Bool) async {
         guard let path = claudePath ?? ClaudeCode.find() else {
             await finish(problem: "Couldn't find Claude Code on this Mac. See Settings → Assistant.")
             return
         }
         // The context goes in with the question, so it never appears on a command line.
-        let system = AssistantPrompt.system(now: Date(), context: "", claude: true)
+        let system = AssistantPrompt.system(now: Date(), context: "", claude: true, timetable: timetable)
         let prompt = ClaudeStream.codeInput(context: context, turns: turns)
 
         var problem: String?
@@ -406,8 +419,20 @@ final class Assistant: ObservableObject {
                     self.messages[last].raw += "\n\n(" + problem + ")"
                 }
                 self.checkSetup()
-            } else if self.messages[last].text.isEmpty {
+            } else if self.messages[last].text.isEmpty && !self.messages[last].raw.contains(TimetableAgent.openTag) {
                 self.messages[last].raw = "(Stopped)"
+            }
+            // The assistant asked to change the timetable: make the changes, then say what changed.
+            if problem == nil && !Task.isCancelled && self.messages[last].raw.contains(TimetableAgent.closeTag) {
+                let found = TimetableAgent.extract(from: self.messages[last].raw)
+                if let plan = found.plan, let apply = self.applyTimetable {
+                    let changes = apply(plan)
+                    let note = changes.isEmpty ? "(The timetable already had that.)"
+                        : "✓ Timetable updated: " + changes.prefix(12).joined(separator: "; ") + (changes.count > 12 ? "; and \(changes.count - 12) more" : "")
+                    self.messages[last].raw = (found.text.isEmpty ? "" : found.text + "\n\n") + note
+                } else if found.plan == nil {
+                    self.messages[last].raw = found.text + "\n\n(I tried to change your timetable, but the change didn't come through right. Ask again?)"
+                }
             }
         }
     }

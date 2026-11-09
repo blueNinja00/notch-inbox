@@ -115,8 +115,8 @@ struct AssistantView: View {
 
             Toggle(isOn: $assistant.sharesContext) {
                 Text(assistant.engine.isClaude
-                     ? "Let Claude see my newest email subjects, notes and timetable (sent to Anthropic with your question)"
-                     : "Let Qwen see my newest emails, notes and timetable (they stay on this Mac)")
+                     ? "Let Claude see my newest email subjects and notes (sent to Anthropic with your question)"
+                     : "Let Qwen see my newest emails and notes (they stay on this Mac)")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.tertiary)
                     .lineLimit(1)
@@ -175,7 +175,7 @@ struct Suggestions: View {
         "Summarise my unread emails",
         "What's due soon?",
         "What have I got tomorrow?",
-        "Plan the rest of my day",
+        "Add an activity to my timetable",
     ]
 
     var body: some View {

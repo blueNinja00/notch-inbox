@@ -97,6 +97,9 @@ struct FeedUpload: Decodable {
     /// Whether the add-on fetches whole emails: "ok", "on-open" (only ones you open in
     /// the notch, because Gmail counts them as read) or "unknown" (still finding out).
     let fullEmails: String?
+    /// The add-on's recent steps marking emails read in Gmail, for Copy Debug Info.
+    /// Add-on 1.9 and later.
+    let log: [String]?
 }
 
 extension FeedUpload.Feed {

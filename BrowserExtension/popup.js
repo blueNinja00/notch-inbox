@@ -54,11 +54,29 @@ function wholeEmails(status) {
   }
 }
 
+// What happened the last few times it marked emails read: for working out what goes wrong.
+function renderLog(lines) {
+  if (lines && lines.length) {
+    document.getElementById('log').textContent = lines.slice(-40).join('\n');
+  }
+}
+
 document.getElementById('version').textContent = `Version ${chrome.runtime.getManifest().version}`;
-chrome.storage.local.get('status').then((stored) => render(stored.status));
+chrome.storage.local.get(['status', 'readLog']).then((stored) => {
+  render(stored.status);
+  renderLog(stored.readLog);
+});
 // Keep up while the popup is open.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.status) render(changes.status.newValue);
+  if (area === 'local' && changes.readLog) renderLog(changes.readLog.newValue);
+});
+
+document.getElementById('copyLog').addEventListener('click', async () => {
+  const stored = await chrome.storage.local.get('readLog');
+  const text = `Notch Inbox Link ${chrome.runtime.getManifest().version}\n${(stored.readLog || []).join('\n')}`;
+  await navigator.clipboard.writeText(text);
+  document.getElementById('copyLog').textContent = 'Copied';
 });
 
 document.getElementById('sync').addEventListener('click', async () => {

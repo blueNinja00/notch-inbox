@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The primary menu: one tile per tool. Mail is the first; more tools will sit beside it.
-/// Hovering the notch shows it; clicking a tile opens that tool.
+/// The primary menu: one tile per tool (Mail, Timetable, Notes, Assistant). Hovering the
+/// notch shows it; clicking a tile opens that tool.
 struct HomeView: View {
     @ObservedObject var model: NotchModel
 
@@ -17,31 +17,38 @@ struct HomeView: View {
                 HomeActions(model: model)
             }
 
-            // Short: three tiles in a row. Dragged taller: Mail on the left with your
-            // latest emails, Notes and the slot for more tools on the right.
+            // Short: the tools in a row. Dragged taller: Mail on the left with your latest
+            // emails; the timetable, notes and assistant on the right.
             GeometryReader { area in
                 if area.size.height > 200 {
                     HStack(spacing: 8) {
                         MailToolTile(model: model)
                         VStack(spacing: 8) {
-                            if let store = model.notesStore {
-                                NotesToolTile(model: model, store: store)
+                            if let timetable = model.timetableStore {
+                                TimetableToolTile(model: model, store: timetable)
                             }
-                            AssistantToolTile(model: model, assistant: Assistant.shared)
-                            MoreToolsTile(compact: true)
-                                .frame(height: 40)
+                            HStack(spacing: 8) {
+                                if let store = model.notesStore {
+                                    NotesToolTile(model: model, store: store)
+                                }
+                                AssistantToolTile(model: model, assistant: Assistant.shared)
+                            }
                         }
-                        .frame(width: min(max(area.size.width * 0.32, 220), 380))
+                        .frame(width: min(max(area.size.width * 0.42, 320), 520))
                     }
                 } else {
                     HStack(spacing: 8) {
                         MailToolTile(model: model)
+                        if let timetable = model.timetableStore {
+                            TimetableToolTile(model: model, store: timetable)
+                                .frame(width: min(max(area.size.width * 0.22, 172), 300))
+                        }
                         if let store = model.notesStore {
                             NotesToolTile(model: model, store: store)
-                                .frame(width: min(max(area.size.width * 0.24, 160), 300))
+                                .frame(width: min(max(area.size.width * 0.19, 140), 260))
                         }
                         AssistantToolTile(model: model, assistant: Assistant.shared)
-                            .frame(width: min(max(area.size.width * 0.24, 160), 300))
+                            .frame(width: min(max(area.size.width * 0.19, 140), 260))
                     }
                 }
             }
@@ -314,37 +321,5 @@ struct ToolIcon: View {
             .foregroundStyle(Theme.text)
             .frame(width: 24, height: 24)
             .background(Circle().fill(Theme.raised))
-    }
-}
-
-/// Room for the next tools: a tile in a short menu, a slim strip in a tall one.
-struct MoreToolsTile: View {
-    let compact: Bool
-
-    var body: some View {
-        Group {
-            if compact {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("More tools coming soon")
-                        .font(.system(size: 11.5, weight: .medium))
-                }
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("More\nsoon")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .multilineTextAlignment(.center)
-                }
-            }
-        }
-        .foregroundStyle(Theme.tertiary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(
-            RoundedRectangle(cornerRadius: compact ? 12 : 16, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-        )
     }
 }

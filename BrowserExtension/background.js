@@ -6,7 +6,8 @@
 //   2. hand them to the Notch Inbox app on this Mac;
 //   3. open the emails the app asks for (Gmail's "Show original"), decode them (mime.js)
 //      and hand those over too, so the notch can show them in full;
-//   4. mark read in Gmail the emails you read in the notch.
+//   4. mark read in Gmail the emails you read in the notch (with Gmail's read action, or by
+//      opening them in Gmail in a background tab for a few seconds).
 // It only talks to mail.google.com and 127.0.0.1 (this Mac).
 
 importScripts('mime.js');
@@ -356,53 +357,100 @@ async function sendEmail(email) {
 
 // ---- Marking read ----------------------------------------------------------------------------
 
-// Emails you read in the notch: mark them read in Gmail, the way Gmail's own page does.
-// Gmail has had a few forms of this request over the years, so after sending, the add-on
-// checks the unread feed: if the emails are still there, it tries the next form next time
-// (the app keeps asking for about 10 minutes) and remembers whichever one works.
+// Emails you read in the notch get marked read in Gmail, in one of two ways:
+//   1. Gmail's own read action, sent quietly in the background. Gmail has had a few forms of
+//      it over the years; the add-on checks the unread feed afterwards and moves on to the
+//      next form if the email is still unread. If none of them work, it stops sending them
+//      (trying again after a week).
+//   2. Otherwise it opens the emails in Gmail itself, in a background tab, for a few seconds
+//      each, just as if you'd clicked them, then closes the tab. Each email gets two tries.
+const ACTION_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+const TAB_TRIES = 2;
+const TAB_EMAILS_PER_SYNC = 4;
+const TAB_LOAD_MS = 30 * 1000;
+const TAB_SETTLE_MS = 4000;
+
 const MARK_READ_FORMS = [
   (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&view=up&act=rd&rt=j`, body: `t=${hex}` }),
   (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&act=rd&t=${hex}`, body: `at=${encodeURIComponent(at)}` }),
   (ik, at, hex) => ({ query: `ui=2&ik=${ik}&at=${encodeURIComponent(at)}&view=up&act=rd&rt=j&t=${hex}`, body: `t=${hex}&at=${encodeURIComponent(at)}` }),
 ];
 
-async function markRead(items, feeds, status) {
-  const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
-  const saved = await chrome.storage.local.get(['iks', 'markReadForm']);
-  const iks = saved.iks || {};
-  const form = (saved.markReadForm || 0) % MARK_READ_FORMS.length;
-  const tried = [];
-  let failed = 0;
-  for (const item of items.slice(0, 20)) {
-    if (!item || typeof item.id !== 'string' || !slots.has(item.account)) continue;
-    const index = slots.get(item.account);
-    if (await markOneRead(index, item, iks, form)) tried.push({ index, id: item.id });
-    else failed += 1;
-  }
-
-  // Did Gmail take it? Look again a moment later.
-  let worked = 0;
-  if (tried.length > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    for (const index of new Set(tried.map((t) => t.index))) {
-      const listed = (await Promise.all([getFeed(index, PRIMARY_FEED), getFeed(index, INBOX_FEED)])).filter(Boolean);
-      if (listed.length === 0) continue;
-      for (const t of tried.filter((x) => x.index === index)) {
-        if (!listed.some((xml) => xml.includes(t.id))) worked += 1;
-      }
-    }
-    if (worked === 0) {
-      await chrome.storage.local.set({ markReadForm: form + 1 }); // try the next form next time
-    }
-  }
-  console.info('[Notch Inbox Link] mark read: form', form, 'sent', tried.length, 'worked', worked, 'failed', failed);
-  status.markRead = { sent: tried.length, worked, failed, at: Date.now() };
-  await chrome.storage.local.set({ iks, status });
+function pause(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function markOneRead(index, item, iks, form) {
-  const ids = NotchMime.messageIds(item.id, item.link);
-  if (!ids) return false;
+async function markRead(items, feeds, status) {
+  const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
+  const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'tabTries']);
+  const iks = saved.iks || {};
+  const form = (saved.markReadForm || 0) % MARK_READ_FORMS.length;
+  const action = saved.readAction || { state: 'unknown', misses: 0, at: 0 };
+  const tabTries = saved.tabTries || {};
+
+  let left = items.slice(0, 20)
+    .filter((item) => item && typeof item.id === 'string' && slots.has(item.account))
+    .map((item) => ({ item, index: slots.get(item.account), ids: NotchMime.messageIds(item.id, item.link) }))
+    .filter((entry) => entry.ids);
+  const asked = left.length;
+  let worked = 0;
+  let how = '';
+
+  // 1. Gmail's read action, unless it's known not to work here.
+  if (left.length > 0 && (action.state !== 'off' || Date.now() - action.at > ACTION_RETRY_MS)) {
+    const sent = [];
+    for (const entry of left) {
+      if (await markOneRead(entry, iks, form)) sent.push(entry);
+    }
+    if (sent.length > 0) {
+      await pause(1500);
+      const still = await stillUnread(sent);
+      const took = sent.filter((entry) => !still.has(entry.item.id));
+      worked += took.length;
+      if (took.length > 0) {
+        action.state = 'works';
+        action.misses = 0;
+        how = 'action';
+      } else {
+        action.misses = (action.misses || 0) + 1;
+        await chrome.storage.local.set({ markReadForm: form + 1 }); // try the next form next time
+        if (action.misses >= MARK_READ_FORMS.length) action.state = 'off';
+      }
+      action.at = Date.now();
+      left = left.filter((entry) => !took.includes(entry));
+    }
+  }
+
+  // 2. Open what's still unread in Gmail, in a background tab.
+  const ids = new Set(items.map((item) => item && item.id));
+  for (const id of Object.keys(tabTries)) {
+    if (!ids.has(id)) delete tabTries[id]; // the app isn't asking any more
+  }
+  const toOpen = left.filter((entry) => (tabTries[entry.item.id] || 0) < TAB_TRIES).slice(0, TAB_EMAILS_PER_SYNC);
+  let opened = 0;
+  if (toOpen.length > 0) {
+    const pages = toOpen.map((entry) => {
+      const tries = tabTries[entry.item.id] || 0;
+      tabTries[entry.item.id] = tries + 1;
+      return gmailPageFor(entry, tries);
+    });
+    opened = await openInGmail(pages);
+    if (opened > 0) {
+      await pause(2000);
+      const still = await stillUnread(toOpen);
+      const took = toOpen.filter((entry) => !still.has(entry.item.id)).length;
+      worked += took;
+      if (took > 0) how = how ? `${how}+tab` : 'tab';
+    }
+  }
+
+  console.info('[Notch Inbox Link] mark read: asked', asked, 'worked', worked, 'opened in a tab', opened, 'action', action.state);
+  status.markRead = { asked, worked, opened, how, action: action.state, at: Date.now() };
+  await chrome.storage.local.set({ iks, status, readAction: action, tabTries });
+}
+
+async function markOneRead(entry, iks, form) {
+  const { index, item, ids } = entry;
   let ik = iks[item.account];
   if (!ik) {
     ik = await findIk(index, item.account);
@@ -422,6 +470,87 @@ async function markOneRead(index, item, iks, form) {
   } catch (error) {
     return false;
   }
+}
+
+// The emails Gmail still lists as unread, by ID.
+async function stillUnread(entries) {
+  const still = new Set();
+  for (const index of new Set(entries.map((entry) => entry.index))) {
+    const listed = (await Promise.all([getFeed(index, PRIMARY_FEED), getFeed(index, INBOX_FEED)])).filter(Boolean);
+    for (const entry of entries.filter((e) => e.index === index)) {
+      // If the feeds can't be read just now, count it as still unread.
+      if (listed.length === 0 || listed.some((xml) => xml.includes(entry.item.id))) still.add(entry.item.id);
+    }
+  }
+  return still;
+}
+
+// Where to open an email in Gmail: first the link Gmail's own feed gives for it, then (the
+// second time) its conversation in All Mail.
+function gmailPageFor(entry, tries) {
+  const link = String(entry.item.link || '').replace(/^http:\/\//, 'https://');
+  if (tries === 0 && /^https:\/\/mail\.google\.com\/mail[/?]/.test(link)) return link;
+  return `${GMAIL}${entry.index}/#all/${entry.ids.hex}`;
+}
+
+// Opens each page in one background tab (it doesn't take you away from what you're doing),
+// gives Gmail a few seconds to show the email, then closes the tab. Returns how many opened.
+async function openInGmail(pages) {
+  let tab = null;
+  let opened = 0;
+  try {
+    for (const page of pages) {
+      if (!tab) {
+        const loaded = waitForTab(() => tab && tab.id);
+        tab = await chrome.tabs.create({ url: page, active: false });
+        if (!(await loaded)) break;
+      } else if (sameDocument(tab.pendingUrl || tab.url, page)) {
+        await chrome.tabs.update(tab.id, { url: page }); // Gmail switches emails without reloading
+      } else {
+        const loaded = waitForTab(() => tab.id);
+        await chrome.tabs.update(tab.id, { url: page });
+        if (!(await loaded)) break;
+      }
+      tab.url = page;
+      opened += 1;
+      await pause(TAB_SETTLE_MS);
+    }
+  } catch (error) {
+    console.info('[Notch Inbox Link] couldn’t open Gmail in a tab:', error && error.message);
+  } finally {
+    if (tab && tab.id !== undefined) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (error) {
+        // already closed
+      }
+    }
+  }
+  return opened;
+}
+
+function sameDocument(a, b) {
+  const base = (url) => String(url || '').split('#')[0];
+  return Boolean(a) && base(a) === base(b) && String(b).includes('#');
+}
+
+// Resolves true once the tab has finished loading, or false after 30 seconds.
+function waitForTab(tabID) {
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (loaded) => {
+      if (finished) return;
+      finished = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      resolve(loaded);
+    };
+    const listener = (id, change) => {
+      if (id === tabID() && change.status === 'complete') finish(true);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(() => finish(false), TAB_LOAD_MS);
+  });
 }
 
 // Gmail's action token for an account: its GMAIL_AT cookie, or failing that, from its page.

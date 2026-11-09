@@ -8,6 +8,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case accounts
     case assistant
+    case timetable
     case gmail
     case updates
 
@@ -18,6 +19,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .accounts: return "Mail accounts"
         case .assistant: return "Assistant"
+        case .timetable: return "Timetable"
         case .gmail: return "Gmail link"
         case .updates: return "Updates"
         }
@@ -28,6 +30,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .accounts: return "tray.2"
         case .assistant: return "sparkles"
+        case .timetable: return "calendar"
         case .gmail: return "link"
         case .updates: return "arrow.down.circle"
         }

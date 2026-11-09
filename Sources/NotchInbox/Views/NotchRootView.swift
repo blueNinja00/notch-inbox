@@ -55,6 +55,9 @@ struct NotchRootView: View {
             } else if model.tool == .notes, let store = model.notesStore {
                 NotesView(model: model, store: store, expanded: level == .detail)
                     .transition(.opacity)
+            } else if model.tool == .timetable, let store = model.timetableStore {
+                TimetableView(model: model, store: store, expanded: level == .detail)
+                    .transition(.opacity)
             } else if model.tool == .assistant {
                 AssistantView(model: model, assistant: Assistant.shared, expanded: level == .detail)
                     .transition(.opacity)

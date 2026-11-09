@@ -111,6 +111,7 @@ final class NotchModel: ObservableObject {
         case mail
         case notes
         case assistant
+        case timetable
         case settings
     }
 
@@ -120,6 +121,27 @@ final class NotchModel: ObservableObject {
     /// The notes, shared by every screen (set by the app).
     var notesStore: NotesStore?
     @Published var selectedNoteID: UUID?
+
+    /// The timetable, shared by every screen (set by the app).
+    var timetableStore: TimetableStore?
+
+    /// What the timetable's side panel is editing.
+    enum TimetableEdit: Equatable {
+        case lesson(Timetable.Slot)
+        case period(UUID)
+    }
+
+    @Published var timetableEdit: TimetableEdit? {
+        didSet {
+            // Finished with a lesson: trim what was typed and drop anything left blank.
+            if oldValue != nil && oldValue != timetableEdit {
+                timetableStore?.change { $0.tidy() }
+            }
+        }
+    }
+
+    /// Which week of a two-week timetable is on screen: 0 for Week A, 1 for Week B.
+    @Published var timetableWeek = 0
 
     /// Sizes you've dragged each open level to; missing means the standard size.
     @Published var customSizes: [NotchLevel: CGSize] = [:]
@@ -176,6 +198,39 @@ final class NotchModel: ObservableObject {
             selectedNoteID = notesStore?.notes.first?.id
         }
         level = .lanes
+    }
+
+    /// The timetable, showing this week.
+    func openTimetable() {
+        tool = .timetable
+        timetableWeek = timetableStore?.timetable.week(of: Date()) ?? 0
+        timetableEdit = nil
+        level = .lanes
+    }
+
+    func expandTimetable() {
+        tool = .timetable
+        level = .detail
+    }
+
+    /// Click a lesson (or an empty slot) to edit it; click it again to stop.
+    func editLesson(day: Int, period: UUID) {
+        let slot = Timetable.Slot(week: timetableWeek, day: day, period: period)
+        timetableEdit = timetableEdit == .lesson(slot) ? nil : .lesson(slot)
+    }
+
+    func editPeriod(_ id: UUID) {
+        timetableEdit = timetableEdit == .period(id) ? nil : .period(id)
+    }
+
+    /// A new period after the last one, opened for editing.
+    func addPeriod() {
+        guard let store = timetableStore else { return }
+        var added: UUID?
+        store.change { added = $0.addPeriod() }
+        if let id = added {
+            timetableEdit = .period(id)
+        }
     }
 
     /// The assistant (Claude or Qwen).
@@ -277,6 +332,7 @@ final class NotchModel: ObservableObject {
         sentFrom = nil
         homePinned = false
         notesStore?.removeEmpty(except: nil)
+        timetableEdit = nil
     }
 
     /// Expand one inbox, opening the given message (or the newest).

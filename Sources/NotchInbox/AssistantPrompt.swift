@@ -58,11 +58,15 @@ enum AssistantPrompt {
         return text
     }
 
-    /// What the assistant may know about your day: newest emails and latest notes.
+    /// What the assistant may know about your day: classes, newest emails and latest notes.
     static func context(emails: [(account: String, sender: String, subject: String, date: Date, unread: Bool)],
                         notes: [(title: String, preview: String)],
+                        classes: [String] = [],
                         now: Date) -> String {
         var parts: [String] = []
+        if !classes.isEmpty {
+            parts.append("The user's school timetable:\n" + classes.map { "- " + $0 }.joined(separator: "\n"))
+        }
         if !emails.isEmpty {
             let lines = emails.prefix(20).map { email in
                 "- [\(email.account)] \(email.sender): \(email.subject) (\(MailTime.label(for: email.date, now: now))\(email.unread ? ", unread" : ""))"

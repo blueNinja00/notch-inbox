@@ -35,5 +35,12 @@ enum Theme {
 
     static let hairline = Color.white.opacity(0.06)
 
+    /// Subject colours for the timetable: bright enough to read on black, distinct side by side.
+    static let subjectHexes: [UInt32] = [0x5E9EFF, 0x3DD6A3, 0xFFB547, 0xFF6B6B, 0xB18CFF, 0xFF7AC6, 0x56CFE1, 0xA6D85A]
+
+    static func subject(_ index: Int) -> Color {
+        Color(hex: subjectHexes[((index % subjectHexes.count) + subjectHexes.count) % subjectHexes.count])
+    }
+
     static let spring = Animation.spring(response: 0.42, dampingFraction: 0.86)
 }

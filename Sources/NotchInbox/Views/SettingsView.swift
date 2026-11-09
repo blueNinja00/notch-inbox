@@ -40,6 +40,10 @@ struct SettingsView: View {
                             AccountSettings(model: model, settings: settings)
                         case .assistant:
                             AssistantSettings(assistant: assistant)
+                        case .timetable:
+                            if let store = model.timetableStore {
+                                TimetableSettings(model: model, store: store)
+                            }
                         case .gmail:
                             GmailLinkSettings(settings: settings)
                         case .updates:
@@ -335,10 +339,10 @@ struct AssistantSettings: View {
         }
 
         SettingsDivider()
-        SettingsToggle(title: "Share my newest emails and notes",
+        SettingsToggle(title: "Share my emails, notes and timetable",
                        detail: assistant.engine.isClaude
-                           ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
-                           : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
+                           ? "Senders, subjects and times of your 20 newest emails, your latest notes and today's classes are sent to Anthropic with each question. Off keeps them on this Mac."
+                           : "Qwen sees senders, subjects and times of your newest emails, your latest notes and today's classes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
     }
 
@@ -491,6 +495,51 @@ struct QwenStatus: View {
         default:
             StatusLine(state: .good, text: "Using \(assistant.modelName) with Ollama, on this Mac")
         }
+    }
+}
+
+// MARK: Timetable
+
+struct TimetableSettings: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var store: TimetableStore
+    @State var confirmClear = false
+
+    var body: some View {
+        let table = store.timetable
+
+        SettingsHeading(title: "Timetable",
+                        detail: "Click a lesson in the timetable to edit it, or a period's name to change its times. It's kept on this Mac only.")
+        SettingsToggle(title: "Two-week timetable",
+                       detail: "For schools with a Week A and a Week B. Each week has its own lessons.",
+                       isOn: Binding(get: { store.timetable.twoWeeks },
+                                     set: { on in store.change { $0.twoWeeks = on } }))
+        if table.twoWeeks {
+            SettingsRow(title: "This week is", detail: "The timetable works out every other week from this.") {
+                ChoiceSegments(options: [
+                    ChoiceSegments<Int>.Option(value: 0, title: "Week A", help: "This week is Week A"),
+                    ChoiceSegments<Int>.Option(value: 1, title: "Week B", help: "This week is Week B"),
+                ], selected: table.week(of: Date()), choose: { week in
+                    store.change { $0.setThisWeek(week) }
+                    model.timetableWeek = week
+                })
+            }
+        }
+        SettingsDivider()
+        SettingsRow(title: "Clear every lesson", detail: "Periods and their times stay, ready for a new term.") {
+            PillButton(title: confirmClear ? "Click Again to Clear" : "Clear Lessons", prominent: confirmClear, action: {
+                if confirmClear {
+                    store.change { $0.clearLessons() }
+                    confirmClear = false
+                } else {
+                    confirmClear = true
+                }
+            })
+            .disabled(table.isEmpty && !confirmClear)
+            .opacity(table.isEmpty && !confirmClear ? 0.5 : 1)
+        }
+        SettingsDivider()
+        PillButton(title: "Open Timetable", prominent: true, action: { model.openTimetable() })
     }
 }
 

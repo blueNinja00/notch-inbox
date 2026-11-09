@@ -29,7 +29,12 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 
 Change either per account, or hide an account, in **Settings → Mail accounts**.
 
-**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once; within about 30 seconds the add-on marks it read in Gmail too, then checks that Gmail took it (the add-on's popup shows "Marked read in Gmail"). If Gmail hasn't caught up after 10 minutes, the notch shows it unread again.
+**Reading in the notch marks it read in Gmail.** Open an email in the notch and it greys out and the unread count drops at once. Within about 30 seconds the add-on marks it read in Gmail too, then checks Gmail's unread list to make sure it took:
+
+1. First with Gmail's own read action, sent quietly in the background.
+2. If Gmail ignores that (it does for some accounts), the add-on opens the email in Gmail in a **background tab** for a few seconds, just as if you'd clicked it, then closes the tab. You may see a Gmail tab appear at the end of your tabs and disappear; it doesn't take you away from what you're doing. Each email gets two tries.
+
+The add-on's popup shows "Marked read in Gmail". If Gmail hasn't caught up after 10 minutes, the notch shows the email unread again.
 
 The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
 
@@ -60,7 +65,8 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 
 - **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch.
-- **Assistant:** who answers (below), which Claude model, and whether it may see your newest emails and notes.
+- **Assistant:** who answers (below), which Claude model, and whether it may see your newest emails, notes and timetable.
+- **Timetable:** Week A and Week B, which week this is, and clearing every lesson for a new term.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
 - **Quit Notch Inbox**, at the bottom.
@@ -75,15 +81,16 @@ Ask about your day, your email or anything else. In **Settings → Assistant**, 
 - **Claude, with an API key:** paste a key from [console.anthropic.com](https://console.anthropic.com); you pay Anthropic per question. The key is kept in `~/Library/Application Support/Notch Inbox`, readable only by you.
 - **Qwen, on this Mac:** runs locally through [Ollama](https://ollama.com); free and private, but slower and less capable. Settings shows the one Terminal command to download the right Qwen model for your Mac's memory (several GB).
 
-For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **Share my newest emails and notes** lets the assistant see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
+For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **Share my emails, notes and timetable** lets the assistant see the senders, subjects and times of your 20 newest emails, your latest notes, and today's and the next school day's classes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
 
 ## Using it
 
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
-- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count) and **Notes** (how many, and the latest). More tools will join them. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Click anywhere on it to keep it open.
 - **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
+- **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
 - **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
 - **Click the Mail tile:** it opens into three lanes, one per inbox. The grid button at the top left goes back to the primary menu.
@@ -92,6 +99,17 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 - **Two modes:** **Settings → General** picks between **Notch at the top**, which opens when you hover, and **Mail tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for a short menu.
 
 After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
+
+## Timetable
+
+Click the Timetable tile on the primary menu. Periods run down the left and Monday to Friday across the top. Today's column is marked, the class on now is lit up with a **NOW** tag, and classes that have finished today fade.
+
+- **Add or change a lesson:** click a slot. A panel on the right takes the subject, room and teacher, and saves as you type. Subjects you've used before appear as chips; picking one fills in its usual room and teacher too. Every lesson of a subject shares its colour; pick another colour in the same panel.
+- **Change a period:** click its name on the left (or a break band, like Recess). Change its name, start and end time ("8:50", "1:10 pm" or "13:10"; without am or pm, 1 to 6 o'clock count as afternoon), or make it a break. **+** at the top adds a period after the last one.
+- **Week A and Week B:** turn on **Two-week timetable** in **Settings → Timetable** and say which week this is. A switch at the top of the timetable shows either week, with a dot on this one.
+- **Esc** closes the side panel; **Done** or Return does too. The expand button makes the timetable bigger.
+
+It starts with a usual NSW school day (five periods, recess and lunch) to change to yours. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. If you let the assistant see your emails and notes, it sees today's and the next school day's classes too, so you can ask "What have I got tomorrow?".
 
 ## Sample mail
 
@@ -112,6 +130,7 @@ open "build/Notch Inbox.app"
 |---|---|
 | `AppDelegate.swift` | Launch; connects Settings to the mailbox, updater and browser link; the menu-bar envelope |
 | `AppSettings.swift`, `Views/SettingsView.swift` | Settings inside the notch |
+| `Timetable.swift`, `Views/TimetableView.swift` | The timetable: periods, lessons, Week A/B, now and next |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |

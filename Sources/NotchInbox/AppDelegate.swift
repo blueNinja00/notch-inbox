@@ -54,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let mailIcon = MailIconController()
     /// Notes, shared by every screen's notch.
     private let notes = NotesStore()
+    /// The timetable, shared by every screen's notch.
+    private let timetable = TimetableStore()
     /// Sizes the open panel has been dragged to, by level.
     private static let panelSizesKey = "panelSizes"
 
@@ -119,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         saveMailboxNow()
         notes.saveNow()
+        timetable.saveNow()
     }
 
     // MARK: Screens
@@ -172,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setMinimised(on)
         }
         model.notesStore = notes
+        model.timetableStore = timetable
         model.customSizes = AppDelegate.loadPanelSizes()
         model.onResized = { [weak self] sizes in
             self?.panelResized(sizes)
@@ -282,7 +286,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { !$0.isEmpty }
             .prefix(10)
             .map { (title: $0.title, preview: $0.preview) }
-        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), now: Date())
+        // Today's classes and the next school day's.
+        var classes: [String] = []
+        let now = Date()
+        if let today = timetable.timetable.summary(of: now) {
+            classes.append("Today, " + today)
+        }
+        for offset in 1...7 {
+            guard let day = Calendar.current.date(byAdding: .day, value: offset, to: now),
+                  let summary = timetable.timetable.summary(of: day) else { continue }
+            classes.append((offset == 1 ? "Tomorrow, " : "Next school day, ") + summary)
+            break
+        }
+        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), classes: classes, now: now)
     }
 
     // MARK: Minimised to a mail icon

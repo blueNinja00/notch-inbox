@@ -206,6 +206,11 @@ final class NotchWindowController {
         guard let panel = panel, panel.isKeyWindow, model.level != .rest else { return event }
 
         if event.keyCode == 53 { // Escape steps back one level: email → inboxes → tools → closed
+            // In the timetable, Esc first closes the side panel you're editing in.
+            if model.tool == .timetable && model.timetableEdit != nil {
+                model.timetableEdit = nil
+                return nil
+            }
             switch model.level {
             case .detail:
                 model.back()

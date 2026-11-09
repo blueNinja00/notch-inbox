@@ -15,26 +15,30 @@ final class Updater: ObservableObject {
 
     static let repository = "blueNinja00/notch-inbox"
     static let assetName = "NotchInbox.zip"
-    /// Cheap: GitHub answers "nothing new" (304) to a repeat question, which doesn't count
-    /// towards its hourly limit.
     private static let checkInterval: TimeInterval = 2 * 60
 
     @Published private(set) var state: State = .idle
 
     /// Build number stamped into the app by the release workflow; 0 for local builds.
     let currentBuild: Int
+    /// github.com, and GitHub's API (other addresses in tests).
+    private let site: URL
+    private let api: URL
 
     private var timer: Timer?
     private var isChecking = false
-    /// The newest release seen and GitHub's tag for that answer, to ask "anything newer?".
+    /// The newest release seen, with its notes and download links.
     private var latestSeen: ReleaseInfo?
-    private var etag: String?
     /// When GitHub was last asked, and what it said, for Copy Debug Info.
     private(set) var lastCheck: (at: Date, result: String)?
 
-    init(bundle: Bundle = .main) {
+    init(bundle: Bundle = .main,
+         site: URL = URL(string: "https://github.com")!,
+         api: URL = URL(string: "https://api.github.com")!) {
         let version = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         currentBuild = Int(version ?? "") ?? 0
+        self.site = site
+        self.api = api
     }
 
     /// Only the packaged .app can swap itself for a newer copy (not `swift run`).
@@ -56,54 +60,116 @@ final class Updater: ObservableObject {
 
     // MARK: Checking
 
+    /// Asks github.com which build is newest: its "latest release" link sends you on to that
+    /// build's page (".../releases/tag/build-25"), so a quick look at where it leads is enough.
+    /// Not GitHub's API: that allows an app that isn't signed in 60 questions an hour from your
+    /// network, shared with every other app on it (and with everyone behind a school's or an
+    /// internet provider's shared address), and counts every one, even "anything new?". If
+    /// github.com doesn't say, the API is asked instead.
+    ///
     /// Background checks stay quiet: no "Checking…", and a failed one (offline, say) keeps
-    /// what was known. Checks you ask for show their progress and any error.
+    /// what was known. Checks you ask for show their progress and say why one failed.
     func check(userInitiated: Bool = false) {
         guard !isChecking, state != .installing else { return }
-        guard let url = URL(string: "https://api.github.com/repos/\(Updater.repository)/releases/latest") else { return }
         isChecking = true
         if userInitiated {
             state = .checking
         }
 
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: site.appendingPathComponent("\(Updater.repository)/releases/latest"))
+        request.httpMethod = "HEAD"
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
         request.setValue("NotchInbox/\(currentBuild)", forHTTPHeaderField: "User-Agent")
-        if let etag = etag, latestSeen != nil {
-            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
-        }
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        let site = self.site
+        URLSession.shared.dataTask(with: request) { [self] _, response, error in
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
-            let tag = http?.value(forHTTPHeaderField: "ETag")
-            let release = data.flatMap { ReleaseFeed.parse($0, assetName: Updater.assetName) }
+            let build = status == 200
+                ? http?.url.flatMap { ReleaseFeed.buildNumber(fromPage: $0, site: site, repository: Updater.repository) }
+                : nil
+            let said = "github.com: " + (error?.localizedDescription
+                ?? "HTTP \(status)" + (build.map { ", newest is build \($0)" } ?? ""))
             DispatchQueue.main.async {
-                self?.finishCheck(release: release, status: status, etag: tag, error: error, userInitiated: userInitiated)
+                if let build = build {
+                    self.newest(build, said: said)
+                } else {
+                    self.askAPI(after: said, userInitiated: userInitiated)
+                }
             }
         }.resume()
     }
 
-    private func finishCheck(release: ReleaseInfo?, status: Int, etag: String?, error: Error?, userInitiated: Bool) {
-        isChecking = false
-        if let error = error {
-            lastCheck = (Date(), "failed: \(error.localizedDescription)")
-        } else if let release = release {
-            lastCheck = (Date(), "HTTP \(status), newest is build \(release.build)")
-        } else {
-            lastCheck = (Date(), status == 304 ? "HTTP 304, nothing new" : "HTTP \(status)")
+    /// github.com named the newest build. If it's newer than this one, GitHub's API is asked
+    /// for its notes and API download link: one question per new build. If the API doesn't
+    /// answer, the usual download link will do.
+    private func newest(_ build: Int, said: String) {
+        guard build > currentBuild else {
+            finishCheck(.upToDate, said: said)
+            return
         }
-        if status == 304, let known = latestSeen {
-            settle(known.build > currentBuild ? .available(known) : .upToDate)
-        } else if let release = release {
-            latestSeen = release
-            self.etag = etag
-            settle(release.build > currentBuild ? .available(release) : .upToDate)
-        } else if status == 404 {
-            settle(.upToDate) // nothing published yet
-        } else if userInitiated || state == .checking {
-            state = .failed(error?.localizedDescription ?? "Couldn't check GitHub for updates.")
+        if let seen = latestSeen, seen.build == build {
+            finishCheck(.available(seen), said: said)
+            return
+        }
+        let plain = ReleaseFeed.release(build: build, site: site, repository: Updater.repository, assetName: Updater.assetName)
+        let url = api.appendingPathComponent("repos/\(Updater.repository)/releases/tags/build-\(build)")
+        URLSession.shared.dataTask(with: apiRequest(url)) { [self] data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let found = data.flatMap { ReleaseFeed.parse($0, assetName: Updater.assetName) }
+            DispatchQueue.main.async {
+                let release = found.flatMap { $0.build == build ? $0 : nil } ?? plain
+                self.latestSeen = release
+                self.finishCheck(.available(release), said: said + "; its notes from the API: " + (found == nil ? "HTTP \(status), none" : "found"))
+            }
+        }.resume()
+    }
+
+    /// github.com didn't say: GitHub's API, the way earlier builds asked.
+    private func askAPI(after said: String, userInitiated: Bool) {
+        let url = api.appendingPathComponent("repos/\(Updater.repository)/releases/latest")
+        URLSession.shared.dataTask(with: apiRequest(url)) { [self] data, response, error in
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            let release = data.flatMap { ReleaseFeed.parse($0, assetName: Updater.assetName) }
+            let problem = ReleaseFeed.problem(status: status, error: error,
+                                              remaining: http?.value(forHTTPHeaderField: "X-RateLimit-Remaining"),
+                                              reset: http?.value(forHTTPHeaderField: "X-RateLimit-Reset"))
+            let both = said + "; API: " + (error?.localizedDescription
+                ?? "HTTP \(status)" + (release.map { ", newest is build \($0.build)" } ?? ""))
+            DispatchQueue.main.async {
+                if let release = release {
+                    self.latestSeen = release
+                    self.finishCheck(release.build > self.currentBuild ? .available(release) : .upToDate, said: both)
+                } else if status == 404 {
+                    self.finishCheck(.upToDate, said: both) // nothing published yet
+                } else {
+                    self.failCheck("Couldn't check for updates: \(problem)", said: both, userInitiated: userInitiated)
+                }
+            }
+        }.resume()
+    }
+
+    private func apiRequest(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("NotchInbox/\(currentBuild)", forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    private func finishCheck(_ new: State, said: String) {
+        isChecking = false
+        lastCheck = (Date(), said)
+        settle(new)
+    }
+
+    private func failCheck(_ problem: String, said: String, userInitiated: Bool) {
+        isChecking = false
+        lastCheck = (Date(), "failed: \(said)")
+        if userInitiated || state == .checking {
+            state = .failed(problem)
         }
     }
 
@@ -119,7 +185,7 @@ final class Updater: ObservableObject {
     func install() {
         guard let release = availableRelease else { return }
         guard canInstall else {
-            state = .failed("Updates install into “Notch Inbox.app”. Open the app rather than using swift run.")
+            state = .failed("Couldn't install the update: updates install into “Notch Inbox.app”. Open the app rather than using swift run.")
             return
         }
 
@@ -132,7 +198,7 @@ final class Updater: ObservableObject {
                                                      appropriateFor: appURL,
                                                      create: true)
         } catch {
-            state = .failed(error.localizedDescription)
+            state = .failed("Couldn't install the update: \(error.localizedDescription)")
             return
         }
 
@@ -155,7 +221,7 @@ final class Updater: ObservableObject {
         if url.host == "api.github.com" {
             request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         }
-        URLSession.shared.downloadTask(with: request) { [weak self] tempURL, response, error in
+        URLSession.shared.downloadTask(with: request) { [self] tempURL, response, error in
             // The downloaded file is deleted when this callback returns, so move it first.
             let status = (response as? HTTPURLResponse)?.statusCode ?? (error == nil ? 200 : 0)
             if let tempURL = tempURL, error == nil, status < 400 {
@@ -174,13 +240,13 @@ final class Updater: ObservableObject {
             let passing = status >= 500 || status == 429 || status == 0
             if passing && attempt < 3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(attempt * 3)) {
-                    self?.download(urls, into: workFolder, attempt: attempt + 1, done: done)
+                    self.download(urls, into: workFolder, attempt: attempt + 1, done: done)
                 }
                 return
             }
             if urls.count > 1 {
                 // This route isn't working: the next one, fresh.
-                self?.download(Array(urls.dropFirst()), into: workFolder, attempt: 1, done: done)
+                self.download(Array(urls.dropFirst()), into: workFolder, attempt: 1, done: done)
                 return
             }
             let failure = error ?? UpdateError(passing
@@ -202,7 +268,7 @@ final class Updater: ObservableObject {
             try? FileManager.default.removeItem(at: workFolder)
             Updater.relaunch(installed)
         } catch {
-            state = .failed(error.localizedDescription)
+            state = .failed("Couldn't install the update: \(error.localizedDescription)")
         }
     }
 

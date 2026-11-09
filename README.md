@@ -9,10 +9,10 @@ It shows sample mail until you link your Gmail through the browser (below). **Se
 Paste this into Terminal (macOS 13 Ventura or later):
 
 ```sh
-curl -fL -H "Accept: application/octet-stream" -o /tmp/NotchInbox.zip "$(curl -fsS https://api.github.com/repos/blueNinja00/notch-inbox/releases/latest | grep -o '"url": *"https://api.github.com/repos/blueNinja00/notch-inbox/releases/assets/[0-9]*"' | head -1 | grep -o 'https://[^"]*')" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
+pkill -x NotchInbox; curl -fL --retry 4 --retry-delay 3 -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/releases/latest/download/NotchInbox.zip && rm -rf "/Applications/Notch Inbox.app" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
 ```
 
-It downloads the latest build, puts **Notch Inbox** in your Applications folder and starts it. To have it start when you log in, add it under **System Settings → General → Login Items**.
+It downloads the latest build, puts **Notch Inbox** in your Applications folder (replacing any copy already there, after quitting it) and starts it. GitHub sometimes answers a download with a server error; it tries again a few times. To have it start when you log in, add it under **System Settings → General → Login Items**.
 
 ## Link your Gmail
 
@@ -55,7 +55,7 @@ The app keeps a copy of what the notch shows in `~/Library/Application Support/N
 
 ## Updates
 
-Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every 2 minutes. When one is ready:
+Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every 2 minutes, by checking where github.com's "latest release" link leads. (Not GitHub's API, which allows apps that aren't signed in 60 questions an hour per network, shared by every app on it; it's only asked for a new build's notes, or when github.com doesn't answer. If a check you ask for fails, **Settings → Updates** says why.) When one is ready:
 
 - an **Update** button appears at the top right of the open notch, and
 - **Settings → Updates** shows the new build, its notes and an **Install** button.

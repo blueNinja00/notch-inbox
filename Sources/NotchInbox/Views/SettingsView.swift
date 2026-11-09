@@ -663,7 +663,7 @@ struct UpdateSettings: View {
         case .upToDate: return "Up to date"
         case .available(let build, _): return "Build \(build) is ready to install"
         case .installing: return "Installing… Notch Inbox restarts by itself"
-        case .failed(let message): return "Couldn't check: \(message)"
+        case .failed(let message): return message
         case .unavailable: return "Updates work in the installed app"
         }
     }

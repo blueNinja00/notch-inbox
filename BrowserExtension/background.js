@@ -27,7 +27,7 @@ const VERSION = chrome.runtime.getManifest().version;
 
 chrome.runtime.onInstalled.addListener((details) => {
   // A new version gets a fresh go at emails still waiting to be marked read.
-  if (details && details.reason === 'update') chrome.storage.local.remove(['hiddenTries', 'tabTries']);
+  if (details && details.reason === 'update') chrome.storage.local.remove(['hiddenTries', 'tabTries', 'inTabTries']);
   start();
 });
 chrome.runtime.onStartup.addListener(start);
@@ -45,6 +45,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // What the hidden Gmail frame shows, from hidden-frame.js, for the mark-read log.
   if (message && message.type === 'hidden-frame' && sender && sender.id === chrome.runtime.id) {
     trace(`inside the hidden Gmail (${message.after}s): ${String(message.state).slice(0, 200)}`);
+  }
+  if (message && message.type === 'hidden-frame' && message.done && sender && sender.id === chrome.runtime.id) {
+    framesDone += 1;
+    if (framesWaiter) framesWaiter();
   }
   // hidden-frame.js asking which emails to mark read in its account.
   if (message && message.type === 'hidden-job' && sender && sender.id === chrome.runtime.id) {
@@ -374,9 +378,10 @@ async function sendEmail(email) {
 //      it over the years; the add-on checks the unread feed afterwards and moves on to the
 //      next form if the email is still unread. If none of them work, it stops sending them
 //      (trying again after a week).
-//   2. Otherwise it opens the emails in Gmail in a hidden frame on a page Chrome keeps out of
-//      sight (offscreen.html), as if you'd clicked them; the second time, it shows All Mail
-//      there, ticks the email and clicks Gmail's own "Mark as read". No tab opens.
+//   2. Otherwise, if you have Gmail open in a tab, it adds an invisible frame of All Mail to
+//      that tab, ticks the emails and clicks Gmail's own "Mark as read", then removes the frame.
+//      Without a Gmail tab, it does the same on a page Chrome keeps out of sight
+//      (offscreen.html). No tab opens.
 //      Gmail normally refuses to load inside another page; for that hidden frame alone, and
 //      only while it's open, its "don't show me in a frame" headers are set aside. (You
 //      approved this. Gmail in your tabs is untouched.)
@@ -393,6 +398,10 @@ const HIDDEN_LIST_MS = 16000; // time to show All Mail, tick the email and click
 
 // While the hidden Gmail is open: which emails (hex IDs) to mark read, by account slot.
 let hiddenJob = null;
+// Hidden frames that have finished their job, and who's waiting for them.
+let framesDone = 0;
+let framesWaiter = null;
+const HIDDEN_NAME = 'notch-inbox-hidden';
 const HIDDEN_RULE = 47823;
 
 const MARK_READ_FORMS = [
@@ -458,12 +467,13 @@ async function markRead(items, feeds, status, allowTabs) {
 
 async function markReadSteps(items, feeds, status, allowTabs) {
   const slots = new Map(feeds.map((feed) => [feed.account, feed.index]));
-  const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'hiddenTries', 'tabTries']);
+  const saved = await chrome.storage.local.get(['iks', 'markReadForm', 'readAction', 'hiddenTries', 'tabTries', 'inTabTries']);
   const iks = saved.iks || {};
   const form = (saved.markReadForm || 0) % MARK_READ_FORMS.length;
   const action = saved.readAction || { state: 'unknown', misses: 0, at: 0 };
   const hiddenTries = saved.hiddenTries || {};
   const tabTries = saved.tabTries || {};
+  const inTabTries = saved.inTabTries || {};
 
   let left = items.slice(0, 20)
     .filter((item) => item && typeof item.id === 'string' && slots.has(item.account))
@@ -475,18 +485,20 @@ async function markReadSteps(items, feeds, status, allowTabs) {
 
   // Forget emails the app isn't asking about any more.
   const wantedIDs = new Set(items.map((item) => item && item.id));
-  for (const tries of [hiddenTries, tabTries]) {
+  for (const tries of [hiddenTries, tabTries, inTabTries]) {
     for (const id of Object.keys(tries)) {
       if (!wantedIDs.has(id)) delete tries[id];
     }
   }
+  const yourTab = await gmailTab();
   // Every way has had its tries for these emails: wait quietly until the app stops asking.
   const actionOn = action.state !== 'off' || Date.now() - action.at > ACTION_RETRY_MS;
-  const hiddenLeft = left.some((entry) => (hiddenTries[entry.item.id] || 0) < TRIES);
+  const hiddenLeft = left.some((entry) => (hiddenTries[entry.item.id] || 0) < TRIES
+    || (yourTab && (inTabTries[entry.item.id] || 0) < TRIES));
   const tabLeft = allowTabs && left.some((entry) => (tabTries[entry.item.id] || 0) < TRIES);
   if (!actionOn && !hiddenLeft && !tabLeft) {
     status.markRead = { asked, worked: 0, hidden: 0, opened: 0, how: '', action: action.state, triedEverything: true, at: Date.now() };
-    await chrome.storage.local.set({ status, hiddenTries, tabTries });
+    await chrome.storage.local.set({ status, hiddenTries, tabTries, inTabTries });
     return;
   }
 
@@ -541,10 +553,38 @@ async function markReadSteps(items, feeds, status, allowTabs) {
     }
   }
 
-  // 2. Gmail in a hidden frame, out of sight. (hidden-frame-main.js tells Gmail in that
+  // 2. Inside a Gmail tab you have open: an invisible frame showing All Mail, where
+  // hidden-frame.js ticks the emails and clicks Gmail's own "Mark as read". (Chrome runs the
+  // add-on's scripts in frames inside tabs, which it doesn't on the out-of-sight page.)
+  const forInTab = yourTab ? left.filter((entry) => (inTabTries[entry.item.id] || 0) < TRIES).slice(0, OPEN_PER_SYNC) : [];
+  if (forInTab.length > 0) {
+    const job = {};
+    for (const entry of forInTab) {
+      inTabTries[entry.item.id] = (inTabTries[entry.item.id] || 0) + 1;
+      (job[entry.index] = job[entry.index] || []).push(entry.ids.hex);
+    }
+    const ran = await markInYourGmailTab(yourTab, job);
+    if (ran) {
+      await pause(2000);
+      const still = await stillUnread(forInTab);
+      const took = forInTab.filter((entry) => !still.has(entry.item.id));
+      trace(`after the frame in your Gmail tab: ${took.length} of ${forInTab.length} no longer unread`);
+      worked += took.length;
+      if (took.length > 0) how.push('hidden');
+      left = left.filter((entry) => !took.includes(entry));
+    }
+  } else if (left.length > 0 && !yourTab) {
+    trace('no Gmail tab open to work in out of sight; using the out-of-sight page');
+  }
+
+  // 3. Gmail in a hidden frame on the out-of-sight page. (hidden-frame-main.js tells Gmail in that
   // frame that it's in view; hidden-frame.js reports what it shows, for the log.)
   let hidden = 0;
-  const forHidden = left.filter((entry) => (hiddenTries[entry.item.id] || 0) < TRIES).slice(0, OPEN_PER_SYNC);
+  // Only once the frame in your Gmail tab has had its tries (or there's no Gmail tab).
+  const forHidden = left
+    .filter((entry) => !forInTab.includes(entry) && (!yourTab || (inTabTries[entry.item.id] || 0) >= TRIES))
+    .filter((entry) => (hiddenTries[entry.item.id] || 0) < TRIES)
+    .slice(0, OPEN_PER_SYNC);
   if (forHidden.length > 0) {
     // First try: open the email, as if you'd clicked it. Second: All Mail, where
     // hidden-frame.js ticks the email and clicks Gmail's own "Mark as read".
@@ -571,7 +611,7 @@ async function markReadSteps(items, feeds, status, allowTabs) {
     }
   }
 
-  // 3. A background tab, only if you've allowed it, once the hidden frame has had its tries.
+  // 4. A background tab, only if you've allowed it, once the hidden frame has had its tries.
   let opened = 0;
   if (allowTabs) {
     const forTab = left
@@ -599,7 +639,7 @@ async function markReadSteps(items, feeds, status, allowTabs) {
 
   console.info('[Notch Inbox Link] mark read: asked', asked, 'worked', worked, 'hidden', hidden, 'tab', opened, 'action', action.state);
   status.markRead = { asked, worked, hidden, opened, how: how.join('+'), action: action.state, at: Date.now() };
-  await chrome.storage.local.set({ iks, status, readAction: action, hiddenTries, tabTries });
+  await chrome.storage.local.set({ iks, status, readAction: action, hiddenTries, tabTries, inTabTries });
 }
 
 // Opens each page in Gmail in a hidden frame on the out-of-sight page, then closes that page.
@@ -647,7 +687,7 @@ async function openOutOfSight(pages, job = {}, settle = HIDDEN_SETTLE_MS) {
       stopWatching();
     }
     opened = (reply && reply.opened) || 0;
-    trace(`hidden Gmail: ${opened} of ${pages.length} loaded`);
+    trace(`hidden Gmail: ${opened} of ${pages.length} loaded; the add-on's script inside ${reply && reply.scriptRan ? 'ran' : "didn't run"}`);
     for (const line of seen.slice(0, 16)) trace(`hidden Gmail: ${line}`);
     if (seen.length === 0) trace('hidden Gmail: no requests seen');
   } catch (error) {
@@ -723,6 +763,84 @@ function gmailPageFor(entry, tries) {
   const link = String(entry.item.link || '').replace(/^http:\/\//, 'https://');
   if (tries === 0 && /^https:\/\/mail\.google\.com\/mail[/?]/.test(link)) return link;
   return `${GMAIL}${entry.index}/#all/${entry.ids.hex}`;
+}
+
+// A Gmail tab you have open (any account), to hold an invisible frame. Not one Chrome has
+// put to sleep.
+async function gmailTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://mail.google.com/*' });
+    return tabs.find((tab) => !tab.discarded && tab.status !== 'unloaded') || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Adds an invisible frame of All Mail (one per account) to your Gmail tab, waits for
+// hidden-frame.js in each to tick the emails and click "Mark as read", then takes the frames
+// away. The frames sit off the edge of the page, see-through and unclickable, so the tab looks
+// and works as before. Returns whether they ran.
+async function markInYourGmailTab(tab, job) {
+  if (!chrome.scripting) return false;
+  const pages = Object.keys(job).map((index) => `${GMAIL}${index}/#all`);
+  trace(`in your Gmail tab, out of sight: opening ${pages.map(shortURL).join(', ')}`);
+  hiddenJob = job;
+  framesDone = 0;
+  let ran = false;
+  try {
+    for (const page of pages) {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: addHiddenFrame, args: [page, HIDDEN_NAME] });
+    }
+    ran = true;
+    const finished = await waitForFrames(pages.length, HIDDEN_LIST_MS + 6000);
+    trace(`in your Gmail tab: ${framesDone} of ${pages.length} frames finished${finished ? '' : ' (stopped waiting)'}`);
+  } catch (error) {
+    trace(`in your Gmail tab: couldn't add the frame: ${error && error.message}`);
+  } finally {
+    hiddenJob = null;
+    framesWaiter = null;
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: removeHiddenFrames, args: [HIDDEN_NAME] });
+    } catch (error) {
+      // the tab closed
+    }
+  }
+  return ran;
+}
+
+// Runs in your Gmail tab: the invisible frame.
+function addHiddenFrame(src, name) {
+  const frame = document.createElement('iframe');
+  frame.name = name;
+  frame.src = src;
+  frame.tabIndex = -1;
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position: fixed; left: -12000px; top: 0; width: 1280px; height: 800px; '
+    + 'opacity: 0; pointer-events: none; border: 0;';
+  document.documentElement.appendChild(frame);
+}
+
+// Runs in your Gmail tab: takes the invisible frames away.
+function removeHiddenFrames(name) {
+  document.querySelectorAll(`iframe[name="${name}"]`).forEach((frame) => frame.remove());
+}
+
+// Resolves true once `count` frames have finished, or false after `ms`.
+function waitForFrames(count, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      framesWaiter = null;
+      resolve(false);
+    }, ms);
+    framesWaiter = () => {
+      if (framesDone >= count) {
+        clearTimeout(timer);
+        framesWaiter = null;
+        resolve(true);
+      }
+    };
+    framesWaiter();
+  });
 }
 
 // What happens to the hidden frame's own requests: statuses, redirects (to a sign-in page,

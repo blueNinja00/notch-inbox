@@ -10,10 +10,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true; // answers asynchronously
 });
 
+// Whether the add-on's script ran inside the frame (it says so with a message).
+let scriptRan = 0;
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.notchInboxHidden === 'running') scriptRan += 1;
+});
+
 async function openAll(pages, settle, loadTimeout) {
   const frame = document.createElement('iframe');
+  frame.name = 'notch-inbox-hidden';
   frame.style.cssText = 'width: 1280px; height: 800px; border: 0;';
   document.body.appendChild(frame);
+  scriptRan = 0;
   let opened = 0;
   let current = '';
   try {
@@ -31,7 +39,7 @@ async function openAll(pages, settle, loadTimeout) {
   } finally {
     frame.remove();
   }
-  return { opened };
+  return { opened, scriptRan };
 }
 
 function sameDocument(a, b) {

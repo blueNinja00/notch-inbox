@@ -1,5 +1,6 @@
-// Notch Inbox Link: runs in Gmail pages, but does nothing unless the page is the add-on's
-// hidden Gmail frame. There it:
+// Notch Inbox Link: runs in Gmail pages, but does nothing unless the page is one of the
+// add-on's hidden Gmail frames (named "notch-inbox-hidden": inside one of your Gmail tabs,
+// or on the add-on's out-of-sight page). There it:
 //   - tells the add-on what Gmail is showing, for the mark-read log: a mail list or an email,
 //     which part of Gmail (#inbox, #all…), whether the page counts as visible, and whether
 //     Gmail offers "Mark as unread" (it does once it counts the email read);
@@ -8,13 +9,23 @@
 //     it clicks "Mark as read" if Gmail offers it.
 // It never sends what an email says.
 (() => {
+  const NAME = 'notch-inbox-hidden'; // the name the add-on gives its hidden frames
   const ancestors = location.ancestorOrigins ? Array.from(location.ancestorOrigins) : [];
-  if (window.top === window || ancestors[0] !== `chrome-extension://${chrome.runtime.id}`) return;
+  if (window.top === window) return;
+  if (window.name !== NAME && ancestors[0] !== `chrome-extension://${chrome.runtime.id}`) return;
+
+  // Tell the page holding the frame that this script is running (for the log).
+  try {
+    window.parent.postMessage({ notchInboxHidden: 'running' }, '*');
+  } catch (error) {
+    // no parent to tell
+  }
 
   const started = Date.now();
   const seconds = () => Math.round((Date.now() - started) / 1000);
-  const say = (state) => {
-    chrome.runtime.sendMessage({ type: 'hidden-frame', state, after: seconds() }).catch(() => {});
+  // `done`: the last word on this frame's job, so the add-on can stop waiting.
+  const say = (state, done = false) => {
+    chrome.runtime.sendMessage({ type: 'hidden-frame', state, after: seconds(), done }).catch(() => {});
   };
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,7 +65,10 @@
   // Which emails to mark read in this account, from the add-on.
   chrome.runtime.sendMessage({ type: 'hidden-job', index: Number(slot) }).then(async (reply) => {
     const hexes = ((reply && reply.hexes) || []).filter((hex) => /^[0-9a-f]+$/.test(hex));
-    if (hexes.length === 0) return;
+    if (hexes.length === 0) {
+      say('nothing to mark in this account', true);
+      return;
+    }
     const opening = /^#[^/]+\/[0-9a-zA-Z]+/.test(location.hash);
     if (opening) {
       await onEmail();
@@ -68,14 +82,17 @@
   async function onEmail() {
     for (let second = 0; second < 8; second += 1) {
       await wait(1000);
-      if (button('Mark as unread')) return;
+      if (button('Mark as unread')) {
+        say('Gmail counted the open email read', true);
+        return;
+      }
     }
     const markRead = button('Mark as read');
     if (markRead) {
       press(markRead);
-      say('clicked "Mark as read" on the open email');
+      say('clicked "Mark as read" on the open email', true);
     } else {
-      say('the open email had no "Mark as read" to click');
+      say('the open email had no "Mark as read" to click', true);
     }
   }
 
@@ -92,7 +109,7 @@
       if (document.querySelector('tr.zA') && tries > 12) break;
       await wait(500);
     }
-    say(`found ${rows.length} of ${hexes.length} in the list`);
+    say(`found ${rows.length} of ${hexes.length} in the list`, rows.length === 0);
     if (rows.length === 0) return;
     for (const row of rows) {
       const box = row.querySelector('[role="checkbox"]');
@@ -101,12 +118,12 @@
     await wait(800);
     const markRead = button('Mark as read');
     if (!markRead) {
-      say('no "Mark as read" button after ticking them');
+      say('no "Mark as read" button after ticking them', true);
       return;
     }
     press(markRead);
     await wait(1500);
     const stillBold = rows.filter((row) => row.classList.contains('zE')).length;
-    say(`clicked "Mark as read"; ${stillBold} still bold in the list`);
+    say(`clicked "Mark as read"; ${stillBold} still bold in the list`, true);
   }
 })();

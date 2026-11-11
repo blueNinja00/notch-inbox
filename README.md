@@ -68,8 +68,9 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 
 - **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch; how much mail is kept on this Mac, and how many emails to keep in full.
-- **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable, and whether it may see your newest emails and notes.
+- **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
+- **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
 - **Quit Notch Inbox**, at the bottom.
@@ -84,7 +85,7 @@ Ask about your day, your email or anything else. In **Settings → Assistant**, 
 - **Claude, with an API key:** paste a key from [console.anthropic.com](https://console.anthropic.com); you pay Anthropic per question. The key is kept in `~/Library/Application Support/Notch Inbox`, readable only by you.
 - **Qwen, on this Mac:** runs locally through [Ollama](https://ollama.com); free and private, but slower and less capable. Settings shows the one Terminal command to download the right Qwen model for your Mac's memory (several GB).
 
-For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **See and change my timetable** (on to start with) lets it read your timetable and change it when you ask. **Share my newest emails and notes** lets it see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
+For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **See and change my timetable** and **See and change my planner** (both on to start with) let it read your timetable, homework and exams, and change them when you ask. **Share my newest emails and notes** lets it see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
 
 ## Using it
 
@@ -92,7 +93,8 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes; nothing is read from the phone.
-- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
+- **Planner:** homework, exam countdowns and a study plan. See [Planner](#planner).
 - **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
 - **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
@@ -119,6 +121,22 @@ Click the Timetable tile on the primary menu. Your day runs down the left, from 
 
 A timetable from an earlier build moves to this day by itself: if its school day was still the starting one, school becomes the one block, and activities you'd added stay in their hours. It's kept in `~/Library/Application Support/Notch Inbox/Timetable.json`, readable only by you. With **See and change my timetable** on, the assistant sees your timetable (with Claude, it's sent to Anthropic with each question), so you can ask "What have I got tomorrow?".
 
+## Planner
+
+Click the Planner tile on the primary menu. Homework to do is on the left, grouped by when it's due (overdue in red, today in amber); when to do it is in the middle; exams are on the right, each with the days to go.
+
+- **Add homework:** type it in one line at the top and press Return: "Maths worksheet fri 4pm 45m" is the worksheet, due Friday at 4 pm, taking 45 minutes. Dates can be "tomorrow", "fri", "20 Nov", "20/11" or "2026-11-20", with a time if there is one; "45m" or "1.5h" is how long it takes. A line under the box shows how it was read. A subject from your timetable named in it becomes its subject, and gives it that subject's colour.
+- **Tick it off** with the circle on its left. The tick button at the top shows finished homework again; it clears itself after a month.
+- **Click homework or an exam** to edit it in the side panel: what, subject, when (type the date), how long it takes, notes. Right-click for a short menu.
+- **Exams:** the graduation cap at the top (or **+** in Exams) adds one. Say when and where it is and how much revision to plan. The soonest one counts down on the Planner tile and beside the date on the primary menu. **It's an Exam** in homework's side panel turns a "Unit 3 test" that arrived as homework into an exam.
+- **The plan:** homework and revision are fitted into the free time on your [timetable](#timetable): after school on school days (around your activities), 9 to 6 at weekends, never past 9:30 pm. Whatever's due soonest goes first, up to two hours a day unless something due sooner needs more, and revision goes on the days just before each exam, an hour a day. Homework that can't fit before it's due gets a warning triangle. The plan also shows, faintly, in the empty slots of this week's timetable. **Settings → Planner** changes the two hours or turns planning off. Homework with no due date isn't planned.
+- **Google Classroom:** when Classroom emails you about a new assignment or question, it's added as homework with its class, its due date and a link to its page. A "due tomorrow" reminder fills in a missing date, and work your teacher returns is ticked off. The emails are read on your Mac, with no AI, and nothing is sent anywhere (**Settings → Planner → Add homework from Google Classroom emails**, on to start with). It needs the account your school uses to be one of the Gmail accounts in the notch.
+- **Due dates in other emails:** the assistant can look for them in the rest of your mail ("permission notes back by Friday", "the yearly exams start on the 23rd") and add what it finds, marked with a small envelope so you can check it against its email. **With Claude this is off until you turn it on** in **Settings → Planner**, because the emails it looks at are sent to Anthropic: only emails that mention something like a due date, an exam or a form to return, and of each only who it's from, the subject and the first 1,500 characters, starting with the last two weeks. It uses Claude Haiku, a few emails at a time. With Qwen the emails are read on your Mac, so it starts on. Anything you remove isn't added again from the same email.
+- **Ask the assistant:** "what's due this week?", "add a Maths test on Friday at 9 in the hall", "I've finished the English essay", "move the History notes to Monday". It makes the change and says what it changed (**See and change my planner**, on to start with; with Claude, your homework and exams are sent to Anthropic with each question).
+- **Esc** closes the side panel. The expand button makes the planner bigger.
+
+The planner is kept in `~/Library/Application Support/Notch Inbox/Planner.json`, readable only by you.
+
 ## Sample mail
 
 Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Snooze is a placeholder for now.
@@ -139,7 +157,11 @@ open "build/Notch Inbox.app"
 | `AppDelegate.swift` | Launch; connects Settings to the mailbox, updater and browser link; the menu-bar envelope |
 | `AppSettings.swift`, `Views/SettingsView.swift` | Settings inside the notch |
 | `Timetable.swift`, `Views/TimetableView.swift` | The timetable: school, hour blocks, lessons, Week A/B, now and next |
-| `TimetableAgent.swift` | What the assistant is told about the timetable, and making the changes it asks for |
+| `TimetableAgent.swift`, `PlannerAgent.swift`, `AgentBlock.swift` | What the assistant is told about the timetable and the planner, and making the changes it asks for |
+| `Planner.swift`, `DueDate.swift`, `Views/PlannerView.swift` | The planner: homework, exams, reading dates as people type them |
+| `StudyPlan.swift` | Fits homework and revision into the free time on the timetable |
+| `ClassroomMail.swift`, `PlannerMail.swift` | Reads Google Classroom's emails into the planner, on this Mac |
+| `DueDateFinder.swift`, `PlannerMailReader.swift` | Finding due dates in other emails with the assistant (only when turned on) |
 | `PhoneCable.swift`, `PhoneCableWatcher.swift` | The red dot while a phone is plugged in by USB |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
@@ -156,7 +178,7 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, notes, assistant, settings |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, assistant, settings |
 | `Theme.swift` | Colours from the design |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
 | `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

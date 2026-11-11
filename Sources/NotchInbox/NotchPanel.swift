@@ -211,6 +211,11 @@ final class NotchWindowController {
                 model.timetableEdit = nil
                 return nil
             }
+            // In the planner too.
+            if model.tool == .planner && model.plannerEdit != nil {
+                model.closePlannerEdit()
+                return nil
+            }
             // In Mail, Esc first closes the search box.
             if model.tool == .mail && model.searching {
                 model.endSearch()

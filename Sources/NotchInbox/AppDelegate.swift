@@ -64,6 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notes = NotesStore()
     /// The timetable, shared by every screen's notch.
     private let timetable = TimetableStore()
+    /// Homework and exams, shared by every screen's notch.
+    private let planner = PlannerStore()
+    /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
+    private lazy var plannerMail = PlannerMailReader(store: planner, settings: settings, assistant: Assistant.shared)
+    private var plannerMailWork: DispatchWorkItem?
     /// Sizes the open panel has been dragged to, by level.
     private static let panelSizesKey = "panelSizes"
 
@@ -102,7 +107,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.timetable.change { changes = TimetableAgent.apply(plan, to: &$0, now: Date()) }
             return changes
         }
+        Assistant.shared.plannerDescription = { [weak self] in
+            guard let self = self else { return "" }
+            return PlannerAgent.describe(self.planner.planner, sessions: self.studyPlan(), now: Date())
+        }
+        Assistant.shared.applyPlanner = { [weak self] plan in
+            guard let self = self else { return [] }
+            var changes: [String] = []
+            self.planner.change { changes = PlannerAgent.apply(plan, to: &$0, now: Date()) }
+            return changes
+        }
+        Assistant.shared.onFindingChanged = { [weak self] in
+            self?.readMailForPlannerSoon()
+        }
+        settings.onPlannerSettingsChanged = { [weak self] in
+            self?.readMailForPlannerSoon()
+        }
+        planner.change { $0.tidy() }
         Assistant.shared.checkSetup()
+        readMailForPlannerSoon()
         // A red dot by the notch while a phone is plugged in by cable.
         PhoneCableWatcher.shared.$phone
             .receive(on: DispatchQueue.main)
@@ -147,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         emailFiles.finishWriting()
         notes.saveNow()
         timetable.saveNow()
+        planner.saveNow()
     }
 
     // MARK: Screens
@@ -212,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.notesStore = notes
         model.timetableStore = timetable
+        model.plannerStore = planner
         model.customSizes = AppDelegate.loadPanelSizes()
         model.onResized = { [weak self] sizes in
             self?.panelResized(sizes)
@@ -267,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showMailEverywhere()
         saveMailboxSoon()
         tidyEmailFiles()
+        readMailForPlannerSoon()
         return LinkReply(want: mailbox.wanted(), addon: addOn)
     }
 
@@ -344,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 emailFiles.save(whole, for: email.id)
             }
             showMailEverywhere()
+            readMailForPlannerSoon()
         }
     }
 
@@ -397,6 +424,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.settings.storage = storage
             }
         }
+    }
+
+    // MARK: Planner
+
+    /// Looks through the mail for homework and exams, a few seconds after the last change
+    /// (whole emails arrive in bursts).
+    private func readMailForPlannerSoon() {
+        plannerMailWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.readMailForPlanner()
+        }
+        plannerMailWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    private func readMailForPlanner() {
+        plannerMailWork = nil
+        // Only real mail: nothing is read until the browser link has delivered some.
+        guard lastFeedAt != nil else { return }
+        let messages = mailbox.messages
+        let held = mailbox
+        let files = emailFiles
+        plannerMail.read(messages, haveWhole: held.haveWhole, whole: { id in
+            held.wholeInMemory(id) ?? files.load(id)
+        })
+    }
+
+    /// Homework and revision fitted into free time, if that's switched on.
+    private func studyPlan() -> [StudySession] {
+        guard settings.plansStudy else { return [] }
+        return StudyPlanner.plan(tasks: planner.planner.tasks, exams: planner.planner.exams, timetable: timetable.timetable,
+                                 now: Date(), daily: settings.studyMinutesADay)
     }
 
     // MARK: Assistant
@@ -686,6 +745,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lines.append("")
         lines.append("Read in the notch (remembered here, Gmail unchanged): \(mailbox.readHereCount)")
         lines.append("Mail kept on this Mac: \(settings.storage.summary()) · keeping \(settings.wholeEmailLimit == 0 ? "every whole email" : "the newest \(settings.wholeEmailLimit) whole emails")")
+        let plan = planner.planner
+        let classroomMail = mailbox.messages.filter { ClassroomMail.isClassroom($0.senderEmail) }.count
+        lines.append("Planner: \(plan.open().count) to do, \(plan.upcomingExams(now: Date()).count) exams coming · Classroom emails in the notch: \(classroomMail), read into the planner since the app started: \(settings.classroomRead) (reading them is \(settings.classroomHomework ? "on" : "off"))")
+        lines.append("Due dates from other emails with the assistant: \(assistant.findsDueDates ? "on · \(settings.finding.summary)" : "off")")
         return lines.joined(separator: "\n")
     }
 

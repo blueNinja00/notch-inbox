@@ -9,6 +9,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case accounts
     case assistant
     case timetable
+    case planner
     case gmail
     case updates
 
@@ -20,6 +21,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .accounts: return "Mail accounts"
         case .assistant: return "Assistant"
         case .timetable: return "Timetable"
+        case .planner: return "Planner"
         case .gmail: return "Gmail link"
         case .updates: return "Updates"
         }
@@ -31,6 +33,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .accounts: return "tray.2"
         case .assistant: return "sparkles"
         case .timetable: return "calendar"
+        case .planner: return "checklist"
         case .gmail: return "link"
         case .updates: return "arrow.down.circle"
         }
@@ -160,6 +163,85 @@ final class AppSettings: ObservableObject {
               WholeEmailStore.limits.contains(saved) else { return WholeEmailStore.standardLimit }
         return saved
     }
+
+    // MARK: Planner
+
+    private static let classroomKey = "plannerReadsClassroom"
+    private static let plansStudyKey = "plannerPlansStudy"
+    private static let studyDailyKey = "plannerStudyMinutesADay"
+    /// The choices for how much study to plan in a day; 0 means as much as fits.
+    static let studyChoices = [60, 120, 180, 0]
+
+    /// Whether Google Classroom emails add their assignments to the planner (read on this Mac).
+    @Published var classroomHomework: Bool = AppSettings.saved(AppSettings.classroomKey, otherwise: true) {
+        didSet {
+            guard classroomHomework != oldValue else { return }
+            UserDefaults.standard.set(classroomHomework, forKey: AppSettings.classroomKey)
+            onPlannerSettingsChanged?()
+        }
+    }
+
+    /// Whether homework and revision are fitted into free time on the timetable.
+    @Published var plansStudy: Bool = AppSettings.saved(AppSettings.plansStudyKey, otherwise: true) {
+        didSet {
+            guard plansStudy != oldValue else { return }
+            UserDefaults.standard.set(plansStudy, forKey: AppSettings.plansStudyKey)
+        }
+    }
+
+    /// Minutes of study to plan in a day; 0 for as much as fits.
+    @Published var studyMinutesADay: Int = AppSettings.savedStudyMinutes() {
+        didSet {
+            guard studyMinutesADay != oldValue else { return }
+            UserDefaults.standard.set(studyMinutesADay, forKey: AppSettings.studyDailyKey)
+        }
+    }
+
+    private static func saved(_ key: String, otherwise: Bool) -> Bool {
+        UserDefaults.standard.object(forKey: key) == nil ? otherwise : UserDefaults.standard.bool(forKey: key)
+    }
+
+    private static func savedStudyMinutes() -> Int {
+        guard let saved = UserDefaults.standard.object(forKey: studyDailyKey) as? Int, studyChoices.contains(saved) else {
+            return StudyPlanner.standardDaily
+        }
+        return saved
+    }
+
+    /// How finding due dates in emails is going, for Settings and the planner.
+    struct Finding: Equatable {
+        /// Looking through emails right now.
+        var busy = false
+        /// Emails looked through with the assistant, and what turned up, since the app started.
+        var looked = 0
+        var found = 0
+        /// Emails waiting their turn.
+        var waiting = 0
+        var lastAt: Date?
+        /// Why the last look didn't work, if it didn't.
+        var problem: String?
+
+        /// "Looked through 12 emails, found 3 · 4 waiting".
+        var summary: String {
+            if let problem = problem { return problem }
+            var parts: [String] = []
+            if looked > 0 {
+                parts.append("Looked through \(looked) email\(looked == 1 ? "" : "s"), found \(found == 0 ? "nothing to add" : "\(found) to add")")
+            }
+            if busy {
+                parts.append("looking now")
+            } else if waiting > 0 {
+                parts.append("\(waiting) waiting")
+            }
+            return parts.isEmpty ? "Nothing to look through yet" : parts.joined(separator: " · ")
+        }
+    }
+
+    @Published var finding = Finding()
+    /// How many Classroom emails have been read into the planner since the app started.
+    @Published var classroomRead = 0
+
+    var onPlannerSettingsChanged: (() -> Void)?
 
     var onStorageLimitChanged: (() -> Void)?
     /// Settings is showing the storage numbers: work them out afresh.

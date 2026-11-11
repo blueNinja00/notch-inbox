@@ -55,8 +55,12 @@ struct NotchRootView: View {
             } else if model.tool == .notes, let store = model.notesStore {
                 NotesView(model: model, store: store, expanded: level == .detail)
                     .transition(.opacity)
-            } else if model.tool == .timetable, let store = model.timetableStore {
-                TimetableView(model: model, store: store, expanded: level == .detail)
+            } else if model.tool == .planner, let store = model.plannerStore, let timetable = model.timetableStore {
+                PlannerView(model: model, store: store, timetable: timetable, settings: AppSettings.shared,
+                            assistant: Assistant.shared, expanded: level == .detail)
+                    .transition(.opacity)
+            } else if model.tool == .timetable, let store = model.timetableStore, let planner = model.plannerStore {
+                TimetableView(model: model, store: store, planner: planner, settings: AppSettings.shared, expanded: level == .detail)
                     .transition(.opacity)
             } else if model.tool == .assistant {
                 AssistantView(model: model, assistant: Assistant.shared, expanded: level == .detail)

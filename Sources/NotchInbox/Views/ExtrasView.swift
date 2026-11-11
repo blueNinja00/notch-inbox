@@ -186,7 +186,7 @@ struct FocusRing: View {
                     .stroke(Theme.raised, lineWidth: 3)
                 Circle()
                     .trim(from: 0, to: CGFloat(session.progress(now: context.date)))
-                    .stroke(session.phase == .focus ? Theme.text : Theme.good, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(session.phase == .focus ? Theme.accent : Theme.good, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
             .padding(1.5)
@@ -787,7 +787,7 @@ struct FocusLength: View {
             .frame(maxWidth: .infinity)
             .frame(height: 38)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(chosen ? Theme.text.opacity(hovering ? 1 : 0.92) : (hovering ? Theme.hover : Theme.raised)))
+                .fill(chosen ? Theme.accent.opacity(hovering ? 1 : 0.92) : (hovering ? Theme.hover : Theme.raised)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

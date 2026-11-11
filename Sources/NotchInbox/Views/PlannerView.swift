@@ -631,7 +631,7 @@ struct ExamCard: View {
             .padding(.horizontal, 8)
             .frame(height: 46)
             .background(shape.fill(colour.opacity(selected || hovering ? 0.22 : 0.13)))
-            .overlay(shape.strokeBorder(selected ? Theme.text : Color.clear, lineWidth: 1.2))
+            .overlay(shape.strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 1.2))
             .contentShape(shape)
         }
         .buttonStyle(.plain)

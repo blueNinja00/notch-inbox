@@ -48,7 +48,7 @@ struct CountPill: View {
 struct UnreadDot: View {
     var body: some View {
         Circle()
-            .fill(Theme.text)
+            .fill(Theme.accent)
             .frame(width: 6, height: 6)
     }
 }
@@ -281,7 +281,7 @@ struct UpdateButton: View {
             .foregroundStyle(Theme.onAccent)
             .padding(.horizontal, 10)
             .frame(height: 24)
-            .background(Capsule().fill(Theme.text.opacity(hovering ? 1 : 0.9)))
+            .background(Capsule().fill(Theme.accent.opacity(hovering ? 1 : 0.9)))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

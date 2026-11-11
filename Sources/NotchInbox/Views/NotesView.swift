@@ -51,7 +51,7 @@ struct NotesView: View {
                             .foregroundStyle(Theme.onAccent)
                             .padding(.horizontal, 14)
                             .frame(height: 30)
-                            .background(Capsule().fill(Theme.text))
+                            .background(Capsule().fill(Theme.accent))
                     }
                     .buttonStyle(.plain)
                 }

@@ -167,6 +167,20 @@ final class AppSettings: ObservableObject {
         return saved
     }
 
+    // MARK: Theme
+
+    /// The colours everything is drawn in.
+    @Published var theme: ThemeChoice = ThemeChoice.saved() {
+        didSet {
+            guard theme != oldValue else { return }
+            palette = theme.palette
+            UserDefaults.standard.set(theme.rawValue, forKey: ThemeChoice.key)
+        }
+    }
+
+    /// The chosen theme's colours, worked out once when it's chosen.
+    private(set) var palette: ThemePalette = ThemeChoice.saved().palette
+
     // MARK: Extras
 
     /// The Mac extras, each of which can be switched off.

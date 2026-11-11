@@ -191,6 +191,7 @@ final class NotchModel: ObservableObject {
         case notes
         case assistant
         case timetable
+        case extras
         case settings
     }
 
@@ -222,6 +223,9 @@ final class NotchModel: ObservableObject {
     /// Which week of a two-week timetable is on screen: 0 for Week A, 1 for Week B.
     @Published var timetableWeek = 0
 
+    /// The shelf of parked files, shared by every screen (set by the app).
+    var shelfStore: ShelfStore?
+
     /// The planner (homework and exams), shared by every screen (set by the app).
     var plannerStore: PlannerStore?
 
@@ -247,10 +251,15 @@ final class NotchModel: ObservableObject {
     /// Called when you let go after dragging, to remember the size and share it.
     var onResized: (([NotchLevel: CGSize]) -> Void)?
 
+    /// Whether the primary menu has its row of extras (now playing, focus, clipboard, shelf).
+    @Published var showsExtras = false
+    /// A focus timer is running: its minutes show beside the closed notch.
+    @Published var focusRunning = false
+
     /// The panel's size at a level: as dragged, else standard.
     func size(_ level: NotchLevel) -> CGSize {
         guard level != .rest, let custom = customSizes[level] else {
-            return metrics.bodySize(level, ears: restEars)
+            return metrics.bodySize(level, ears: restEars, extras: showsExtras)
         }
         return metrics.clamp(custom, for: level)
     }
@@ -331,6 +340,17 @@ final class NotchModel: ObservableObject {
         if let id = added {
             timetableEdit = .period(id)
         }
+    }
+
+    /// The Mac extras: the shelf, clipboard history, the focus timer, now playing.
+    func openExtras() {
+        tool = .extras
+        level = .lanes
+    }
+
+    func expandExtras() {
+        tool = .extras
+        level = .detail
     }
 
     // MARK: Planner
@@ -457,13 +477,22 @@ final class NotchModel: ObservableObject {
 
     /// The phone plugged into the Mac by cable ("iPhone"), if any: a red dot beside the notch.
     @Published var phoneConnected: String?
+    /// Its battery ("87%"), when that's known.
+    @Published var phoneBattery: String?
 
     /// Width of each ear beside the closed notch: wide enough for every unread count, and
     /// for the red phone dot.
     var restEars: CGFloat {
         guard !minimised else { return 0 }
-        let counts = NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
-        return phoneConnected == nil ? counts : max(counts, NotchMetrics.dotEarWidth)
+        var width = NotchMetrics.earWidth(for: accounts.map { unreadCount($0.id) })
+        if phoneConnected != nil {
+            width = max(width, NotchMetrics.dotEarWidth)
+        }
+        if focusRunning {
+            // The timer's minutes, and the phone's dot beside them if there is one.
+            width = max(width, NotchMetrics.focusEarWidth + (phoneConnected == nil ? 0 : 14))
+        }
+        return width
     }
 
     func account(_ id: String) -> MailAccount? {

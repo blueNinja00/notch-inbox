@@ -48,6 +48,8 @@ struct SettingsView: View {
                             if let store = model.plannerStore {
                                 PlannerSettings(model: model, settings: settings, assistant: assistant, store: store)
                             }
+                        case .extras:
+                            ExtrasSettings(model: model, settings: settings, timer: FocusTimer.shared)
                         case .gmail:
                             GmailLinkSettings(settings: settings)
                         case .updates:
@@ -676,6 +678,57 @@ struct PlannerStudySettings: View {
                                                title: minutes == 0 ? "Any" : DueText.length(minutes),
                                                help: minutes == 0 ? "As much as fits in your free time" : "Up to \(DueText.length(minutes)) of study a day")
                 }, selected: settings.studyMinutesADay, choose: { settings.studyMinutesADay = $0 })
+            }
+        }
+    }
+}
+
+// MARK: Extras
+
+struct ExtrasSettings: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var timer: FocusTimer
+
+    var body: some View {
+        SettingsHeading(title: "Extras",
+                        detail: "Small helpers in a row under the primary menu's tiles, with more room in the Extras panel (click any of them). Switch off the ones you don't want.")
+        SettingsToggle(title: "Now playing",
+                       detail: "Shows what Spotify or Music is playing, with previous, play or pause, and next. The first time you press a button, macOS asks whether Notch Inbox may control that app; it may ask again after an update. Nothing is looked up online.",
+                       isOn: $settings.showsNowPlaying)
+        SettingsDivider()
+        FocusSettings(settings: settings, timer: timer)
+        SettingsDivider()
+        SettingsToggle(title: "Clipboard history",
+                       detail: "Keeps the last 30 things you copy, so you can copy one again. They're held in memory only: never saved to disk, never sent anywhere, never shown to the assistant, and gone when the app quits. Copies that password managers mark as private are skipped.",
+                       isOn: $settings.keepsClipboard)
+        SettingsDivider()
+        SettingsToggle(title: "Shelf",
+                       detail: "Drag files to the notch to park them, then drag them out where they're going. The shelf remembers where the files are; it doesn't copy or move them.",
+                       isOn: $settings.showsShelf)
+        PillButton(title: "Open Extras", prominent: true, action: { model.openExtras() })
+    }
+}
+
+/// The focus timer's switch and lengths.
+struct FocusSettings: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var timer: FocusTimer
+
+    var body: some View {
+        SettingsToggle(title: "Focus timer",
+                       detail: "A stretch of focus, then a short break. While it runs, the minutes left show beside the closed notch; when it's up there's a chime and the notch opens. In the planner, point at a planned stretch and click its timer to start one for it.",
+                       isOn: $settings.showsFocus)
+        if settings.showsFocus {
+            SettingsRow(title: "Focus for", detail: "How long a round lasts.") {
+                ChoiceSegments(options: FocusTimer.focusChoices.map {
+                    ChoiceSegments<Int>.Option(value: $0, title: "\($0) min", help: "\($0) minutes of focus")
+                }, selected: timer.focusMinutes, choose: { timer.focusMinutes = $0 })
+            }
+            SettingsRow(title: "Break for", detail: "How long the break after it lasts.") {
+                ChoiceSegments(options: FocusTimer.breakChoices.map {
+                    ChoiceSegments<Int>.Option(value: $0, title: "\($0) min", help: "A \($0)-minute break")
+                }, selected: timer.breakMinutes, choose: { timer.breakMinutes = $0 })
             }
         }
     }

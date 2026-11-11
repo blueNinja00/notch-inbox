@@ -10,6 +10,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case assistant
     case timetable
     case planner
+    case extras
     case gmail
     case updates
 
@@ -22,6 +23,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .assistant: return "Assistant"
         case .timetable: return "Timetable"
         case .planner: return "Planner"
+        case .extras: return "Extras"
         case .gmail: return "Gmail link"
         case .updates: return "Updates"
         }
@@ -34,6 +36,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .assistant: return "sparkles"
         case .timetable: return "calendar"
         case .planner: return "checklist"
+        case .extras: return "tray.full"
         case .gmail: return "link"
         case .updates: return "arrow.down.circle"
         }
@@ -162,6 +165,46 @@ final class AppSettings: ObservableObject {
         guard let saved = UserDefaults.standard.object(forKey: wholeLimitKey) as? Int,
               WholeEmailStore.limits.contains(saved) else { return WholeEmailStore.standardLimit }
         return saved
+    }
+
+    // MARK: Extras
+
+    /// The Mac extras, each of which can be switched off.
+    enum Extra: String, CaseIterable {
+        case nowPlaying
+        case focus
+        case clipboard
+        case shelf
+
+        var key: String { "extra." + rawValue }
+    }
+
+    @Published var showsNowPlaying: Bool = AppSettings.saved(Extra.nowPlaying.key, otherwise: true) {
+        didSet { extraChanged(.nowPlaying, showsNowPlaying, oldValue) }
+    }
+
+    @Published var showsFocus: Bool = AppSettings.saved(Extra.focus.key, otherwise: true) {
+        didSet { extraChanged(.focus, showsFocus, oldValue) }
+    }
+
+    /// Whether the last things you copied are kept (in memory only) to copy again.
+    @Published var keepsClipboard: Bool = AppSettings.saved(Extra.clipboard.key, otherwise: true) {
+        didSet { extraChanged(.clipboard, keepsClipboard, oldValue) }
+    }
+
+    @Published var showsShelf: Bool = AppSettings.saved(Extra.shelf.key, otherwise: true) {
+        didSet { extraChanged(.shelf, showsShelf, oldValue) }
+    }
+
+    /// Whether any extra is on (the row under the primary menu's tiles shows if so).
+    var showsExtras: Bool { showsNowPlaying || showsFocus || keepsClipboard || showsShelf }
+
+    var onExtrasChanged: (() -> Void)?
+
+    private func extraChanged(_ extra: Extra, _ value: Bool, _ before: Bool) {
+        guard value != before else { return }
+        UserDefaults.standard.set(value, forKey: extra.key)
+        onExtrasChanged?()
     }
 
     // MARK: Planner

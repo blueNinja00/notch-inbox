@@ -9,7 +9,15 @@ final class NotchModel: ObservableObject {
     @Published var level: NotchLevel = .rest
     @Published var metrics: NotchMetrics
     @Published private(set) var accounts: [MailAccount]
-    @Published private(set) var messages: [MailMessage]
+    /// Every message of the inboxes shown. Real mail arrives newest first.
+    @Published private(set) var messages: [MailMessage] {
+        didSet { regroup() }
+    }
+    /// Each inbox's messages, newest first, worked out once whenever the mail changes
+    /// (the notch can hold thousands).
+    private var inboxes: [String: [MailMessage]] = [:]
+    /// The newest messages across the inboxes, for the primary menu and the assistant.
+    private(set) var recent: [MailMessage] = []
     @Published private(set) var activeAccountID: String
     @Published private(set) var openMessageID: String?
     @Published private(set) var replyFromID: String?
@@ -32,6 +40,17 @@ final class NotchModel: ObservableObject {
 
     /// Tells the app you opened a real email, so its whole text is fetched first.
     var onOpenMessage: ((String) -> Void)?
+    /// Real mail's read and unread are kept by the app (Gmail itself isn't changed): one
+    /// email, a whole inbox, and undoing the last "Mark all".
+    var onSetRead: ((String, Bool) -> Void)?
+    var onMarkAll: ((String, Bool) -> Void)?
+    var onUndoMarkAll: (() -> Void)?
+    /// The inbox whose last "Mark all read" or "Mark all unread" can be undone.
+    @Published var undoAccount: String?
+
+    /// Searching Mail: the box under the top row, and what's typed in it.
+    @Published var searching = false
+    @Published var searchText = ""
 
     /// What the browser add-on does about whole emails, for the note under Gmail's previews.
     enum WholeEmails: Equatable {
@@ -51,9 +70,11 @@ final class NotchModel: ObservableObject {
         self.messages = provider.messages()
         self.metrics = metrics
         self.activeAccountID = accounts.first?.id ?? ""
+        regroup()
     }
 
-    /// Real Gmail arrives read-only: archive, mark unread and reply happen in Gmail.
+    /// Real Gmail arrives read-only: archive and reply happen in Gmail. (Read and unread are
+    /// the notch's own, so those work on real mail too.)
     var canAct: Bool { isSample }
 
     /// Swap in real accounts and mail from the browser link.
@@ -82,7 +103,64 @@ final class NotchModel: ObservableObject {
 
     /// Messages in one inbox, newest first.
     func inbox(_ accountID: String) -> [MailMessage] {
-        messages.filter { $0.accountID == accountID }.sorted { $0.date > $1.date }
+        inboxes[accountID] ?? []
+    }
+
+    private func regroup() {
+        var groups: [String: [MailMessage]] = [:]
+        var inOrder = true
+        var previous: Date?
+        for message in messages {
+            groups[message.accountID, default: []].append(message)
+            if let previous = previous, message.date > previous {
+                inOrder = false
+            }
+            previous = message.date
+        }
+        if !inOrder {
+            for (account, list) in groups {
+                groups[account] = list.sorted { $0.date > $1.date }
+            }
+        }
+        inboxes = groups
+        let shown = Set(accounts.map { $0.id })
+        let newest = inOrder ? messages : messages.sorted { $0.date > $1.date }
+        recent = Array(newest.lazy.filter { shown.contains($0.accountID) }.prefix(60))
+    }
+
+    // MARK: Searching
+
+    /// Opens the search box in Mail.
+    func startSearch() {
+        tool = .mail
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+        searching = true
+    }
+
+    func endSearch() {
+        searching = false
+        searchText = ""
+    }
+
+    /// The words being searched for, lowercased.
+    var searchWords: [String] {
+        guard searching else { return [] }
+        return searchText.lowercased().split(whereSeparator: { $0.isWhitespace }).map { String($0) }
+    }
+
+    /// An inbox's messages, or while you're searching, the ones that match: every word has
+    /// to be in the sender, their address, the subject or the preview.
+    func shownInbox(_ accountID: String) -> [MailMessage] {
+        let words = searchWords
+        guard !words.isEmpty else { return inbox(accountID) }
+        return inbox(accountID).filter { NotchModel.matches($0, words: words) }
+    }
+
+    static func matches(_ message: MailMessage, words: [String]) -> Bool {
+        let text = [message.sender, message.senderEmail, message.subject, message.snippet].joined(separator: " ").lowercased()
+        return words.allSatisfy { text.contains($0) }
     }
 
     func unreadCount(_ accountID: String) -> Int {
@@ -338,6 +416,7 @@ final class NotchModel: ObservableObject {
         level = .rest
         sentFrom = nil
         homePinned = false
+        endSearch()
         notesStore?.removeEmpty(except: nil)
         timetableEdit = nil
     }
@@ -351,9 +430,9 @@ final class NotchModel: ObservableObject {
         replyFromID = nil
         replyText = ""
         sentFrom = nil
-        // Sample mail is marked read here; real mail is read when you open it in Gmail.
+        // Opening an email marks it read: sample mail here, real mail in the app's own tally.
         if canAct, let target = target {
-            setRead(target, true)
+            setSampleRead(target, true)
         }
         if !canAct, let target = target {
             onOpenMessage?(target)
@@ -380,7 +459,7 @@ final class NotchModel: ObservableObject {
         let next: MailMessage? = after.isEmpty ? nil : after[min(index, after.count - 1)]
         openMessageID = next?.id
         if let next = next {
-            setRead(next.id, true)
+            setSampleRead(next.id, true)
         }
         replyFromID = nil
         replyText = ""
@@ -388,8 +467,39 @@ final class NotchModel: ObservableObject {
     }
 
     func markOpenUnread() {
-        guard canAct, let id = openMessageID else { return }
-        setRead(id, false)
+        guard let id = openMessageID else { return }
+        setRead(id, read: false)
+    }
+
+    /// Marks one email read or unread, in the notch.
+    func setRead(_ id: String, read: Bool) {
+        if canAct {
+            setSampleRead(id, read)
+        } else {
+            onSetRead?(id, read)
+        }
+    }
+
+    func toggleRead(_ id: String) {
+        guard let message = messages.first(where: { $0.id == id }) else { return }
+        setRead(id, read: message.isUnread)
+    }
+
+    /// Marks a whole inbox read or unread, in the notch.
+    func markAll(_ accountID: String, read: Bool) {
+        guard canAct else {
+            onMarkAll?(accountID, read)
+            return
+        }
+        var changed = messages
+        for index in changed.indices where changed[index].accountID == accountID {
+            changed[index].isUnread = !read
+        }
+        messages = changed
+    }
+
+    func undoMarkAll() {
+        onUndoMarkAll?()
     }
 
     func chooseReplyAccount(_ id: String) {
@@ -489,8 +599,8 @@ final class NotchModel: ObservableObject {
         return components?.url
     }
 
-    private func setRead(_ id: String, _ read: Bool) {
-        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+    private func setSampleRead(_ id: String, _ read: Bool) {
+        guard let index = messages.firstIndex(where: { $0.id == id }), messages[index].isUnread == read else { return }
         messages[index].isUnread = !read
     }
 }

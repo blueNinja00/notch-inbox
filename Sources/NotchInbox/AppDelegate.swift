@@ -39,8 +39,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appliedViews: [String: InboxChoice] = [:]
     /// The add-on's latest upload, for Copy Debug Info.
     private var lastUpload: FeedUpload?
-    private var lastSavedMailbox: Data?
+    /// The mailbox as last written to disk: its revision, and what each account was showing.
+    private var savedRevision = -1
+    private var savedViews: [String: InboxChoice] = [:]
     private var saveMailboxWork: DispatchWorkItem?
+    /// The mailbox file is written here, off the main thread: it can hold thousands of emails.
+    private let saveQueue = DispatchQueue(label: "NotchInbox.SaveMailbox", qos: .utility)
+    /// Whole emails, one file each, so old mail still opens in full.
+    private let emailFiles = WholeEmailStore()
+    /// Whole emails are tidied to the limit once the add-on has been heard from.
+    private var tidiedEmailFiles = false
 
     private var statusItem: NSStatusItem?
     /// The envelope's short menu (Open, Settings, Quit), also on the mail tab's right-click.
@@ -135,7 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        saveMailboxNow()
+        saveMailboxNow(wait: true)
+        emailFiles.finishWriting()
         notes.saveNow()
         timetable.saveNow()
     }
@@ -186,6 +195,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onOpenMessage = { [weak self] id in
             self?.readInNotch(id)
         }
+        model.onSetRead = { [weak self] id, read in
+            self?.setRead(id, read: read)
+        }
+        model.onMarkAll = { [weak self] account, read in
+            self?.markAll(account, read: read)
+        }
+        model.onUndoMarkAll = { [weak self] in
+            self?.undoMarkAll()
+        }
+        model.undoAccount = mailbox.undoAccount
         model.minimised = minimised
         model.phoneConnected = PhoneCableWatcher.shared.phone
         model.onMinimise = { [weak self] on in
@@ -233,9 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for account in feeds {
             let choice = inboxChoice(for: account.account)
             if appliedViews[account.account] != choice {
-                // Mail kept from a different view isn't mail you read: start this account afresh.
-                mailbox.forget(account.account)
-                appliedViews[account.account] = choice
+                switchView(of: account.account, from: appliedViews[account.account], to: choice)
             }
             showing.append(account.feed(showing: choice))
         }
@@ -249,37 +266,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastFeedAt = Date()
         showMailEverywhere()
         saveMailboxSoon()
+        tidyEmailFiles()
         return LinkReply(want: mailbox.wanted(), addon: addOn)
     }
 
+    /// An account is to show a different part of its inbox. Going from the Primary tab to the
+    /// whole inbox keeps its mail (all of it is in the whole inbox too). Any other change
+    /// starts the account afresh: mail kept from the other view isn't mail you read.
+    private func switchView(of account: String, from before: InboxChoice?, to choice: InboxChoice) {
+        if before == .primary && choice == .everything {
+            mailbox.widen(account)
+        } else {
+            mailbox.forget(account)
+        }
+        appliedViews[account] = choice
+    }
+
     /// You opened a real email in the notch: it's read here from now on (Gmail itself isn't
-    /// changed), the unread count drops, and its whole text is fetched first.
+    /// changed), the unread count drops, and its whole text is shown: from disk if it was
+    /// fetched before, otherwise it's fetched first.
     private func readInNotch(_ id: String) {
         mailbox.markOpened(id)
-        if mailbox.markReadHere(id) {
+        let loaded = bringWholeIntoMemory(id)
+        let wasUnread = mailbox.markReadHere(id)
+        if loaded || wasUnread {
             showMailEverywhere()
+        }
+        if wasUnread {
             saveMailboxNow() // straight to disk, so it stays read even if the app quits next
+        }
+    }
+
+    /// Reads an email's whole text back from disk, if it's there and not in memory already.
+    /// Returns whether anything changed.
+    @discardableResult
+    private func bringWholeIntoMemory(_ id: String) -> Bool {
+        guard mailbox.haveWhole.contains(id), mailbox.wholeInMemory(id) == nil else { return false }
+        if let email = emailFiles.load(id) {
+            mailbox.remember(email, for: id)
+        } else {
+            mailbox.lostWhole(id) // the file is gone: the add-on fetches it again
+        }
+        return true
+    }
+
+    /// Marks one real email read or unread in the notch's own tally.
+    private func setRead(_ id: String, read: Bool) {
+        let changed = read ? mailbox.markReadHere(id) : mailbox.markUnreadHere(id)
+        if changed {
+            showMailEverywhere()
+            saveMailboxNow()
+        }
+    }
+
+    /// Marks an inbox read or unread in the notch's own tally.
+    private func markAll(_ account: String, read: Bool) {
+        if read {
+            mailbox.markAllRead(account)
+        } else {
+            mailbox.markAllUnread(account)
+        }
+        showMailEverywhere()
+        saveMailboxNow()
+    }
+
+    private func undoMarkAll() {
+        if mailbox.undoMarkAll() {
+            showMailEverywhere()
+            saveMailboxNow()
         }
     }
 
     /// A whole email (or news that it couldn't be fetched) from the add-on.
     private func received(_ email: EmailUpload) {
         if mailbox.storeWhole(email) {
+            if email.html != nil || email.text != nil, let whole = mailbox.wholeInMemory(email.id) {
+                emailFiles.save(whole, for: email.id)
+            }
             showMailEverywhere()
         }
     }
 
     private func showMailEverywhere() {
+        // Whatever each screen has open keeps its whole text in memory.
+        for model in models {
+            if let id = model.openMessageID {
+                bringWholeIntoMemory(id)
+            }
+        }
         let accounts = mailbox.accounts
         let messages = mailbox.messages
+        let unread = mailbox.shownUnread
+        let undo = mailbox.undoAccount
         for model in models {
-            model.showLive(accounts: accounts, messages: messages, unread: mailbox.shownUnread)
+            model.showLive(accounts: accounts, messages: messages, unread: unread)
+            if model.undoAccount != undo {
+                model.undoAccount = undo
+            }
             if model.wholeEmails != wholeEmails {
                 model.wholeEmails = wholeEmails
             }
         }
         refreshMailIcon()
         refreshSettings()
+    }
+
+    // MARK: Mail kept on this Mac
+
+    /// Keeps the newest whole emails on disk, up to the limit in Settings, and clears away
+    /// any whose email the notch no longer has. Waits for the add-on's first sync, so a
+    /// mailbox that failed to load can't be mistaken for an empty one.
+    private func tidyEmailFiles(force: Bool = false) {
+        guard lastUpload != nil else { return }
+        let limit = settings.wholeEmailLimit
+        let onDisk = emailFiles.ids.count
+        guard force || !tidiedEmailFiles || (limit > 0 && onDisk > limit + 25) else { return }
+        tidiedEmailFiles = true
+        emailFiles.keep(mailbox.idsNewestFirst, limit: limit)
+        mailbox.setSavedWhole(emailFiles.ids)
+        measureStorage()
+    }
+
+    /// Works out how much mail is kept, for Settings.
+    private func measureStorage() {
+        let history = mailbox.history
+        emailFiles.measure { [weak self] count, bytes in
+            guard let self = self else { return }
+            let storage = AppSettings.Storage(emails: history.emails, oldest: history.oldest, whole: count, bytes: bytes)
+            if self.settings.storage != storage {
+                self.settings.storage = storage
+            }
+        }
     }
 
     // MARK: Assistant
@@ -289,9 +406,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var emails: [(account: String, sender: String, subject: String, date: Date, unread: Bool)] = []
         if let model = models.first, !model.isSample {
             let shown = Set(model.accounts.map { $0.id })
-            emails = model.messages
+            emails = model.recent
                 .filter { shown.contains($0.accountID) }
-                .sorted { $0.date > $1.date }
                 .prefix(20)
                 .map { (account: model.account($0.accountID)?.name ?? $0.accountID,
                         sender: $0.sender, subject: $0.subject, date: $0.date, unread: $0.isUnread) }
@@ -409,6 +525,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onQuit = { [weak self] in
             self?.quit()
         }
+        settings.onStorageLimitChanged = { [weak self] in
+            self?.tidyEmailFiles(force: true)
+        }
+        settings.onMeasureStorage = { [weak self] in
+            self?.measureStorage()
+        }
         refreshSettings()
     }
 
@@ -421,7 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let accounts = AppSettings.accounts(linked: mailbox.linkedAccounts, shown: shown.map { $0.id },
                                             hidden: mailbox.hidden, choices: { self.inboxChoice(for: $0) },
-                                            unread: mailbox.unread, colors: colors)
+                                            unread: mailbox.shownUnread, colors: colors)
         if settings.accounts != accounts {
             settings.accounts = accounts
         }
@@ -465,8 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         // Swap the account's mail straight away from the latest feeds.
-        mailbox.forget(account)
-        appliedViews[account] = choice
+        switchView(of: account, from: before, to: choice)
         mailbox.apply(lastFeeds.filter { $0.account == account }.map { $0.feed(showing: choice) })
         showMailEverywhere()
         saveMailboxSoon()
@@ -552,7 +673,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append(gmail)
             lines.append("   Feed titles: \(parsed.main.title)" + (parsed.inbox.map { " | \($0.title)" } ?? ""))
             let stats = mailbox.stats(for: account)
-            lines.append("   Notch: \(mailbox.unread[account] ?? 0) unread in Gmail, \(mailbox.shownUnread[account] ?? 0) shown · \(stats.emails) emails kept (\(stats.unread) unread) · whole emails \(stats.whole) fetched, \(stats.failed) failed")
+            let oldest = stats.oldest.map { " back to \(MailTime.label(for: $0))" } ?? ""
+            lines.append("   Notch: \(mailbox.unread[account] ?? 0) unread in Gmail, \(mailbox.shownUnread[account] ?? 0) shown · \(stats.emails) emails kept\(oldest) (\(stats.unread) unread) · whole emails \(stats.whole) fetched, \(stats.failed) failed")
         }
         if lastUpload == nil {
             for account in mailbox.linkedAccounts {
@@ -563,6 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         lines.append("")
         lines.append("Read in the notch (remembered here, Gmail unchanged): \(mailbox.readHereCount)")
+        lines.append("Mail kept on this Mac: \(settings.storage.summary()) · keeping \(settings.wholeEmailLimit == 0 ? "every whole email" : "the newest \(settings.wholeEmailLimit) whole emails")")
         return lines.joined(separator: "\n")
     }
 
@@ -584,15 +707,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inboxChoices = AppDelegate.loadInboxChoices()
         if let snapshot = MailboxFile.load() {
             mailbox = LiveMailbox(snapshot: snapshot)
+            mailbox.setSavedWhole(emailFiles.ids)
             appliedViews = snapshot.views ?? [:]
-            var comparable = snapshot
-            comparable.savedAt = Date(timeIntervalSince1970: 0)
-            lastSavedMailbox = MailboxFile.encode(comparable)
+            savedRevision = mailbox.revision
+            savedViews = appliedViews
             if !snapshot.messages.isEmpty || !snapshot.unread.isEmpty {
                 lastFeedAt = snapshot.savedAt
             }
         }
         mailbox.hidden = Set(UserDefaults.standard.stringArray(forKey: AppDelegate.hiddenAccountsKey) ?? [])
+        measureStorage()
     }
 
     private func saveMailboxSoon() {
@@ -604,19 +728,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
     }
 
-    private func saveMailboxNow() {
+    /// Writes the mailbox to disk if it changed since it was last written (not every
+    /// minute). The writing happens off the main thread; `wait` holds on until it's done.
+    private func saveMailboxNow(wait: Bool = false) {
         saveMailboxWork?.cancel()
         saveMailboxWork = nil
-        guard lastFeedAt != nil else { return }
-        var snapshot = mailbox.snapshot(at: lastFeedAt ?? Date())
-        snapshot.views = appliedViews
-        // Only rewrite the file when the mail changed, not every minute.
-        snapshot.savedAt = Date(timeIntervalSince1970: 0)
-        let comparable = MailboxFile.encode(snapshot)
-        guard comparable != lastSavedMailbox else { return }
-        snapshot.savedAt = lastFeedAt ?? Date()
-        if let data = MailboxFile.encode(snapshot), MailboxFile.save(data) {
-            lastSavedMailbox = comparable
+        if lastFeedAt != nil, mailbox.revision != savedRevision || appliedViews != savedViews {
+            let revision = mailbox.revision
+            savedRevision = revision
+            savedViews = appliedViews
+            var snapshot = mailbox.snapshot(at: lastFeedAt ?? Date())
+            snapshot.views = appliedViews
+            saveQueue.async { [weak self] in
+                if let data = MailboxFile.encode(snapshot), MailboxFile.save(data) {
+                    return
+                }
+                // It didn't save: try again at the next chance.
+                DispatchQueue.main.async {
+                    if self?.savedRevision == revision {
+                        self?.savedRevision = -1
+                    }
+                }
+            }
+        }
+        if wait {
+            saveQueue.sync {}
         }
     }
 

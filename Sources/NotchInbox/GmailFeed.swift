@@ -13,6 +13,9 @@ struct GmailFeed: Equatable {
         let date: Date
         let senderName: String
         let senderEmail: String
+        /// Mail from Google found in the whole inbox and shown with the Primary tab. Gmail's
+        /// count for the Primary tab doesn't include it.
+        var isExtra = false
     }
 
     /// The signed-in address, lowercased.
@@ -145,7 +148,11 @@ extension GmailFeed {
     func addingGoogleMail(from inbox: GmailFeed) -> GmailFeed {
         guard inbox.account == account else { return self }
         let known = Set(entries.map { $0.id })
-        let extras = inbox.entries.filter { !known.contains($0.id) && GmailFeed.isFromGoogle($0.senderEmail) }
+        let extras = inbox.entries.filter { !known.contains($0.id) && GmailFeed.isFromGoogle($0.senderEmail) }.map { entry in
+            var extra = entry
+            extra.isExtra = true
+            return extra
+        }
         guard !extras.isEmpty else { return self }
         return GmailFeed(account: account,
                          unreadCount: unreadCount + extras.count,

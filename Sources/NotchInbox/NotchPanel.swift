@@ -211,6 +211,11 @@ final class NotchWindowController {
                 model.timetableEdit = nil
                 return nil
             }
+            // In Mail, Esc first closes the search box.
+            if model.tool == .mail && model.searching {
+                model.endSearch()
+                return nil
+            }
             switch model.level {
             case .detail:
                 model.back()
@@ -258,8 +263,13 @@ final class NotchWindowController {
         case "e" where model.level == .detail && model.canAct:
             model.archiveOpen()
             return nil
-        case "u" where model.level == .detail && model.canAct:
-            model.markOpenUnread()
+        case "u" where model.level == .detail:
+            if let id = model.openMessageID {
+                model.toggleRead(id)
+            }
+            return nil
+        case "/":
+            model.startSearch()
             return nil
         case "o" where model.level == .detail:
             model.openInGmail()

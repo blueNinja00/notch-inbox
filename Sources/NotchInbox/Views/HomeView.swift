@@ -129,10 +129,7 @@ struct MailToolTile: View {
     @State var hovering = false
 
     var body: some View {
-        let shown = Set(model.accounts.map { $0.id })
-        let recent = model.messages
-            .filter { shown.contains($0.accountID) }
-            .sorted { $0.date > $1.date }
+        let recent = model.recent
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -165,6 +162,7 @@ struct MailToolTile: View {
                     }
                     ForEach(recent.prefix(rows)) { message in
                         RecentEmailRow(model: model, message: message, senderWidth: min(180, list.size.width * 0.3))
+                            .contextMenu { MessageMenu(model: model, message: message) }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

@@ -29,9 +29,17 @@ Within a minute, the notch shows the unread mail of every Gmail account signed i
 
 Change either per account, or hide an account, in **Settings → Mail accounts**.
 
-**Reading in the notch keeps a tally of its own.** Open an email in the notch and it greys out and the unread count drops at once. The notch remembers what you've read there, in its saved copy of your mail on this Mac, so it stays read through restarts and every update. Gmail itself isn't changed: the email stays unread there until you read it in Gmail. (Earlier builds tried to mark it read in Gmail too, out of sight; Gmail doesn't offer a dependable way to do that from a browser add-on, so it was taken out.) An email you read in the notch is forgotten only once it's over four months old and Gmail no longer lists it as unread.
+**Read and unread are the notch's own.** Gmail itself is never changed; the notch keeps its own tally, saved on this Mac, so it holds through restarts and every update.
 
-The notch lists **unread** mail, which is what Gmail's feed shares. Mail you read after it reached the notch stays there, greyed. Mail that was already read before then doesn't show, so an account where everything is read shows "Nothing unread" until new mail comes in.
+- **Open an email** in the notch and it greys out and the unread count drops at once.
+- **Mark it unread again** with the envelope button above the email, **U**, or a right-click on it in any list. That works for mail you read in Gmail too.
+- **Mark all as read:** the tick beside an inbox's name, or the open-envelope button when the inbox is expanded. The count goes to zero, including unread mail too old for Gmail to list (Gmail's feed only lists the newest 20 or so). New mail still arrives unread.
+- **Mark all as unread:** the envelope-with-a-dot button when the inbox is expanded, or right-click the inbox's name. Every email the notch holds for that inbox becomes unread.
+- **Undo** appears after either one and puts the inbox back as it was.
+
+Mail you read in Gmail counts as read in the notch as well. (Earlier builds tried to mark mail read in Gmail too, out of sight; Gmail doesn't offer a dependable way to do that from a browser add-on, so it was taken out.)
+
+**It goes back a long way.** Gmail's feed only shares unread mail, so an email first shows in the notch while it's unread. From then on the notch keeps it, greyed once it's read: up to 10,000 emails an account, which is years of mail for most inboxes. Scroll back through an inbox, or **search** every inbox at once with the magnifier (or **/**): type words from the sender, subject or preview. Mail that was already read before the notch first saw it doesn't show.
 
 **Whole emails.** Click an email in the notch to read all of it there, laid out the way its sender designed it: a Classroom assignment with its class, due date and **Open** button, a newsletter, a receipt. Links open in the browser. To reply, forward or archive, click **Reply in Gmail** (or press **O**).
 
@@ -41,7 +49,7 @@ Gmail always opens in **Google Chrome**, where your accounts are signed in, even
 
 If opening emails that way would count as reading them in Gmail, the add-on notices on its first try and from then on only fetches emails you open in the notch.
 
-The app keeps a copy of what the notch shows in `~/Library/Application Support/Notch Inbox/Mailbox.json`, readable only by you, so your mail is there the moment it starts, after an update say.
+The app keeps the notch's mail in `~/Library/Application Support/Notch Inbox`, readable only by you, so it's there the moment the app starts, after an update say: the lists (who from, subject, preview, read or unread) in `Mailbox.json`, and whole emails one file each in `Emails`, so an email from months ago still opens in full, offline too. **Settings → Mail accounts** shows how much is kept and lets you choose how many emails stay in full (500, 2,000 to start with, 10,000 or all); beyond that the oldest go back to their preview.
 
 **After an app update.** The add-on comes with the app and updates itself: it reloads in the browser when the app brings a new version. The one exception is going from the first version (1.0) to a newer one: click the reload arrow on **Notch Inbox Link** in `chrome://extensions` once, or quit and reopen Chrome.
 
@@ -59,7 +67,7 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
 
 - **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
-- **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch.
+- **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch; how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
@@ -94,7 +102,7 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 - **Click outside, or press Esc** to close. Esc steps back one level: email → inboxes → primary menu → closed.
 - **Two modes:** **Settings → General** picks between **Notch at the top**, which opens when you hover, and **Mail tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for a short menu.
 
-After you've clicked into the panel: **1 / 2 / 3** switch inbox, **E** archives, **U** marks unread, **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
+After you've clicked into the panel: **1 / 2 / 3** switch inbox, **/** searches, **U** marks the open email unread (or read), **O** opens it in Gmail; with sample mail, **E** archives and **Return** sends a reply. Replies start out from the account the email arrived in (marked "auto"); click another account to change it.
 
 ## Timetable
 
@@ -113,7 +121,7 @@ A timetable from an earlier build moves to this day by itself: if its school day
 
 ## Sample mail
 
-Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Search and snooze are placeholders for now.
+Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Snooze is a placeholder for now.
 
 ## Building it yourself (optional)
 
@@ -137,16 +145,18 @@ open "build/Notch Inbox.app"
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
-| `NotchModel.swift` | State and actions: open, archive, mark unread, reply |
+| `NotchModel.swift` | State and actions: open, search, mark read and unread, reply |
 | `Mail.swift`, `SampleMail.swift` | Account and message types, sample data. A real mail source plugs in by implementing `MailProvider` |
 | `Updater.swift`, `ReleaseFeed.swift` | Checks this repo's releases and installs newer builds |
 | `BrowserExtension/` | The **Notch Inbox Link** browser add-on |
 | `BrowserLink.swift`, `HTTPRequest.swift` | Receives the add-on's feeds on 127.0.0.1 |
-| `GmailFeed.swift`, `LiveMailbox.swift` | Reads Gmail's feeds, picks Primary or the whole inbox per account, keeps read mail greyed instead of dropping it |
+| `GmailFeed.swift`, `LiveMailbox.swift` | Reads Gmail's feeds, picks Primary or the whole inbox per account, keeps every email it has seen, and keeps the notch's own tally of read and unread |
+| `WholeEmailStore.swift` | Whole emails on disk, one file each, up to the limit in Settings |
 | `EmailContent.swift`, `Views/EmailWebView.swift` | Tidies whole emails and shows them (no scripts; links go to the browser) |
-| `MailboxFile.swift` | The copy of the notch's mail kept between launches |
+| `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
 | `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, notes, assistant, settings |
 | `Theme.swift` | Colours from the design |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
+| `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

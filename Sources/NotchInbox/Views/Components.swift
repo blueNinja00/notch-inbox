@@ -164,7 +164,9 @@ struct PanelActions: View {
                 UpdateNote(text: note)
                     .padding(.trailing, 4)
             }
-            IconButton(symbol: "magnifyingglass", label: "Search mail (coming soon)")
+            IconButton(symbol: "magnifyingglass", label: model.searching ? "Close search (Esc)" : "Search mail (/)",
+                       tint: model.searching ? Theme.text : Theme.secondary,
+                       action: { model.searching ? model.endSearch() : model.startSearch() })
             if model.isSample {
                 IconButton(symbol: "square.and.pencil", label: "New message (coming soon)")
             } else {
@@ -173,6 +175,67 @@ struct PanelActions: View {
             SettingsButton(model: model)
         }
         .padding(.trailing, 4)
+    }
+}
+
+/// The search box under Mail's top row: type to narrow every inbox to the emails that match.
+struct MailSearchBar: View {
+    @ObservedObject var model: NotchModel
+    @FocusState private var typing: Bool
+
+    init(model: NotchModel) {
+        self.model = model
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.tertiary)
+            TextField("Search senders, subjects and previews", text: $model.searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.text)
+                .focused($typing)
+            IconButton(symbol: "xmark", label: "Close search (Esc)", size: 22, tint: Theme.tertiary,
+                       action: { model.endSearch() })
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 5)
+        .frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.surface))
+        .onAppear { typing = true }
+    }
+}
+
+/// Right-click an inbox's header: mark all of it read or unread (in the notch; Gmail isn't changed).
+struct InboxMenu: View {
+    @ObservedObject var model: NotchModel
+    let account: MailAccount
+
+    var body: some View {
+        Button("Mark All as Read") { model.markAll(account.id, read: true) }
+        Button("Mark All as Unread") { model.markAll(account.id, read: false) }
+        if model.undoAccount == account.id {
+            Button("Undo Mark All") { model.undoMarkAll() }
+        }
+        if !model.isSample {
+            Divider()
+            Button("Open This Inbox in Gmail") { model.openAccountInGmail(account.id) }
+        }
+    }
+}
+
+/// Right-click an email: mark it read or unread.
+struct MessageMenu: View {
+    @ObservedObject var model: NotchModel
+    let message: MailMessage
+
+    var body: some View {
+        Button(message.isUnread ? "Mark as Read" : "Mark as Unread") {
+            model.setRead(message.id, read: message.isUnread)
+        }
+        Button("Open") { model.open(accountID: message.accountID, messageID: message.id) }
     }
 }
 

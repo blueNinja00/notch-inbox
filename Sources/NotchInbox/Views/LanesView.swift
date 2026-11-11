@@ -15,6 +15,10 @@ struct LanesView: View {
             } trailing: {
                 PanelActions(model: model)
             }
+            if model.searching {
+                MailSearchBar(model: model)
+                    .padding(.top, 6)
+            }
 
             HStack(alignment: .top, spacing: 10) {
                 ForEach(model.accounts) { account in
@@ -34,15 +38,17 @@ struct LaneColumn: View {
     let account: MailAccount
 
     var body: some View {
-        let messages = model.inbox(account.id)
+        let messages = model.shownInbox(account.id)
+        let searching = !model.searchWords.isEmpty
 
         VStack(alignment: .leading, spacing: 4) {
-            LaneHeader(account: account,
+            LaneHeader(model: model,
+                       account: account,
                        unread: model.unreadCount(account.id),
                        action: { model.open(accountID: account.id) })
 
             if messages.isEmpty {
-                Text(model.isSample ? "All caught up" : "Nothing unread. New mail shows up here as it arrives.")
+                Text(searching ? "No emails match." : (model.isSample ? "All caught up" : "Nothing unread. New mail shows up here as it arrives."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -55,6 +61,7 @@ struct LaneColumn: View {
                         ForEach(messages) { message in
                             LaneCard(message: message,
                                      action: { model.open(accountID: account.id, messageID: message.id) })
+                                .contextMenu { MessageMenu(model: model, message: message) }
                         }
                     }
                 }
@@ -71,38 +78,52 @@ struct LaneColumn: View {
     }
 }
 
+/// An inbox's name and unread count: click to expand it. The tick marks everything in it
+/// read; right-click for "Mark All as Unread" too.
 struct LaneHeader: View {
+    @ObservedObject var model: NotchModel
     let account: MailAccount
     let unread: Int
     let action: () -> Void
     @State var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                AccountBadge(account: account, size: 16)
-                Text(account.name)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                CountPill(count: unread)
-                Spacer(minLength: 4)
-                KeyCap(text: account.shortcut)
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(Theme.tertiary)
+        HStack(spacing: 2) {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    AccountBadge(account: account, size: 16)
+                    Text(account.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    CountPill(count: unread)
+                    Spacer(minLength: 4)
+                    KeyCap(text: account.shortcut)
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Theme.tertiary)
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(hovering ? Theme.unreadCard : Color.clear)
+                )
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 6)
-            .frame(height: 30)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(hovering ? Theme.unreadCard : Color.clear)
-            )
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .accessibilityLabel(Text("Expand the \(account.name) inbox"))
+
+            if model.undoAccount == account.id {
+                IconButton(symbol: "arrow.uturn.backward", label: "Undo Mark All", size: 26,
+                           action: { model.undoMarkAll() })
+            } else if unread > 0 {
+                IconButton(symbol: "checkmark.circle", label: "Mark all as read", size: 26,
+                           action: { model.markAll(account.id, read: true) })
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityLabel(Text("Expand the \(account.name) inbox"))
+        .contextMenu { InboxMenu(model: model, account: account) }
     }
 }
 

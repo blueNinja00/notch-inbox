@@ -1,0 +1,34 @@
+name: Check build
+
+# Builds a branch on a GitHub Mac without publishing anything, to try a change before it
+# goes to main. Push to a branch named check/<anything>.
+on:
+  push:
+    branches: ['check/**']
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Build
+        shell: bash
+        run: swift build -c release 2>&1 | tee build.log
+
+      - name: No warnings
+        shell: bash
+        run: |
+          if grep -E "warning:" build.log; then
+            echo "The build has warnings."
+            exit 1
+          fi

@@ -30,6 +30,8 @@ struct MailMessage: Identifiable, Hashable {
     var isWhole = false
     /// The browser add-on tried to fetch the whole email and couldn't.
     var couldNotLoad = false
+    /// The sender's address, for real mail ("no-reply@classroom.google.com").
+    var senderEmail = ""
 
     var snippet: String { body.first ?? "" }
 

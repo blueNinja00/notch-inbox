@@ -185,7 +185,7 @@ struct GeneralSettings: View {
         }
         SettingsDivider()
         SettingsRow(title: "Keyboard",
-                    detail: "Esc goes back a step. In Mail, 1, 2 and 3 open your inboxes and O opens the email in Gmail.") {
+                    detail: "Esc goes back a step. In Mail, 1, 2 and 3 open your inboxes, / searches, U marks the open email unread (or read) and O opens it in Gmail.") {
             EmptyView()
         }
     }
@@ -258,6 +258,25 @@ struct AccountSettings: View {
                 }
             }
         }
+        SettingsDivider()
+        MailStorageSettings(settings: settings)
+    }
+}
+
+/// How much mail the notch keeps on this Mac, and how many whole emails to keep.
+struct MailStorageSettings: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsRow(title: "Mail kept on this Mac",
+                    detail: settings.storage.summary() + ". The notch keeps every email it has seen (up to 10,000 an account), so you can scroll and search back a long way. Emails are saved in full as they arrive; when there are more than you choose here, the oldest go back to a preview.") {
+            ChoiceSegments(options: WholeEmailStore.limits.map { limit in
+                ChoiceSegments<Int>.Option(value: limit,
+                                           title: limit == 0 ? "All" : AppSettings.Storage.number(limit),
+                                           help: limit == 0 ? "Keep every email in full" : "Keep the newest \(AppSettings.Storage.number(limit)) emails in full")
+            }, selected: settings.wholeEmailLimit, choose: { settings.wholeEmailLimit = $0 })
+        }
+        .onAppear { settings.measureStorage() }
     }
 }
 
@@ -603,7 +622,7 @@ struct GmailLinkSettings: View {
         }
         SettingsDetail(text: "Copy Debug Info copies counts and addresses only, never what your emails say.")
         SettingsDivider()
-        SettingsDetail(text: "Emails you read in the notch stay read in the notch, through restarts and updates, and leave its unread counts. Gmail itself isn't changed.")
+        SettingsDetail(text: "Read and unread are the notch's own. Emails you open stay read through restarts and updates, and an inbox's tick (or a right-click on its name) marks all of it read or unread. Gmail itself isn't changed.")
     }
 }
 

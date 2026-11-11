@@ -94,11 +94,76 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// How much mail the notch keeps on this Mac.
+    struct Storage: Equatable {
+        /// Emails in the notch's lists (who from, subject, preview).
+        var emails = 0
+        var oldest: Date?
+        /// Whole emails saved on disk, and the room they take.
+        var whole = 0
+        var bytes = 0
+
+        /// "1,240 emails going back to 3 Mar 2026 · 310 saved in full (42 MB)".
+        func summary(calendar: Calendar = .current) -> String {
+            guard emails > 0 else { return "No mail kept yet" }
+            var text = "\(Storage.number(emails)) email\(emails == 1 ? "" : "s")"
+            if let oldest = oldest {
+                let formatter = DateFormatter()
+                formatter.calendar = calendar
+                formatter.timeZone = calendar.timeZone
+                formatter.locale = Locale(identifier: "en_AU")
+                formatter.dateFormat = "d MMM yyyy"
+                text += " going back to \(formatter.string(from: oldest))"
+            }
+            if whole > 0 {
+                text += " · \(Storage.number(whole)) saved in full (\(Storage.size(bytes)))"
+            }
+            return text
+        }
+
+        static func number(_ value: Int) -> String {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.groupingSeparator = ","
+            formatter.usesGroupingSeparator = true
+            return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        }
+
+        /// 0 → "0 MB", 734_003 → "0.7 MB", 44_040_192 → "42 MB", 2_362_232_012 → "2.2 GB".
+        static func size(_ bytes: Int) -> String {
+            let megabytes = Double(bytes) / 1_048_576
+            if megabytes >= 1024 { return String(format: "%.1f GB", megabytes / 1024) }
+            if megabytes >= 10 || megabytes == 0 { return String(format: "%.0f MB", megabytes) }
+            return String(format: "%.1f MB", megabytes)
+        }
+    }
+
     @Published var build = 0
     @Published var update: UpdateStatus = .idle
     @Published var lastUpdateCheck: Date?
     @Published var accounts: [Account] = []
     @Published var link = LinkStatus()
+    @Published var storage = Storage()
+
+    private static let wholeLimitKey = "wholeEmailLimit"
+    /// How many whole emails to keep on disk; 0 keeps them all.
+    @Published var wholeEmailLimit: Int = AppSettings.savedWholeLimit() {
+        didSet {
+            guard wholeEmailLimit != oldValue else { return }
+            UserDefaults.standard.set(wholeEmailLimit, forKey: AppSettings.wholeLimitKey)
+            onStorageLimitChanged?()
+        }
+    }
+
+    private static func savedWholeLimit() -> Int {
+        guard let saved = UserDefaults.standard.object(forKey: wholeLimitKey) as? Int,
+              WholeEmailStore.limits.contains(saved) else { return WholeEmailStore.standardLimit }
+        return saved
+    }
+
+    var onStorageLimitChanged: (() -> Void)?
+    /// Settings is showing the storage numbers: work them out afresh.
+    var onMeasureStorage: (() -> Void)?
 
     var onChooseInbox: ((String, InboxChoice) -> Void)?
     var onSetHidden: ((String, Bool) -> Void)?
@@ -117,6 +182,7 @@ final class AppSettings: ObservableObject {
         onSetHidden?(account, hidden)
     }
 
+    func measureStorage() { onMeasureStorage?() }
     func checkForUpdates() { onCheckForUpdates?() }
     func installUpdate() { onInstallUpdate?() }
     func setUpBrowserLink() { onSetUpBrowserLink?() }

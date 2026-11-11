@@ -18,6 +18,10 @@ struct DetailView: View {
             } trailing: {
                 PanelActions(model: model)
             }
+            if model.searching {
+                MailSearchBar(model: model)
+                    .padding(.top, 6)
+            }
 
             HStack(spacing: 8) {
                 ForEach(leftRails) { account in
@@ -103,14 +107,25 @@ struct ExpandedInbox: View {
                 }
                 CountPill(count: model.unreadCount(account.id))
                 Spacer(minLength: 4)
-                if !model.canAct {
-                    IconButton(symbol: "arrow.up.right.square", label: "Open this inbox in Gmail", size: 24,
-                               action: { model.openAccountInGmail(account.id) })
+                HStack(spacing: 0) {
+                    if model.undoAccount == account.id {
+                        IconButton(symbol: "arrow.uturn.backward", label: "Undo Mark All", size: 24,
+                                   action: { model.undoMarkAll() })
+                    }
+                    IconButton(symbol: "envelope.open", label: "Mark all as read", size: 24,
+                               action: { model.markAll(account.id, read: true) })
+                    IconButton(symbol: "envelope.badge", label: "Mark all as unread", size: 24,
+                               action: { model.markAll(account.id, read: false) })
+                    if !model.canAct {
+                        IconButton(symbol: "arrow.up.right.square", label: "Open this inbox in Gmail", size: 24,
+                                   action: { model.openAccountInGmail(account.id) })
+                    }
                 }
                 KeyCap(text: account.shortcut)
             }
             .padding(.horizontal, 6)
             .frame(height: 32)
+            .contextMenu { InboxMenu(model: model, account: account) }
 
             HStack(spacing: 8) {
                 MessageList(model: model, account: account)
@@ -133,19 +148,23 @@ struct MessageList: View {
     let account: MailAccount
 
     var body: some View {
-        let messages = model.inbox(account.id)
+        let messages = model.shownInbox(account.id)
+        let searching = !model.searchWords.isEmpty
 
+        // Lazy: an inbox can go back thousands of emails.
         ScrollView(.vertical) {
-            VStack(spacing: 2) {
+            LazyVStack(spacing: 2) {
                 ForEach(messages) { message in
                     MessageRow(message: message,
                                selected: message.id == model.openMessageID,
                                action: { model.open(accountID: account.id, messageID: message.id) })
+                        .contextMenu { MessageMenu(model: model, message: message) }
                 }
                 if messages.isEmpty {
-                    Text(model.isSample
-                         ? "All caught up — nothing left in this inbox."
-                         : "Nothing unread. New mail shows up here as it arrives, and stays (greyed) after you read it.")
+                    Text(searching ? "No emails match your search."
+                         : (model.isSample
+                            ? "All caught up — nothing left in this inbox."
+                            : "Nothing unread. New mail shows up here as it arrives, and stays (greyed) after you read it."))
                         .font(.system(size: 12.5))
                         .foregroundStyle(Theme.tertiary)
                         .padding(12)
@@ -217,7 +236,7 @@ struct ReadingPane: View {
                                   account: account,
                                   canAct: model.canAct,
                                   archive: { model.archiveOpen() },
-                                  markUnread: { model.markOpenUnread() },
+                                  toggleRead: { model.toggleRead(message.id) },
                                   openInGmail: { model.openInGmail() })
 
                     Text(message.subject)
@@ -289,7 +308,7 @@ struct MessageHeader: View {
     let account: MailAccount
     let canAct: Bool
     let archive: () -> Void
-    let markUnread: () -> Void
+    let toggleRead: () -> Void
     let openInGmail: () -> Void
 
     var body: some View {
@@ -325,8 +344,9 @@ struct MessageHeader: View {
                 if canAct {
                     IconButton(symbol: "archivebox", label: "Archive (E)", action: archive)
                     IconButton(symbol: "clock", label: "Snooze (coming soon)")
-                    IconButton(symbol: "envelope.badge", label: "Mark as unread (U)", action: markUnread)
                 }
+                IconButton(symbol: message.isUnread ? "envelope.open" : "envelope.badge",
+                           label: message.isUnread ? "Mark as read (U)" : "Mark as unread (U)", action: toggleRead)
                 IconButton(symbol: "arrow.up.right.square", label: "Open in Gmail (O)", action: openInGmail)
             }
         }

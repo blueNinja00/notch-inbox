@@ -39,13 +39,20 @@ struct NotchMetrics: Equatable {
     /// Width the content leaves empty in the middle of the top row, around the camera.
     var notchGap: CGFloat { notchWidth + 16 }
 
+    /// The row of extras under the primary menu's tiles (now playing, focus, clipboard,
+    /// shelf), with the gap above it.
+    static let extrasRow: CGFloat = 48
+    /// Ears wide enough for the focus timer's minutes, when nothing is unread.
+    static let focusEarWidth: CGFloat = 44
+
     /// `ears` is the width of each ear when closed (0 for none); other levels ignore it.
-    func bodySize(_ level: NotchLevel, ears: CGFloat = 0) -> CGSize {
+    /// `extras` adds room for the row of extras on the primary menu.
+    func bodySize(_ level: NotchLevel, ears: CGFloat = 0, extras: Bool = false) -> CGSize {
         switch level {
         case .rest:
             return CGSize(width: notchWidth + max(0, ears) * 2, height: notchHeight)
         case .peek:
-            return CGSize(width: 1000, height: topRow + 110)
+            return CGSize(width: 1000, height: topRow + 110 + (extras ? NotchMetrics.extrasRow : 0))
         case .lanes:
             return CGSize(width: 900, height: topRow + 318)
         case .detail:

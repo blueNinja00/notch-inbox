@@ -70,6 +70,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch; how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
+- **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history and the shelf.
 - **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
@@ -92,9 +93,10 @@ For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
-- **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes; nothing is read from the phone.
+- **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes. Click its name for its maker and how fast the cable is. An iPhone's battery level shows too if you've installed [libimobiledevice](https://libimobiledevice.org) (`brew install libimobiledevice`) and the phone trusts this Mac; macOS doesn't tell apps that by itself. Otherwise nothing is read from the phone.
 - **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
 - **Planner:** homework, exam countdowns and a study plan. See [Planner](#planner).
+- **Extras:** a row under the tiles with what's playing, a focus timer, clipboard history and a shelf for files. See [Extras](#extras).
 - **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
 - **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
@@ -137,6 +139,15 @@ Click the Planner tile on the primary menu. Homework to do is on the left, group
 
 The planner is kept in `~/Library/Application Support/Notch Inbox/Planner.json`, readable only by you.
 
+## Extras
+
+A row under the primary menu's tiles. Click any of them for the **Extras** panel, which has more room. Each can be switched off in **Settings → Extras**.
+
+- **Now playing:** the song in Spotify or Music, with previous, play or pause, and next. What's playing comes from the notices those apps post when it changes, so it appears the next time the song changes or you press play. The first time you press a button, macOS asks whether Notch Inbox may control that app (say OK); because each update is a new build, it may ask again after one. It never starts a music app, and nothing is looked up online.
+- **Focus timer:** press play for a round of focus (25 minutes, or 15, 45 or 50), then a break (5, 10 or 15). The minutes left show beside the closed notch; when time's up there's a chime and the notch opens. In the planner, point at a stretch in the Plan and click its timer to focus on that for as long as it's planned; afterwards one click ticks the homework off.
+- **Clipboard history:** the last 30 things you copied; click one to copy it again. They're held in memory only: never saved to disk, never sent anywhere, never shown to the assistant, and gone when the app quits. Copies that password managers mark as private are skipped, and **Clear** forgets the lot.
+- **Shelf:** drag files to the notch (it opens as you get there) and drop them to park them. Later, drag them out to wherever they're going: an email, a folder, a chat. **AirDrop** sends everything on the shelf. The shelf keeps a pointer to each file, not a copy, and forgets files that have since been moved or deleted.
+
 ## Sample mail
 
 Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Snooze is a placeholder for now.
@@ -162,7 +173,11 @@ open "build/Notch Inbox.app"
 | `StudyPlan.swift` | Fits homework and revision into the free time on the timetable |
 | `ClassroomMail.swift`, `PlannerMail.swift` | Reads Google Classroom's emails into the planner, on this Mac |
 | `DueDateFinder.swift`, `PlannerMailReader.swift` | Finding due dates in other emails with the assistant (only when turned on) |
-| `PhoneCable.swift`, `PhoneCableWatcher.swift` | The red dot while a phone is plugged in by USB |
+| `PhoneCable.swift`, `PhoneCableWatcher.swift` | The red dot while a phone is plugged in by USB, and what's known about it |
+| `NowPlaying.swift`, `NowPlayingWatcher.swift` | What Spotify or Music is playing, and the buttons |
+| `FocusTimer.swift` | The focus timer |
+| `ClipboardHistory.swift`, `ClipboardWatcher.swift` | The last things you copied, in memory only |
+| `Shelf.swift`, `Views/ExtrasView.swift` | The shelf for parked files; the extras row and panel |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |

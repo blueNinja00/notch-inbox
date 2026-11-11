@@ -532,6 +532,13 @@ struct PlanRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            if hovering && AppSettings.shared.showsFocus {
+                IconButton(symbol: "timer", label: "Start the focus timer for this (\(DueText.length(session.minutes)))", size: 24, tint: Theme.text2,
+                           action: { FocusTimer.shared.start(title: session.title, taskID: session.taskID, minutes: session.minutes) })
+                    .padding(.trailing, 4)
+            }
+        }
         .onHover { hovering = $0 }
     }
 }

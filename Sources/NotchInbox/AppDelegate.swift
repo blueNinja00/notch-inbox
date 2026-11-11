@@ -64,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notes = NotesStore()
     /// The timetable, shared by every screen's notch.
     private let timetable = TimetableStore()
+    /// Files parked on the shelf, shared by every screen's notch.
+    private let shelf = ShelfStore()
     /// Homework and exams, shared by every screen's notch.
     private let planner = PlannerStore()
     /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
@@ -126,10 +128,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         planner.change { $0.tidy() }
         Assistant.shared.checkSetup()
         readMailForPlannerSoon()
+        // The extras: what's playing, the focus timer, the clipboard, the shelf.
+        settings.onExtrasChanged = { [weak self] in
+            self?.applyExtras()
+        }
+        applyExtras()
+        FocusTimer.shared.onFinished = { [weak self] session in
+            self?.focusFinished(session)
+        }
+        FocusTimer.shared.$session
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] session in self?.focusChanged(session) }
+            .store(in: &subscriptions)
         // A red dot by the notch while a phone is plugged in by cable.
         PhoneCableWatcher.shared.$phone
             .receive(on: DispatchQueue.main)
             .sink { [weak self] phone in self?.phoneChanged(phone) }
+            .store(in: &subscriptions)
+        PhoneCableWatcher.shared.$details
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] details in self?.phoneDetailsChanged(details) }
             .store(in: &subscriptions)
         PhoneCableWatcher.shared.start()
         mailIcon.menu = { [weak self] in
@@ -231,12 +249,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.undoAccount = mailbox.undoAccount
         model.minimised = minimised
         model.phoneConnected = PhoneCableWatcher.shared.phone
+        model.phoneBattery = PhoneCableWatcher.shared.details?.battery.map { "\($0.percent)%" }
         model.onMinimise = { [weak self] on in
             self?.setMinimised(on)
         }
         model.notesStore = notes
         model.timetableStore = timetable
         model.plannerStore = planner
+        model.shelfStore = shelf
+        model.showsExtras = settings.showsExtras
+        model.focusRunning = settings.showsFocus && FocusTimer.shared.session != nil
         model.customSizes = AppDelegate.loadPanelSizes()
         model.onResized = { [weak self] sizes in
             self?.panelResized(sizes)
@@ -426,6 +448,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: Extras
+
+    /// Starts or stops each extra as Settings says, and tells every notch whether the row shows.
+    private func applyExtras() {
+        if settings.showsNowPlaying {
+            NowPlayingWatcher.shared.start()
+        } else {
+            NowPlayingWatcher.shared.stop()
+        }
+        if settings.keepsClipboard {
+            ClipboardWatcher.shared.start()
+        } else {
+            ClipboardWatcher.shared.stop() // forgets what it held
+        }
+        if !settings.showsFocus {
+            FocusTimer.shared.stop()
+        }
+        for model in models {
+            if model.showsExtras != settings.showsExtras {
+                model.showsExtras = settings.showsExtras
+            }
+            if model.tool == .extras && !settings.showsExtras {
+                model.goHome()
+            }
+        }
+        focusChanged(FocusTimer.shared.session)
+    }
+
+    private func focusChanged(_ session: FocusSession?) {
+        let running = settings.showsFocus && session != nil
+        for model in models where model.focusRunning != running {
+            model.focusRunning = running
+        }
+    }
+
+    /// A round of focus or a break ran out: a chime, and the notch opens to say so.
+    private func focusFinished(_ session: FocusSession) {
+        NSSound(named: NSSound.Name("Glass"))?.play()
+        guard let model = notchNearPointer(), model.level == .rest || model.level == .peek else { return }
+        model.goHome()
+    }
+
     // MARK: Planner
 
     /// Looks through the mail for homework and exams, a few seconds after the last change
@@ -487,6 +551,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func phoneDetailsChanged(_ details: PhoneDetails?) {
+        let battery = details?.battery.map { "\($0.percent)%" }
+        for model in models where model.phoneBattery != battery {
+            model.phoneBattery = battery
+        }
+    }
+
     // MARK: Minimised to a mail icon
 
     private func setMinimised(_ on: Bool) {
@@ -520,7 +591,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Panel sizes
 
     private static func loadPanelSizes() -> [NotchLevel: CGSize] {
-        let saved = UserDefaults.standard.dictionary(forKey: panelSizesKey) as? [String: [Double]] ?? [:]
+        var saved = UserDefaults.standard.dictionary(forKey: panelSizesKey) as? [String: [Double]] ?? [:]
+        // The primary menu gained a row (build 30): a size dragged before then would squash
+        // it, so that one size goes back to standard, once.
+        if !UserDefaults.standard.bool(forKey: "panelSizes.madeRoomForExtras") {
+            UserDefaults.standard.set(true, forKey: "panelSizes.madeRoomForExtras")
+            if saved[NotchLevel.peek.rawValue] != nil {
+                saved[NotchLevel.peek.rawValue] = nil
+                UserDefaults.standard.set(saved, forKey: panelSizesKey)
+            }
+        }
         var sizes: [NotchLevel: CGSize] = [:]
         for (key, value) in saved {
             if let level = NotchLevel(rawValue: key), value.count == 2 {
@@ -749,6 +829,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let classroomMail = mailbox.messages.filter { ClassroomMail.isClassroom($0.senderEmail) }.count
         lines.append("Planner: \(plan.open().count) to do, \(plan.upcomingExams(now: Date()).count) exams coming · Classroom emails in the notch: \(classroomMail), read into the planner since the app started: \(settings.classroomRead) (reading them is \(settings.classroomHomework ? "on" : "off"))")
         lines.append("Due dates from other emails with the assistant: \(assistant.findsDueDates ? "on · \(settings.finding.summary)" : "off")")
+        // Counts only: never what's playing, what was copied or which files.
+        let music = NowPlayingWatcher.shared
+        lines.append("Extras: now playing \(settings.showsNowPlaying ? "on (\(music.player?.name ?? "no music app open")\(music.problem == nil ? "" : ", not allowed to control it"))" : "off")"
+                     + " · focus timer \(settings.showsFocus ? "on" : "off")"
+                     + " · clipboard \(settings.keepsClipboard ? "on (\(ClipboardWatcher.shared.list.clips.count) kept in memory)" : "off")"
+                     + " · shelf \(settings.showsShelf ? "on (\(shelf.items.count) files)" : "off")"
+                     + " · phone battery tool \(PhoneCableWatcher.batteryTool == nil ? "not installed" : "installed")")
         return lines.joined(separator: "\n")
     }
 

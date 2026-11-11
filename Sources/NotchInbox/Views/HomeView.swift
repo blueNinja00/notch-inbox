@@ -20,12 +20,14 @@ struct HomeView: View {
                     if let phone = model.phoneConnected {
                         HStack(spacing: 5) {
                             PhoneDot(size: 6)
-                            Text(phone)
-                                .font(.system(size: 11.5, weight: .semibold))
+                            Text(model.phoneBattery.map { "\(phone) \($0)" } ?? phone)
+                                .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                                 .foregroundStyle(Theme.secondary)
                                 .lineLimit(1)
                         }
-                        .help("\(phone) is connected to this Mac by cable")
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.openExtras() }
+                        .help("\(phone) is connected to this Mac by cable. Click for more.")
                     }
                 }
                 .padding(.leading, 6)
@@ -67,12 +69,25 @@ struct HomeView: View {
             }
             .frame(maxHeight: .infinity)
             .padding(.top, 6)
+
+            // What's playing, the focus timer, the clipboard and the shelf, when there's room.
+            if model.showsExtras && size.height >= metrics.topRow + 140 {
+                ExtrasStrip(model: model, settings: AppSettings.shared)
+                    .frame(height: NotchMetrics.extrasRow - 8)
+                    .padding(.top, 8)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
         .frame(width: size.width, height: size.height, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { model.pinHome() }
+        .onDrop(of: ShelfDrop.types, isTargeted: nil) { providers in
+            // A file dropped anywhere on the primary menu goes on the shelf.
+            guard AppSettings.shared.showsShelf, let shelf = model.shelfStore else { return false }
+            model.pinHome()
+            return ShelfDrop.take(providers, into: shelf)
+        }
     }
 
     @ViewBuilder

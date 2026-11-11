@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Closed: the notch with an envelope on the left and per-account unread counts on the right,
-/// and a red dot on the left while a phone is plugged in by cable.
+/// a red dot on the left while a phone is plugged in by cable, and the focus timer's minutes
+/// there while it runs.
 struct RestView: View {
     @ObservedObject var model: NotchModel
 
@@ -16,7 +17,10 @@ struct RestView: View {
                     if model.phoneConnected != nil {
                         PhoneDot()
                     }
-                    if anyUnread {
+                    if model.focusRunning {
+                        // The focus timer's minutes take the envelope's place while it runs.
+                        FocusEar(timer: FocusTimer.shared)
+                    } else if anyUnread {
                         Image(systemName: "envelope")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Theme.text2)

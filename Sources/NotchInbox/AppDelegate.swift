@@ -249,19 +249,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastFeedAt = Date()
         showMailEverywhere()
         saveMailboxSoon()
-        let toRead = mailbox.toMarkRead()
-        BrowserLink.wantsSync = !toRead.isEmpty
-        return LinkReply(want: mailbox.wanted(), addon: addOn, read: toRead, tabs: settings.markReadInTabs)
+        return LinkReply(want: mailbox.wanted(), addon: addOn)
     }
 
-    /// You opened a real email in the notch: it's read here at once, and in Gmail within
-    /// about 30 seconds (the add-on marks it), and its whole text is fetched first.
+    /// You opened a real email in the notch: it's read here from now on (Gmail itself isn't
+    /// changed), the unread count drops, and its whole text is fetched first.
     private func readInNotch(_ id: String) {
         mailbox.markOpened(id)
         if mailbox.markReadHere(id) {
-            BrowserLink.wantsSync = true
             showMailEverywhere()
-            saveMailboxSoon()
+            saveMailboxNow() // straight to disk, so it stays read even if the app quits next
         }
     }
 
@@ -555,7 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append(gmail)
             lines.append("   Feed titles: \(parsed.main.title)" + (parsed.inbox.map { " | \($0.title)" } ?? ""))
             let stats = mailbox.stats(for: account)
-            lines.append("   Notch: \(mailbox.unread[account] ?? 0) unread · \(stats.emails) emails kept (\(stats.unread) unread) · whole emails \(stats.whole) fetched, \(stats.failed) failed")
+            lines.append("   Notch: \(mailbox.unread[account] ?? 0) unread in Gmail, \(mailbox.shownUnread[account] ?? 0) shown · \(stats.emails) emails kept (\(stats.unread) unread) · whole emails \(stats.whole) fetched, \(stats.failed) failed")
         }
         if lastUpload == nil {
             for account in mailbox.linkedAccounts {
@@ -564,19 +561,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Marking read in Gmail: what the app is asking for, and what the add-on did about it.
         lines.append("")
-        lines.append("Marking read in Gmail:")
-        let pending = mailbox.toMarkRead()
-        let tails = pending.prefix(8).map { "…" + String($0.id.suffix(6)) }.joined(separator: ", ")
-        lines.append("Read in the notch, still unread in Gmail (asked of the add-on): \(pending.count)" + (pending.isEmpty ? "" : " (\(tails))"))
-        lines.append("Background tab as a last resort: \(settings.markReadInTabs ? "on" : "off")")
-        if let log = lastUpload?.log, !log.isEmpty {
-            lines.append("Add-on's log:")
-            lines += log.suffix(40).map { "  " + $0 }
-        } else {
-            lines.append("Add-on's log: nothing yet (add-on 1.9 or later keeps one once it marks something read)")
-        }
+        lines.append("Read in the notch (remembered here, Gmail unchanged): \(mailbox.readHereCount)")
         return lines.joined(separator: "\n")
     }
 

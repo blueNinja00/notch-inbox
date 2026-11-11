@@ -97,9 +97,6 @@ struct FeedUpload: Decodable {
     /// Whether the add-on fetches whole emails: "ok", "on-open" (only ones you open in
     /// the notch, because Gmail counts them as read) or "unknown" (still finding out).
     let fullEmails: String?
-    /// The add-on's recent steps marking emails read in Gmail, for Copy Debug Info.
-    /// Add-on 1.9 and later.
-    let log: [String]?
 }
 
 extension FeedUpload.Feed {
@@ -123,11 +120,6 @@ struct LinkReply: Encodable, Equatable {
 
     var want: [Wanted] = []
     var addon: String? = nil
-    /// Emails you read in the notch, for the add-on to mark read in Gmail.
-    var read: [Wanted] = []
-    /// Whether the add-on may open a background tab when marking read out of sight fails
-    /// (Settings → Gmail link). Off unless you turn it on.
-    var tabs = false
 }
 
 /// One whole email from the add-on: its HTML and/or plain text, or why it couldn't be read.

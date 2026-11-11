@@ -603,10 +603,7 @@ struct GmailLinkSettings: View {
         }
         SettingsDetail(text: "Copy Debug Info copies counts and addresses only, never what your emails say.")
         SettingsDivider()
-        SettingsDetail(text: "Emails you read in the notch are marked read in Gmail out of sight, in an invisible frame inside a Gmail tab you have open in Chrome. Keep one open (any account; a pinned tab is ideal).")
-        SettingsToggle(title: "Background tab as a last resort",
-                       detail: "When there's no Gmail tab, or the invisible frame doesn't work for an email, this lets the add-on open the email in a background tab for a few seconds instead.",
-                       isOn: $settings.markReadInTabs)
+        SettingsDetail(text: "Emails you read in the notch stay read in the notch, through restarts and updates, and leave its unread counts. Gmail itself isn't changed.")
     }
 }
 

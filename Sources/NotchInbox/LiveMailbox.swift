@@ -3,6 +3,8 @@ import Foundation
 /// Turns Gmail feeds into the notch's accounts and messages. The feeds only list
 /// unread mail, so a message that drops out was read in Gmail: it stays, greyed out.
 /// Whole emails arrive separately from the add-on and replace Gmail's short preview.
+/// Emails you read in the notch stay read here for good (Gmail itself isn't changed),
+/// and the unread counts leave them out.
 struct LiveMailbox {
     static let maxAccounts = 3
     static let keepPerAccount = 40
@@ -28,10 +30,14 @@ struct LiveMailbox {
     private var failed: [String: Date] = [:]
     /// Emails you opened in the notch: their whole text is fetched first.
     private var opened: Set<String> = []
-    /// Emails you read in the notch that Gmail still lists as unread, and when you read them.
-    private var readHere: [String: Date] = [:]
-    /// How long the notch waits for Gmail to mark an email read before showing it unread again.
-    static let readGrace: TimeInterval = 10 * 60
+    /// Emails you read in the notch, and when. Kept between launches and updates. One is
+    /// forgotten only once it's over `readKeep` old and Gmail no longer lists it as unread.
+    private(set) var readHere: [String: Date] = [:]
+    static let readKeep: TimeInterval = 120 * 24 * 60 * 60
+    static let readKeepMost = 5000
+    /// What each account's feed lists as unread right now, so the counts can leave out
+    /// emails read here.
+    private var listed: [String: Set<String>] = [:]
     /// Accounts you chose to keep out of the notch.
     var hidden: Set<String> = []
 
@@ -48,29 +54,20 @@ struct LiveMailbox {
             unread[account] = feed.unreadCount
 
             let stillUnread = Set(feed.entries.map { $0.id })
+            listed[account] = stillUnread
             for (id, message) in store where message.accountID == account && !stillUnread.contains(id) {
                 if message.isUnread {
                     store[id]?.isUnread = false
                 }
-                readHere[id] = nil // Gmail has caught up
             }
             for entry in feed.entries {
-                // Opened in the notch a moment ago: stays read while Gmail catches up.
-                var waiting = false
-                if let openedAt = readHere[entry.id] {
-                    if now.timeIntervalSince(openedAt) < LiveMailbox.readGrace {
-                        waiting = true
-                    } else {
-                        readHere[entry.id] = nil
-                    }
-                }
                 store[entry.id] = MailMessage(id: entry.id,
                                               accountID: account,
                                               sender: entry.senderName,
                                               subject: entry.subject,
                                               body: entry.summary.isEmpty ? [] : [entry.summary],
                                               date: entry.date,
-                                              isUnread: !waiting,
+                                              isUnread: readHere[entry.id] == nil, // read in the notch: stays read
                                               link: entry.link)
             }
 
@@ -79,8 +76,8 @@ struct LiveMailbox {
                 store[stale.id] = nil
             }
         }
+        forgetOldReads(now: now)
         // Whole emails and notes for messages that are gone.
-        readHere = readHere.filter { store[$0.key] != nil }
         whole = whole.filter { store[$0.key] != nil }
         failed = failed.filter { store[$0.key] != nil }
         opened = opened.filter { store[$0] != nil }
@@ -195,8 +192,8 @@ struct LiveMailbox {
                 mine.filter { failed[$0.id] != nil }.count)
     }
 
-    /// You read this email in the notch: show it read now, and ask the add-on to mark it
-    /// read in Gmail too. Returns false if it was already read.
+    /// You read this email in the notch: it's read here from now on, through restarts and
+    /// updates. Returns false if it was already read.
     @discardableResult
     mutating func markReadHere(_ id: String, now: Date = Date()) -> Bool {
         guard let message = store[id], message.isUnread else { return false }
@@ -205,24 +202,27 @@ struct LiveMailbox {
         return true
     }
 
-    /// Unread counts as the notch shows them: Gmail's, minus emails you've read here that
-    /// Gmail hasn't caught up with yet, so the number drops the moment you read something.
+    /// Unread counts as the notch shows them: Gmail's, minus the emails Gmail still lists
+    /// as unread that you've read here.
     var shownUnread: [String: Int] {
         var counts = unread
-        for (id, _) in readHere {
-            guard let account = store[id]?.accountID, let count = counts[account] else { continue }
-            counts[account] = max(0, count - 1)
+        for (account, ids) in listed {
+            guard let count = counts[account] else { continue }
+            counts[account] = max(0, count - ids.filter { readHere[$0] != nil }.count)
         }
         return counts
     }
 
-    /// Emails to mark read in Gmail: read here, still unread there.
-    func toMarkRead(now: Date = Date()) -> [LinkReply.Wanted] {
-        readHere
-            .filter { now.timeIntervalSince($0.value) < LiveMailbox.readGrace }
-            .compactMap { id, _ in store[id] }
-            .sorted { $0.date > $1.date }
-            .map { LinkReply.Wanted(account: $0.accountID, id: $0.id, link: $0.link?.absoluteString, unread: true, opened: true) }
+    /// How many emails the notch remembers you reading here.
+    var readHereCount: Int { readHere.count }
+
+    private mutating func forgetOldReads(now: Date) {
+        let stillListed = listed.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+        readHere = readHere.filter { now.timeIntervalSince($0.value) < LiveMailbox.readKeep || stillListed.contains($0.key) }
+        if readHere.count > LiveMailbox.readKeepMost {
+            let newest = readHere.sorted { $0.value > $1.value }.prefix(LiveMailbox.readKeepMost)
+            readHere = Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
+        }
     }
 
     /// You opened this email in the notch: fetch its whole text next, even if it's read.
@@ -255,6 +255,10 @@ struct LiveMailbox {
         var messages: [Message]
         /// What each account was showing (Primary or whole inbox) when this was saved.
         var views: [String: InboxChoice]? = nil
+        /// Emails you read in the notch, and when (missing in files from before build 27).
+        var readHere: [String: Date]? = nil
+        /// What each account's feed listed as unread.
+        var listed: [String: [String]]? = nil
     }
 
     func snapshot(at date: Date = Date()) -> Snapshot {
@@ -265,12 +269,15 @@ struct LiveMailbox {
                                  subject: message.subject, preview: message.body.first ?? "",
                                  date: message.date, isUnread: message.isUnread, link: message.link)
             }
-        return Snapshot(savedAt: date, order: order, unread: unread, messages: messages)
+        return Snapshot(savedAt: date, order: order, unread: unread, messages: messages,
+                        readHere: readHere, listed: listed.mapValues { $0.sorted() })
     }
 
     init(snapshot: Snapshot) {
         order = snapshot.order
         unread = snapshot.unread
+        readHere = snapshot.readHere ?? [:]
+        listed = (snapshot.listed ?? [:]).mapValues { Set($0) }
         for message in snapshot.messages {
             store[message.id] = MailMessage(id: message.id,
                                             accountID: message.accountID,
@@ -278,7 +285,7 @@ struct LiveMailbox {
                                             subject: message.subject,
                                             body: message.preview.isEmpty ? [] : [message.preview],
                                             date: message.date,
-                                            isUnread: message.isUnread,
+                                            isUnread: message.isUnread && readHere[message.id] == nil,
                                             link: message.link)
         }
     }

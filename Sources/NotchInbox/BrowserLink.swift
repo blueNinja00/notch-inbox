@@ -17,8 +17,8 @@ final class BrowserLink {
     /// update, say) and sync straight away.
     private static let launchID = UUID().uuidString
 
-    /// Set when the app has something for the add-on (an email to mark read), so its
-    /// 30-second check syncs straight away instead of waiting for the minute.
+    /// Set when the app has something for the add-on, so its 30-second check syncs
+    /// straight away instead of waiting for the minute.
     static var wantsSync: Bool {
         get { wantsSyncLock.lock(); defer { wantsSyncLock.unlock() }; return wantsSyncValue }
         set { wantsSyncLock.lock(); wantsSyncValue = newValue; wantsSyncLock.unlock() }

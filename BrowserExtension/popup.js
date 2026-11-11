@@ -1,5 +1,3 @@
-let markReadStatus = null;
-
 function render(status) {
   const state = document.getElementById('state');
   const list = document.getElementById('accounts');
@@ -32,18 +30,7 @@ function render(status) {
     list.appendChild(item);
   }
   when.textContent = status.at ? `Last checked ${new Date(status.at).toLocaleTimeString()}` : '';
-  let whole = status.ok ? wholeEmails(status) : '';
-  const marked = markReadStatus || status.markRead;
-  if (status.ok && marked) {
-    const { asked, worked, how } = marked;
-    const missed = Math.max(0, (asked || 0) - (worked || 0));
-    const way = how === 'hidden' ? ', out of sight in your Gmail tab' : (how === 'tab' ? ', in a background tab' : '');
-    whole += ` · Marked read in Gmail: ${worked || 0}${way}${missed ? ` (${missed} not yet, trying again)` : ''}`;
-  }
-  document.getElementById('whole').textContent = whole;
-  // Marking read needs a Gmail tab to work in, out of sight.
-  document.getElementById('needsTab').hidden = !(status.ok && marked && marked.noGmailTab
-    && Math.max(0, (marked.asked || 0) - (marked.worked || 0)) > 0);
+  document.getElementById('whole').textContent = status.ok ? wholeEmails(status) : '';
 }
 
 function wholeEmails(status) {
@@ -60,39 +47,14 @@ function wholeEmails(status) {
   }
 }
 
-// What happened the last few times it marked emails read: for working out what goes wrong.
-function renderLog(lines) {
-  if (lines && lines.length) {
-    document.getElementById('log').textContent = lines.slice(-40).join('\n');
-  }
-}
-
 document.getElementById('version').textContent = `Version ${chrome.runtime.getManifest().version}`;
-let lastStatus = null;
-chrome.storage.local.get(['status', 'readLog', 'markReadStatus']).then((stored) => {
-  markReadStatus = stored.markReadStatus || null;
-  lastStatus = stored.status;
-  render(lastStatus);
-  renderLog(stored.readLog);
-});
+chrome.storage.local.get('status').then((stored) => render(stored.status));
 // Keep up while the popup is open.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  if (changes.markReadStatus) markReadStatus = changes.markReadStatus.newValue || null;
-  if (changes.status) lastStatus = changes.status.newValue;
-  if (changes.status || changes.markReadStatus) render(lastStatus);
-  if (changes.readLog) renderLog(changes.readLog.newValue);
-});
-
-document.getElementById('copyLog').addEventListener('click', async () => {
-  const stored = await chrome.storage.local.get('readLog');
-  const text = `Notch Inbox Link ${chrome.runtime.getManifest().version}\n${(stored.readLog || []).join('\n')}`;
-  await navigator.clipboard.writeText(text);
-  document.getElementById('copyLog').textContent = 'Copied';
+  if (area === 'local' && changes.status) render(changes.status.newValue);
 });
 
 document.getElementById('sync').addEventListener('click', async () => {
   document.getElementById('state').textContent = 'Syncing…';
-  lastStatus = await chrome.runtime.sendMessage({ type: 'sync-now' });
-  render(lastStatus);
+  render(await chrome.runtime.sendMessage({ type: 'sync-now' }));
 });

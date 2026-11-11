@@ -100,12 +100,6 @@ final class AppSettings: ObservableObject {
     @Published var accounts: [Account] = []
     @Published var link = LinkStatus()
 
-    private static let tabsKey = "markReadInTabs"
-    /// If Gmail can't be made to mark an email read out of sight, open it in a background tab.
-    @Published var markReadInTabs = UserDefaults.standard.bool(forKey: AppSettings.tabsKey) {
-        didSet { UserDefaults.standard.set(markReadInTabs, forKey: AppSettings.tabsKey) }
-    }
-
     var onChooseInbox: ((String, InboxChoice) -> Void)?
     var onSetHidden: ((String, Bool) -> Void)?
     var onCheckForUpdates: (() -> Void)?

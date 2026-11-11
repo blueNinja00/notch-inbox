@@ -271,6 +271,68 @@ struct LiveMailbox {
         order.filter { unread[$0] != nil }
     }
 
+    /// Linked accounts that aren't in the notch: switched off, or past the three there's
+    /// room for. They're what "Add an inbox" offers.
+    var spareAccounts: [String] {
+        let shown = Set(accounts.map { $0.id })
+        return linkedAccounts.filter { !shown.contains($0) }
+    }
+
+    /// Which newly linked accounts start out of the notch. The notch starts with one inbox:
+    /// the first account you ever link shows by itself, and every account after that waits
+    /// until you add it.
+    static func startingHidden(new: [String], showing: Int) -> [String] {
+        showing > 0 ? new : Array(new.dropFirst())
+    }
+
+    /// Meets the accounts reporting in. Of the ones never seen before (not in `met`), the
+    /// first shows if nothing else is showing, and every other starts out of the notch until
+    /// it's added. Returns the accounts that were new.
+    @discardableResult
+    mutating func admit(_ reporting: [String], met: inout Set<String>) -> [String] {
+        var new: [String] = []
+        for account in reporting where !met.contains(account) && !new.contains(account) {
+            new.append(account)
+        }
+        guard !new.isEmpty else { return [] }
+        hidden.formUnion(LiveMailbox.startingHidden(new: new, showing: accounts.count))
+        met.formUnion(new)
+        return new
+    }
+
+    /// Swaps two accounts' places in the order they show in. Returns whether anything moved.
+    @discardableResult
+    mutating func swapPlaces(_ first: String, _ second: String) -> Bool {
+        guard first != second, let a = order.firstIndex(of: first), let b = order.firstIndex(of: second) else { return false }
+        order.swapAt(a, b)
+        revision += 1
+        return true
+    }
+
+    /// Moves an account to just after the inboxes in the notch, so that when it's added it
+    /// shows last, where "Add an inbox" was, whenever it was linked. Returns whether the
+    /// order changed.
+    @discardableResult
+    mutating func moveAfterShown(_ account: String) -> Bool {
+        let shown = accounts.map { $0.id }.filter { $0 != account }
+        guard let last = shown.last, let from = order.firstIndex(of: account) else { return false }
+        var next = order
+        next.remove(at: from)
+        guard let anchor = next.firstIndex(of: last) else { return false }
+        next.insert(account, at: anchor + 1)
+        guard next != order else { return false }
+        order = next
+        revision += 1
+        return true
+    }
+
+    /// The account one place before or after this one, among the accounts given (the ones in
+    /// the notch, or every linked one): who it would swap with.
+    static func neighbour(of account: String, by offset: Int, among accounts: [String]) -> String? {
+        guard let index = accounts.firstIndex(of: account), accounts.indices.contains(index + offset), offset != 0 else { return nil }
+        return accounts[index + offset]
+    }
+
     /// Up to three accounts that have reported in and aren't hidden, in their remembered order.
     var accounts: [MailAccount] {
         let active = linkedAccounts.filter { !hidden.contains($0) }.prefix(LiveMailbox.maxAccounts)

@@ -24,6 +24,10 @@ struct LanesView: View {
                 ForEach(model.accounts) { account in
                     LaneColumn(model: model, account: account)
                 }
+                // While there's room for another inbox, the ones you could add are offered here.
+                if model.canAddInbox {
+                    AddInboxColumn(model: model)
+                }
             }
             .padding(.top, 8)
         }
@@ -78,14 +82,105 @@ struct LaneColumn: View {
     }
 }
 
+/// Beside the lanes while there's room: the inboxes you've linked that aren't showing. Click
+/// one to put it in the notch.
+struct AddInboxColumn: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Add an inbox")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 6)
+            .frame(height: 30)
+
+            ScrollView(.vertical) {
+                VStack(spacing: 4) {
+                    ForEach(model.spareInboxes) { inbox in
+                        AddInboxRow(name: inbox.name,
+                                    detail: model.isSample || inbox.id == inbox.name ? nil : inbox.id,
+                                    add: { model.showInbox(inbox.id) })
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+
+            Text("Up to \(NotchModel.mostInboxes) show side by side. To take one out, point at its name and click the minus.")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 2)
+        }
+        .padding(8)
+        .frame(width: 200)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(shape.fill(Theme.lane.opacity(0.5)))
+        .overlay(shape.strokeBorder(Color.white.opacity(0.09), style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
+    }
+}
+
+/// One inbox you could add: its name, and for your own mail its address underneath, to
+/// tell accounts apart.
+struct AddInboxRow: View {
+    let name: String
+    var detail: String? = nil
+    let add: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        Button(action: add) {
+            HStack(spacing: 7) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(Theme.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(name)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.text2)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let detail = detail {
+                        Text(detail)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: detail == nil ? 32 : 42)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Theme.hover : Theme.raised))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Show \(detail ?? name) in the notch")
+        .accessibilityLabel(Text("Add the \(name) inbox"))
+    }
+}
+
 /// An inbox's name and unread count: click to expand it. The tick marks everything in it
-/// read; right-click for "Mark All as Unread" too.
+/// read; point at the header for a minus that takes the inbox out of the notch; right-click
+/// for "Mark All as Unread" and moving it left or right.
 struct LaneHeader: View {
     @ObservedObject var model: NotchModel
     let account: MailAccount
     let unread: Int
     let action: () -> Void
     @State var hovering = false
+    /// The pointer is somewhere on the header.
+    @State var pointing = false
 
     var body: some View {
         HStack(spacing: 2) {
@@ -115,6 +210,10 @@ struct LaneHeader: View {
             .onHover { hovering = $0 }
             .accessibilityLabel(Text("Expand the \(account.name) inbox"))
 
+            if pointing && model.accounts.count > 1 {
+                IconButton(symbol: "minus.circle", label: "Take this inbox out of the notch (you can add it back)", size: 26,
+                           tint: Theme.tertiary, action: { model.hideInbox(account.id) })
+            }
             if model.undoAccount == account.id {
                 IconButton(symbol: "arrow.uturn.backward", label: "Undo Mark All", size: 26,
                            action: { model.undoMarkAll() })
@@ -123,6 +222,7 @@ struct LaneHeader: View {
                            action: { model.markAll(account.id, read: true) })
             }
         }
+        .onHover { pointing = $0 }
         .contextMenu { InboxMenu(model: model, account: account) }
     }
 }

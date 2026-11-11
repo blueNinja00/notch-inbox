@@ -146,6 +146,12 @@ struct HomeActions: View {
 
     var body: some View {
         HStack(spacing: 2) {
+            // Until the tour's been finished or skipped, it's on offer here.
+            if model.tourPending {
+                TourChip(title: model.tourPage > 0 ? "Continue the Tour" : "Take the Tour", symbol: "map",
+                         hint: "A minute-long look at what everything does", action: { model.openTour() })
+                    .padding(.trailing, 4)
+            }
             if let build = model.pendingUpdate {
                 UpdateButton(build: build, action: { model.installUpdate() })
                     .padding(.trailing, 4)

@@ -306,6 +306,8 @@ final class AppSettings: ObservableObject {
 
     var onChooseInbox: ((String, InboxChoice) -> Void)?
     var onSetHidden: ((String, Bool) -> Void)?
+    /// Moves an account one place up (-1) or down (1) in the order the notch shows them.
+    var onMoveAccount: ((String, Int) -> Void)?
     var onCheckForUpdates: (() -> Void)?
     var onInstallUpdate: (() -> Void)?
     var onSetUpBrowserLink: (() -> Void)?
@@ -315,6 +317,10 @@ final class AppSettings: ObservableObject {
 
     func chooseInbox(_ choice: InboxChoice, for account: String) {
         onChooseInbox?(account, choice)
+    }
+
+    func moveAccount(_ account: String, by offset: Int) {
+        onMoveAccount?(account, offset)
     }
 
     func setHidden(_ hidden: Bool, for account: String) {

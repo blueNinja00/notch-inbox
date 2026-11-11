@@ -205,6 +205,27 @@ final class NotchWindowController {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         guard let panel = panel, panel.isKeyWindow, model.level != .rest else { return event }
 
+        // In the tour, the arrow keys (and Return) turn the pages, and Esc leaves it for the
+        // primary menu, where it stays on offer.
+        if model.tool == .tour && (model.level == .lanes || model.level == .detail) {
+            if event.keyCode == 53 {
+                model.goHome()
+                return nil
+            }
+            if !(panel.firstResponder is NSText) && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+                switch event.keyCode {
+                case 123: // left arrow
+                    model.tourBack()
+                    return nil
+                case 124, 36, 76: // right arrow, Return, Enter
+                    model.tourNext()
+                    return nil
+                default:
+                    break
+                }
+            }
+        }
+
         if event.keyCode == 53 { // Escape steps back one level: email → inboxes → tools → closed
             // In the timetable, Esc first closes the side panel you're editing in.
             if model.tool == .timetable && model.timetableEdit != nil {

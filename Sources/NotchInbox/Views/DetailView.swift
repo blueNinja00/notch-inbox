@@ -370,7 +370,7 @@ struct GmailActions: View {
                 .foregroundStyle(Theme.onAccent)
                 .padding(.horizontal, 14)
                 .frame(height: 32)
-                .background(Capsule().fill(Theme.text))
+                .background(Capsule().fill(Theme.accent))
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -464,7 +464,7 @@ struct Composer: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(Theme.onAccent)
                             .frame(width: 34, height: 34)
-                            .background(Circle().fill(model.replyFrom?.color ?? Theme.text))
+                            .background(Circle().fill(model.replyFrom?.color ?? Theme.accent))
                     }
                     .buttonStyle(.plain)
                     .keyboardShortcut(.return, modifiers: .command)

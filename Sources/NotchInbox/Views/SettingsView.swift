@@ -35,7 +35,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         switch model.settingsSection {
                         case .general:
-                            GeneralSettings(model: model)
+                            GeneralSettings(model: model, settings: settings)
                         case .accounts:
                             AccountSettings(model: model, settings: settings)
                         case .assistant:
@@ -126,7 +126,7 @@ struct SidebarRow: View {
                 Spacer(minLength: 0)
                 if flagged {
                     Circle()
-                        .fill(Theme.text)
+                        .fill(Theme.accent)
                         .frame(width: 6, height: 6)
                 }
             }
@@ -172,8 +172,13 @@ struct QuitRow: View {
 
 struct GeneralSettings: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
+        SettingsHeading(title: "Theme",
+                        detail: "The colours of everything on the notch. The notch itself stays black, like the camera housing it hangs from.")
+        ThemePicker(settings: settings)
+        SettingsDivider()
         SettingsHeading(title: "Show Notch Inbox as")
         HStack(spacing: 10) {
             ModeCard(symbol: "menubar.rectangle", title: "Notch at the top",
@@ -197,6 +202,85 @@ struct GeneralSettings: View {
     }
 }
 
+/// The themes, as swatches to click.
+struct ThemePicker: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(ThemeChoice.allCases) { theme in
+                ThemeSwatch(theme: theme, selected: settings.theme == theme, choose: { settings.theme = theme })
+            }
+        }
+    }
+}
+
+/// One theme: a little picture of it (a tile, two lines of text and a button), and its name.
+struct ThemeSwatch: View {
+    let theme: ThemeChoice
+    let selected: Bool
+    let choose: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        let palette = theme.palette
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+
+        Button(action: choose) {
+            HStack(spacing: 9) {
+                ThemePicture(palette: palette)
+                    .frame(width: 38, height: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(theme.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                    Text(theme.detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.tertiary)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .background(shape.fill(selected ? Theme.raised : Theme.lane))
+            .overlay(shape.strokeBorder(selected ? Theme.accent : Color.white.opacity(hovering ? 0.12 : 0.05), lineWidth: selected ? 1.5 : 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("\(theme.title): \(theme.detail.lowercased())")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// A theme in miniature, drawn in its own colours.
+struct ThemePicture: View {
+    let palette: ThemePalette
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
+
+        ZStack(alignment: .bottomTrailing) {
+            shape.fill(Color(hex: palette.surface))
+            VStack(alignment: .leading, spacing: 3) {
+                Capsule()
+                    .fill(Color(hex: palette.text))
+                    .frame(width: 18, height: 3)
+                Capsule()
+                    .fill(Color(hex: palette.tertiary))
+                    .frame(width: 12, height: 3)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Circle()
+                .fill(Color(hex: palette.accent))
+                .frame(width: 9, height: 9)
+                .padding(5)
+        }
+        .overlay(shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+    }
+}
+
 /// One of the two ways to show the app, as a card you click.
 struct ModeCard: View {
     let symbol: String
@@ -217,7 +301,7 @@ struct ModeCard: View {
                     Spacer(minLength: 0)
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(selected ? Theme.text : Theme.tertiary)
+                        .foregroundStyle(selected ? Theme.accent : Theme.tertiary)
                 }
                 .foregroundStyle(Theme.text)
                 Text(detail)
@@ -418,7 +502,7 @@ struct EngineRow: View {
                 Spacer(minLength: 8)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(selected ? Theme.text : Theme.tertiary)
+                    .foregroundStyle(selected ? Theme.accent : Theme.tertiary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -951,7 +1035,7 @@ struct ChoiceSegments<Value: Hashable>: View {
                         .fixedSize()
                         .padding(.horizontal, 10)
                         .frame(height: 24)
-                        .background(Capsule().fill(isSelected ? Theme.text : Color.clear))
+                        .background(Capsule().fill(isSelected ? Theme.accent : Color.clear))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

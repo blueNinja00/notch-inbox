@@ -66,7 +66,7 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
 
-- **General:** Notch at the top or Mail tab (below), and resetting panel sizes.
+- **General:** the theme (below), Notch at the top or Mail tab, and resetting panel sizes.
 - **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch; how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
@@ -75,6 +75,8 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing.
 - **Quit Notch Inbox**, at the bottom.
+
+**Themes:** **Settings → General** has eight to pick from: **Midnight** (black and grey with white buttons, the one it starts with), **Graphite** (softer greys), **Ocean**, **Forest**, **Sunset**, **Grape** and **Rose** (each washes the tiles and panels with its colour and uses it for buttons, whatever's selected, today and unread dots), and **High contrast** (brighter text, yellow buttons). The notch itself stays black in all of them, like the camera housing it hangs from. Every theme's text is checked to read clearly on its backgrounds.
 
 An envelope in the menu bar has a short menu too (Open, Settings…, Quit), as does right-clicking the mail tab. On a MacBook, macOS hides menu-bar icons that don't fit beside the notch, so the gear is the reliable way in.
 
@@ -194,6 +196,6 @@ open "build/Notch Inbox.app"
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
 | `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, assistant, settings |
-| `Theme.swift` | Colours from the design |
+| `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, and the sums that check its text reads clearly |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
 | `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

@@ -14,24 +14,31 @@ extension MailAccount {
     var color: Color { Color(hex: colorHex) }
 }
 
-/// The palette from the design canvas.
+/// The colours everything is drawn with. They come from the theme chosen in Settings →
+/// General; the notch redraws itself when that changes. The notch's own shape stays black.
 enum Theme {
-    static let surface = Color(hex: 0x141416)      // reading pane, hover tiles
-    static let raised = Color(hex: 0x1E1E21)       // pills, selected rows
-    static let lane = Color(hex: 0x0E0E10)         // lane and rail backgrounds
-    static let unreadCard = Color(hex: 0x18181B)
-    static let hover = Color(hex: 0x26262A)
-    static let avatar = Color(hex: 0x232327)
-    static let composer = Color(hex: 0x0B0B0C)
-    static let keyCap = Color(hex: 0x1A1A1D)
+    /// The chosen theme's colours.
+    static var palette: ThemePalette { AppSettings.shared.palette }
 
-    static let text = Color(hex: 0xF5F5F7)
-    static let text2 = Color(hex: 0xE4E4E7)
-    static let body = Color(hex: 0xC8C8D0)
-    static let secondary = Color(hex: 0xB4B4BC)
-    static let readText = Color(hex: 0xA1A1AA)
-    static let tertiary = Color(hex: 0x8E8E96)
-    static let onAccent = Color(hex: 0x0B0B0C)
+    static var surface: Color { Color(hex: palette.surface) }        // reading pane, tiles
+    static var raised: Color { Color(hex: palette.raised) }          // pills, selected rows
+    static var lane: Color { Color(hex: palette.lane) }              // lane and rail backgrounds
+    static var unreadCard: Color { Color(hex: palette.unreadCard) }
+    static var hover: Color { Color(hex: palette.hover) }
+    static var avatar: Color { Color(hex: palette.avatar) }
+    static var composer: Color { Color(hex: palette.composer) }
+    static var keyCap: Color { Color(hex: palette.keyCap) }
+
+    static var text: Color { Color(hex: palette.text) }
+    static var text2: Color { Color(hex: palette.text2) }
+    static var body: Color { Color(hex: palette.body) }
+    static var secondary: Color { Color(hex: palette.secondary) }
+    static var readText: Color { Color(hex: palette.readText) }
+    static var tertiary: Color { Color(hex: palette.tertiary) }
+
+    /// Buttons to press, the selected choice, today, unread dots; and what's written on them.
+    static var accent: Color { Color(hex: palette.accent) }
+    static var onAccent: Color { Color(hex: palette.onAccent) }
 
     static let hairline = Color.white.opacity(0.06)
 

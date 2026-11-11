@@ -82,7 +82,7 @@ struct WeekSwitch: View {
                     HStack(spacing: 5) {
                         if week == thisWeek {
                             Circle()
-                                .fill(selected ? Theme.onAccent : Theme.text)
+                                .fill(selected ? Theme.onAccent : Theme.accent)
                                 .frame(width: 5, height: 5)
                         }
                         Text(Timetable.weekName(week))
@@ -91,7 +91,7 @@ struct WeekSwitch: View {
                     .foregroundStyle(selected ? Theme.onAccent : Theme.secondary)
                     .padding(.horizontal, 10)
                     .frame(height: 24)
-                    .background(Capsule().fill(selected ? Theme.text : Color.clear))
+                    .background(Capsule().fill(selected ? Theme.accent : Color.clear))
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -310,7 +310,7 @@ struct DayHeader: View {
                 .foregroundStyle(isToday ? Theme.onAccent : Theme.secondary)
                 .padding(.horizontal, 9)
                 .frame(height: 20)
-                .background(Capsule().fill(isToday ? Theme.text : Color.clear))
+                .background(Capsule().fill(isToday ? Theme.accent : Color.clear))
                 .frame(maxWidth: .infinity)
             }
         }
@@ -331,7 +331,7 @@ struct PeriodLabel: View {
                 HStack(spacing: 5) {
                     if isNow {
                         Circle()
-                            .fill(Theme.text)
+                            .fill(Theme.accent)
                             .frame(width: 5, height: 5)
                     }
                     Text(period.isActivity ? ClockTime.hour(period.start) : period.name)
@@ -392,7 +392,7 @@ struct BreakRow: View {
                 HStack(spacing: 6) {
                     if isNow {
                         Circle()
-                            .fill(Theme.text)
+                            .fill(Theme.accent)
                             .frame(width: 5, height: 5)
                     }
                     Text(period.name)
@@ -503,7 +503,7 @@ struct LessonCell: View {
                 }
             }
             .overlay(
-                shape.strokeBorder(selected ? Theme.text : (isNow ? colour : Color.clear), lineWidth: selected ? 1.5 : 1.2)
+                shape.strokeBorder(selected ? Theme.accent : (isNow ? colour : Color.clear), lineWidth: selected ? 1.5 : 1.2)
             )
             .shadow(color: isNow ? colour.opacity(0.45) : Color.clear, radius: 8)
             .opacity(isPast && !selected ? 0.5 : 1)

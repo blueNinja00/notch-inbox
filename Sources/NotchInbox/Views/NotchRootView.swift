@@ -4,6 +4,8 @@ import SwiftUI
 /// the matching content inside.
 struct NotchRootView: View {
     @ObservedObject var model: NotchModel
+    /// For the theme: when it changes, everything is drawn afresh in the new colours.
+    @ObservedObject var settings = AppSettings.shared
 
     var body: some View {
         let metrics = model.metrics
@@ -21,6 +23,7 @@ struct NotchRootView: View {
                     .fill(Color.black)
                     .shadow(color: Color.black.opacity(level == .rest ? 0 : 0.55), radius: 26, x: 0, y: 14)
                 content(for: level)
+                    .id(settings.theme)
                     .frame(width: outline.width, height: outline.height, alignment: .top)
                     .clipShape(shape)
                 if level != .rest {

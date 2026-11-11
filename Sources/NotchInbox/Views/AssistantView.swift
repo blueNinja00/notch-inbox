@@ -333,7 +333,7 @@ struct PillButton: View {
                 .lineLimit(1)
                 .padding(.horizontal, 14)
                 .frame(height: 28)
-                .background(Capsule().fill(prominent ? Theme.text.opacity(hovering ? 1 : 0.92) : (hovering ? Theme.hover : Theme.raised)))
+                .background(Capsule().fill(prominent ? Theme.accent.opacity(hovering ? 1 : 0.92) : (hovering ? Theme.hover : Theme.raised)))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)

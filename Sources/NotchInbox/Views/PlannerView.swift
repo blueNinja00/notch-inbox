@@ -722,18 +722,26 @@ struct MinutesRow: View {
             Spacer(minLength: 4)
             HStack(spacing: 0) {
                 IconButton(symbol: "minus", label: "Less", size: 24, tint: minutes > range.lowerBound ? Theme.text2 : Theme.tertiary.opacity(0.5),
-                           action: { change(max(range.lowerBound, minutes - step)) })
+                           action: { change(MinutesRow.stepped(minutes, by: step, up: false, in: range)) })
                 Text(minutes == 0 ? "None" : DueText.length(minutes))
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Theme.text)
                     .frame(minWidth: 46)
                 IconButton(symbol: "plus", label: "More", size: 24, tint: minutes < range.upperBound ? Theme.text2 : Theme.tertiary.opacity(0.5),
-                           action: { change(min(range.upperBound, minutes + step)) })
+                           action: { change(MinutesRow.stepped(minutes, by: step, up: true, in: range)) })
             }
             .padding(.horizontal, 2)
             .background(Capsule().fill(Theme.raised))
             .fixedSize()
         }
+    }
+}
+
+extension MinutesRow {
+    /// The next round amount up or down: 20 goes to 30 or 15 in steps of 15.
+    static func stepped(_ minutes: Int, by step: Int, up: Bool, in range: ClosedRange<Int>) -> Int {
+        let next = up ? (minutes / step + 1) * step : ((minutes - 1) / step) * step
+        return max(range.lowerBound, min(range.upperBound, next))
     }
 }
 

@@ -159,7 +159,7 @@ enum DueDateFinder {
             } else {
                 var task = PlannerTask(title: item.title, subject: item.subject, due: item.due, hasTime: item.hasTime,
                                        source: .found, emailID: item.emailID, link: links[item.emailID])
-                if let minutes = item.minutes { task.minutes = minutes }
+                task.minutes = item.minutes ?? PlannerTask.guessMinutes(for: item.title)
                 task.added = now
                 if planner.take(task, calendar: calendar) != nil { added += 1 }
             }

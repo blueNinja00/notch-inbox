@@ -145,7 +145,7 @@ enum ClassroomMail {
             // A reminder about something already ticked off stays ticked off.
             var task = PlannerTask(title: notice.title, subject: notice.course, due: notice.due, hasTime: notice.hasTime,
                                    source: .classroom, emailID: emailID, link: notice.link ?? emailLink)
-            task.minutes = notice.kind == .question ? 15 : PlannerTask.standardMinutes
+            task.minutes = notice.kind == .question ? 15 : PlannerTask.guessMinutes(for: notice.title)
             task.added = now
             return planner.take(task, calendar: calendar) != nil
         case .returned:

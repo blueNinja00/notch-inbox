@@ -372,9 +372,7 @@ final class NotchModel: ObservableObject {
         let entry = QuickEntry.parse(typed, now: now, calendar: calendar)
         guard !entry.title.isEmpty else { return false }
         var task = PlannerTask(title: entry.title, due: entry.due, hasTime: entry.hasTime)
-        if let minutes = entry.minutes {
-            task.minutes = minutes
-        }
+        task.minutes = entry.minutes ?? PlannerTask.guessMinutes(for: entry.title)
         task.subject = Planner.subject(in: entry.title, among: timetableStore?.timetable.classes ?? []) ?? ""
         store.change { $0.add(task) }
         return true

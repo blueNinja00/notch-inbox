@@ -187,7 +187,7 @@ enum PlannerAgent {
                 task.due = due.date
                 task.hasTime = due.hasTime
             }
-            if let minutes = item.minutes { task.minutes = max(5, min(minutes, 600)) }
+            task.minutes = item.minutes.map { max(5, min($0, 600)) } ?? PlannerTask.guessMinutes(for: title)
             task.notes = clean(item.notes, limit: 500)
             task.added = now
             planner.add(task)

@@ -44,6 +44,22 @@ struct PlannerTask: Codable, Identifiable, Equatable {
 
     static let standardMinutes = 30
 
+    private static let quickWords: Set<String> = ["form", "forms", "permission", "slip", "consent", "payment", "pay", "sign", "signed",
+                                                  "bring", "return", "rsvp", "email", "ask"]
+    private static let longWords: Set<String> = ["essay", "report", "project", "assignment", "assessment", "investigation", "portfolio",
+                                                 "presentation", "speech", "draft", "research", "poster", "task", "prac"]
+    private static let revisionWords: Set<String> = ["revise", "revision", "study", "practise", "practice"]
+
+    /// A first guess at how long something takes, from its name: a form is quick, an essay
+    /// isn't. You can change it; it's only for fitting things into your week.
+    static func guessMinutes(for title: String) -> Int {
+        let words = Set(title.lowercased().split(whereSeparator: { !$0.isLetter }).map { String($0) })
+        if !words.isDisjoint(with: longWords) { return 90 }
+        if !words.isDisjoint(with: revisionWords) { return 60 }
+        if !words.isDisjoint(with: quickWords) { return 10 }
+        return standardMinutes
+    }
+
     /// When the work has to be finished by: the time it's due, or the start of the school
     /// day it's due on.
     func deadline(schoolStart: Int, calendar: Calendar = .current) -> Date? {
@@ -386,6 +402,12 @@ struct Planner: Codable, Equatable {
     @discardableResult
     mutating func tidy(now: Date = Date()) -> Bool {
         let before = self
+        // Cleared-away work that came from an email isn't picked up from it again.
+        for task in tasks where task.done && now.timeIntervalSince(task.doneAt ?? task.added) > Planner.keepDoneFor {
+            if let email = task.emailID {
+                dismissed.insert(Planner.key(email: email, title: task.title))
+            }
+        }
         tasks.removeAll { $0.done && now.timeIntervalSince($0.doneAt ?? $0.added) > Planner.keepDoneFor }
         exams.removeAll { now.timeIntervalSince($0.date) > Planner.keepExamsFor }
         if looked.count > Planner.keepLooked {

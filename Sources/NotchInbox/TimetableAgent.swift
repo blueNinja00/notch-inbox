@@ -99,15 +99,8 @@ enum TimetableAgent {
 
     /// The changes asked for at the end of an answer, if any, and the answer without them.
     static func extract(from text: String) -> (plan: Plan?, text: String) {
-        guard let open = text.range(of: openTag, options: .backwards),
-              let close = text.range(of: closeTag, range: open.upperBound..<text.endIndex) else {
+        guard let json = AgentBlock.json(in: text, tag: "timetable") else {
             return (nil, hidden(text))
-        }
-        var json = String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        // Models sometimes wrap it in a code fence.
-        if json.hasPrefix("```") {
-            json = json.drop { $0 != "\n" }.trimmingCharacters(in: .whitespacesAndNewlines)
-            if json.hasSuffix("```") { json = String(json.dropLast(3)) }
         }
         let plan = try? JSONDecoder().decode(Plan.self, from: Data(json.utf8))
         return (plan, hidden(text))
@@ -115,19 +108,7 @@ enum TimetableAgent {
 
     /// The answer without any change block, including one still streaming in.
     static func hidden(_ text: String) -> String {
-        var result = text
-        while let open = result.range(of: openTag) {
-            if let close = result.range(of: closeTag, range: open.upperBound..<result.endIndex) {
-                result.removeSubrange(open.lowerBound..<close.upperBound)
-            } else {
-                result.removeSubrange(open.lowerBound..<result.endIndex) // still arriving
-            }
-        }
-        // A tag only partly arrived, like "<time".
-        if let lastOpen = result.lastIndex(of: "<"), openTag.hasPrefix(String(result[lastOpen...])) {
-            result.removeSubrange(lastOpen..<result.endIndex)
-        }
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        AgentBlock.hidden(text)
     }
 
     // MARK: Making the changes

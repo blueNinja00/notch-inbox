@@ -6,11 +6,16 @@ import SwiftUI
 struct TimetableView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
+    /// For the study sessions planned into empty slots.
+    @ObservedObject var planner: PlannerStore
+    @ObservedObject var settings: AppSettings
     let expanded: Bool
 
-    init(model: NotchModel, store: TimetableStore, expanded: Bool) {
+    init(model: NotchModel, store: TimetableStore, planner: PlannerStore, settings: AppSettings, expanded: Bool) {
         self.model = model
         self.store = store
+        self.planner = planner
+        self.settings = settings
         self.expanded = expanded
     }
 
@@ -39,7 +44,7 @@ struct TimetableView: View {
             }
 
             HStack(spacing: 10) {
-                TimetableGrid(model: model, store: store, expanded: expanded)
+                TimetableGrid(model: model, store: store, planner: planner, settings: settings, expanded: expanded)
                 if let edit = model.timetableEdit {
                     Group {
                         switch edit {
@@ -104,6 +109,8 @@ struct WeekSwitch: View {
 struct TimetableGrid: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
+    @ObservedObject var planner: PlannerStore
+    @ObservedObject var settings: AppSettings
     let expanded: Bool
 
     private let gap: CGFloat = 4
@@ -119,6 +126,10 @@ struct TimetableGrid: View {
             let today = showingThisWeek ? table.column(of: now, calendar: calendar) : nil
             let minute = Timetable.minuteOfDay(now, calendar: calendar)
             let rows = table.rows
+            // Homework and revision planned into this week's free slots.
+            let planned = showingThisWeek && settings.plansStudy
+                ? TimetableGrid.planned(planner.planner, table: table, rows: rows, now: now, daily: settings.studyMinutesADay)
+                : [:]
 
             GeometryReader { area in
                 let heights = rowHeights(rows: rows, height: area.size.height)
@@ -140,7 +151,7 @@ struct TimetableGrid: View {
                                     }
                                     TimetableRow(model: model, table: table, period: period, today: today, minute: minute,
                                                  labelWidth: labelWidth, classHeight: heights.classHeight * TimetableGrid.weight(period),
-                                                 breakHeight: heights.breakHeight, gap: gap)
+                                                 breakHeight: heights.breakHeight, gap: gap, planned: planned)
                                         .id(period.id)
                                 }
                             }
@@ -158,6 +169,31 @@ struct TimetableGrid: View {
                 }
             }
         }
+    }
+
+    /// What's planned for this week's slots, keyed "day-row": the study sessions the planner
+    /// fitted into free time, to show (faintly) in the slots they'd use.
+    static func planned(_ planner: Planner, table: Timetable, rows: [Timetable.Period], now: Date, daily: Int,
+                        calendar: Calendar = .current) -> [String: String] {
+        let sessions = StudyPlanner.plan(tasks: planner.tasks, exams: planner.exams, timetable: table, now: now,
+                                         calendar: calendar, daily: daily)
+        let monday = Timetable.monday(of: now, calendar: calendar)
+        var result: [String: String] = [:]
+        for session in sessions {
+            let day = calendar.dateComponents([.day], from: monday, to: calendar.startOfDay(for: session.start)).day ?? -1
+            guard (0..<table.dayCount).contains(day) else { continue }
+            let start = Timetable.minuteOfDay(session.start, calendar: calendar)
+            let end = start + session.minutes
+            for row in rows where !row.isBreak && row.start < end && row.end > start {
+                let key = "\(day)-\(row.id.uuidString)"
+                if let already = result[key] {
+                    if !already.contains(session.title) { result[key] = already + ", " + session.title }
+                } else {
+                    result[key] = session.title
+                }
+            }
+        }
+        return result
     }
 
     /// The row to show at the top: the one before what's on now, or the start of school.
@@ -206,6 +242,8 @@ struct TimetableRow: View {
     let classHeight: CGFloat
     let breakHeight: CGFloat
     let gap: CGFloat
+    /// Study sessions planned into this week's empty slots, keyed "day-row".
+    var planned: [String: String] = [:]
 
     var body: some View {
         let isNow = today != nil && period.contains(minute)
@@ -237,6 +275,7 @@ struct TimetableRow: View {
                           colour: Theme.subject(table.colour(for: lesson?.subject ?? "")),
                           height: classHeight,
                           isActivity: period.isActivity,
+                          planned: lesson == nil ? planned["\(day)-\(period.id.uuidString)"] : nil,
                           isNow: day == today && period.contains(minute),
                           isPast: isPast,
                           selected: model.timetableEdit == .lesson(slot),
@@ -387,6 +426,8 @@ struct LessonCell: View {
     let colour: Color
     let height: CGFloat
     var isActivity = false
+    /// Homework or revision the planner has fitted into this empty slot.
+    var planned: String? = nil
     let isNow: Bool
     let isPast: Bool
     let selected: Bool
@@ -428,13 +469,24 @@ struct LessonCell: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: height >= 50 ? .topLeading : .leading)
                     .padding(.top, height >= 50 ? 7 : 0)
                 } else {
-                    shape.strokeBorder(Color.white.opacity(hovering || selected ? 0.22 : (isActivity ? 0.045 : 0.07)),
+                    shape.strokeBorder(Color.white.opacity(hovering || selected ? 0.22 : (planned != nil ? 0.13 : (isActivity ? 0.045 : 0.07))),
                                        style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     if hovering || selected {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.tertiary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let planned = planned {
+                        HStack(spacing: 4) {
+                            Image(systemName: "book")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text(planned)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(Theme.tertiary)
+                        .padding(.horizontal, 7)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     }
                 }
 
@@ -459,7 +511,13 @@ struct LessonCell: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(filled ? (isActivity ? "Edit this activity" : "Edit this lesson") : (isActivity ? "Add an activity" : "Add a lesson"))
+        .help(LessonCell.hint(filled: filled, isActivity: isActivity, planned: planned))
+    }
+
+    static func hint(filled: Bool, isActivity: Bool, planned: String?) -> String {
+        if filled { return isActivity ? "Edit this activity" : "Edit this lesson" }
+        if let planned = planned { return "Planned for study: \(planned). Click to put something else here." }
+        return isActivity ? "Add an activity" : "Add a lesson"
     }
 }
 

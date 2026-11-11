@@ -44,6 +44,10 @@ struct SettingsView: View {
                             if let store = model.timetableStore {
                                 TimetableSettings(model: model, store: store)
                             }
+                        case .planner:
+                            if let store = model.plannerStore {
+                                PlannerSettings(model: model, settings: settings, assistant: assistant, store: store)
+                            }
                         case .gmail:
                             GmailLinkSettings(settings: settings)
                         case .updates:
@@ -363,6 +367,11 @@ struct AssistantSettings: View {
                            ? "Ask things like \"add soccer on Tuesdays at 5\". Your timetable is sent to Anthropic with each question; changes are made only when you ask."
                            : "Ask things like \"add soccer on Tuesdays at 5\". Your timetable stays on this Mac; changes are made only when you ask.",
                        isOn: $assistant.editsTimetable)
+        SettingsToggle(title: "See and change my planner",
+                       detail: assistant.engine.isClaude
+                           ? "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams are sent to Anthropic with each question; changes are made only when you ask."
+                           : "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams stay on this Mac; changes are made only when you ask.",
+                       isOn: $assistant.editsPlanner)
         SettingsToggle(title: "Share my newest emails and notes",
                        detail: assistant.engine.isClaude
                            ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
@@ -594,6 +603,81 @@ struct TimetableSettings: View {
             .opacity(table.isEmpty && !confirmClear ? 0.5 : 1)
         }
         PillButton(title: "Open Timetable", prominent: true, action: { model.openTimetable() })
+    }
+}
+
+// MARK: Planner
+
+struct PlannerSettings: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var store: PlannerStore
+
+    var body: some View {
+        SettingsHeading(title: "Planner",
+                        detail: "Your homework and exams, kept on this Mac. Type them in, ask the assistant to add them, or let your email do it.")
+        PlannerMailSettings(settings: settings, assistant: assistant)
+        SettingsDivider()
+        PlannerStudySettings(settings: settings)
+        SettingsDivider()
+        SettingsRow(title: "Finished homework",
+                    detail: store.planner.finished.isEmpty ? "Nothing finished to clear. Finished homework clears itself after a month."
+                        : "\(store.planner.finished.count) finished. They clear themselves after a month.") {
+            PillButton(title: "Clear Finished", action: { store.change { $0.clearDone() } })
+                .disabled(store.planner.finished.isEmpty)
+                .opacity(store.planner.finished.isEmpty ? 0.5 : 1)
+        }
+        PillButton(title: "Open Planner", prominent: true, action: { model.openPlanner() })
+    }
+}
+
+/// What the planner takes from your mail, and who reads it.
+struct PlannerMailSettings: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var assistant: Assistant
+
+    var body: some View {
+        let name = assistant.engine.name
+
+        SettingsToggle(title: "Add homework from Google Classroom emails",
+                       detail: "New assignments, their due dates and returned work are read from Classroom's emails here, on this Mac, with no AI. Nothing is sent anywhere.",
+                       isOn: $settings.classroomHomework)
+        SettingsToggle(title: "Find due dates in my other emails with \(name)",
+                       detail: assistant.engine.isClaude
+                           ? "Off, your emails stay on this Mac. On, emails that mention something like a due date, an exam or a form to return are sent to Anthropic for Claude to read: who it's from, the subject and the first 1,500 characters, starting with the last two weeks. It uses Claude Haiku, a few emails at a time."
+                           : "Emails that mention something like a due date, an exam or a form to return are read by Qwen on this Mac. Nothing leaves it.",
+                       isOn: $assistant.findsDueDates)
+        if assistant.findsDueDates {
+            StatusLine(state: settings.finding.problem != nil ? .problem : (settings.finding.busy ? .waiting : .good),
+                       text: assistant.status.isReady ? settings.finding.summary : "Waiting for \(name) to be set up (Settings → Assistant)")
+        }
+        SettingsToggle(title: "Let the assistant see and change my planner",
+                       detail: assistant.engine.isClaude
+                           ? "For \"what's due this week?\" and \"add a Maths test on Friday\". Your homework and exams are sent to Anthropic with each question you ask."
+                           : "For \"what's due this week?\" and \"add a Maths test on Friday\". They stay on this Mac.",
+                       isOn: $assistant.editsPlanner)
+    }
+}
+
+/// Fitting homework into free time.
+struct PlannerStudySettings: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsToggle(title: "Plan my study time",
+                       detail: "Fits homework and exam revision into the free time on your timetable, soonest due first, and shows it in the planner and in the timetable's empty slots.",
+                       isOn: $settings.plansStudy)
+        if settings.plansStudy {
+            SettingsRow(title: "Study in a day",
+                        detail: "The most to plan for one day. Homework due sooner than that allows is still planned in time.") {
+                ChoiceSegments(options: AppSettings.studyChoices.map { minutes in
+                    ChoiceSegments<Int>.Option(value: minutes,
+                                               title: minutes == 0 ? "Any" : DueText.length(minutes),
+                                               help: minutes == 0 ? "As much as fits in your free time" : "Up to \(DueText.length(minutes)) of study a day")
+                }, selected: settings.studyMinutesADay, choose: { settings.studyMinutesADay = $0 })
+            }
+        }
     }
 }
 

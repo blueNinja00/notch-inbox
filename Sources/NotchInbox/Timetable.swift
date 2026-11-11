@@ -380,6 +380,11 @@ struct Timetable: Codable, Equatable {
         return seen.values.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
+    /// Your classes and activities, without the "School" block: what homework can be for.
+    var classes: [String] {
+        subjects.filter { Timetable.subjectKey($0) != Timetable.subjectKey(Timetable.schoolSubject) }
+    }
+
     /// The room and teacher another lesson of this subject has, to fill in for you.
     func usual(for subject: String) -> Lesson? {
         let name = Timetable.subjectKey(subject)

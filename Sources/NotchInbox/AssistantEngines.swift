@@ -181,15 +181,23 @@ enum ClaudeStream {
     static let apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
     static let apiVersion = "2023-06-01"
 
-    static func apiBody(model: ClaudeModel, system: String, turns: [ChatTurn], maxTokens: Int = 2048) -> Data? {
+    static func apiBody(model: ClaudeModel, system: String, turns: [ChatTurn], maxTokens: Int = 2048, stream: Bool = true) -> Data? {
         let body: [String: Any] = [
             "model": model.apiID,
             "max_tokens": maxTokens,
             "system": system,
-            "stream": true,
+            "stream": stream,
             "messages": turns.map { ["role": $0.role.rawValue, "content": $0.text] },
         ]
         return try? JSONSerialization.data(withJSONObject: body)
+    }
+
+    /// The text of a whole answer that wasn't streamed.
+    static func apiText(from data: Data) -> String? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let content = object["content"] as? [[String: Any]] else { return nil }
+        let text = content.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined()
+        return text.isEmpty ? nil : text
     }
 
     /// One line of the API's server-sent events.

@@ -17,9 +17,9 @@ final class Assistant: ObservableObject {
         var raw: String
         var failed = false
 
-        /// Without reasoning or a timetable change block (the app applies those).
+        /// Without reasoning or a block asking for a change (the app makes those).
         var text: String {
-            role == .assistant ? TimetableAgent.hidden(AssistantPrompt.withoutThinking(raw)) : raw
+            role == .assistant ? AgentBlock.hidden(AssistantPrompt.withoutThinking(raw)) : raw
         }
     }
 
@@ -52,6 +52,7 @@ final class Assistant: ObservableObject {
             guard engine != oldValue else { return }
             UserDefaults.standard.set(engine.rawValue, forKey: Assistant.engineKey)
             sharesContext = Assistant.loadSharing(for: engine)
+            findsDueDates = Assistant.loadFinding(for: engine)
             status = .checking
             checkSetup()
         }
@@ -79,6 +80,22 @@ final class Assistant: ObservableObject {
         didSet { UserDefaults.standard.set(editsTimetable, forKey: Assistant.timetableKey) }
     }
 
+    /// Whether the assistant sees your planner (homework and exams) and may change it when you ask.
+    @Published var editsPlanner: Bool {
+        didSet { UserDefaults.standard.set(editsPlanner, forKey: Assistant.plannerKey) }
+    }
+
+    /// Whether the assistant looks through emails that mention a deadline, to add them to the
+    /// planner. Qwen reads them on this Mac. Claude would have them sent to Anthropic, so for
+    /// Claude it's off until you turn it on.
+    @Published var findsDueDates: Bool {
+        didSet {
+            guard findsDueDates != oldValue else { return }
+            UserDefaults.standard.set(findsDueDates, forKey: Assistant.findingKey(for: engine))
+            onFindingChanged?()
+        }
+    }
+
     /// "sk-ant-…a1b2" when an API key is saved.
     @Published private(set) var apiKeyHint: String?
     /// Where Claude Code was found.
@@ -89,10 +106,16 @@ final class Assistant: ObservableObject {
     /// The timetable in words, and making the changes the assistant asks for (set by the app).
     var timetableDescription: (() -> String)?
     var applyTimetable: ((TimetableAgent.Plan) -> [String])?
+    /// The planner in words, and making the changes the assistant asks for (set by the app).
+    var plannerDescription: (() -> String)?
+    var applyPlanner: ((PlannerAgent.Plan) -> [String])?
+    /// Finding due dates in emails was turned on or off, or the assistant became ready.
+    var onFindingChanged: (() -> Void)?
 
     private static let engineKey = "assistantEngine"
     private static let claudeModelKey = "assistantClaudeModel"
     private static let timetableKey = "assistantEditsTimetable"
+    private static let plannerKey = "assistantEditsPlanner"
     private let ollama = URL(string: "http://127.0.0.1:11434")!
     private var qwenModel: String?
     private var answering: Task<Void, Never>?
@@ -104,6 +127,8 @@ final class Assistant: ObservableObject {
         claudeModel = defaults.string(forKey: Assistant.claudeModelKey).flatMap(ClaudeModel.init(rawValue:)) ?? .standard
         sharesContext = Assistant.loadSharing(for: engine)
         editsTimetable = defaults.object(forKey: Assistant.timetableKey) == nil ? true : defaults.bool(forKey: Assistant.timetableKey)
+        editsPlanner = defaults.object(forKey: Assistant.plannerKey) == nil ? true : defaults.bool(forKey: Assistant.plannerKey)
+        findsDueDates = Assistant.loadFinding(for: engine)
         apiKeyHint = APIKeyFile.read().map(APIKeyFile.hint(for:))
     }
 
@@ -113,6 +138,16 @@ final class Assistant: ObservableObject {
 
     private static func loadSharing(for engine: AssistantEngine) -> Bool {
         let key = sharingKey(for: engine)
+        guard UserDefaults.standard.object(forKey: key) != nil else { return !engine.isClaude }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    private static func findingKey(for engine: AssistantEngine) -> String {
+        engine.isClaude ? "plannerFindsWithClaude" : "plannerFindsWithQwen"
+    }
+
+    private static func loadFinding(for engine: AssistantEngine) -> Bool {
+        let key = findingKey(for: engine)
         guard UserDefaults.standard.object(forKey: key) != nil else { return !engine.isClaude }
         return UserDefaults.standard.bool(forKey: key)
     }
@@ -162,6 +197,9 @@ final class Assistant: ObservableObject {
                 let shown: Status = status.isReady ? .ready(name: self.modelName) : status
                 if self.status != shown {
                     self.status = shown
+                    if shown.isReady {
+                        self.onFindingChanged?()
+                    }
                 }
             }
         }
@@ -208,8 +246,10 @@ final class Assistant: ObservableObject {
         }
 
         let timetable = editsTimetable ? (timetableDescription?() ?? "") : ""
-        let shared = [sharesContext ? (context?() ?? "") : "", timetable].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let planner = editsPlanner ? (plannerDescription?() ?? "") : ""
+        let shared = [sharesContext ? (context?() ?? "") : "", timetable, planner].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let canEdit = !timetable.isEmpty
+        let canPlan = !planner.isEmpty
         var history = messages.map { (role: $0.role, text: $0.text, failed: $0.failed) }
         history.append((role: .user, text: question, failed: false))
         let turns = ClaudeStream.turns(from: history)
@@ -224,12 +264,12 @@ final class Assistant: ObservableObject {
             guard let self = self else { return }
             switch engine {
             case .claudeCode:
-                await self.askClaudeCode(model: model, context: shared, turns: turns, timetable: canEdit)
+                await self.askClaudeCode(model: model, context: shared, turns: turns, timetable: canEdit, planner: canPlan)
             case .claudeAPI:
-                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true, timetable: canEdit)
+                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true, timetable: canEdit, planner: canPlan)
                 await self.askAnthropic(model: model, system: system, turns: turns)
             case .qwen:
-                let system = AssistantPrompt.system(now: Date(), context: shared, timetable: canEdit)
+                let system = AssistantPrompt.system(now: Date(), context: shared, timetable: canEdit, planner: canPlan)
                 await self.askQwen(system: system, turns: turns)
             }
         }
@@ -248,13 +288,13 @@ final class Assistant: ObservableObject {
 
     // MARK: Claude Code
 
-    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn], timetable: Bool) async {
+    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn], timetable: Bool, planner: Bool) async {
         guard let path = claudePath ?? ClaudeCode.find() else {
             await finish(problem: "Couldn't find Claude Code on this Mac. See Settings → Assistant.")
             return
         }
         // The context goes in with the question, so it never appears on a command line.
-        let system = AssistantPrompt.system(now: Date(), context: "", claude: true, timetable: timetable)
+        let system = AssistantPrompt.system(now: Date(), context: "", claude: true, timetable: timetable, planner: planner)
         let prompt = ClaudeStream.codeInput(context: context, turns: turns)
 
         var problem: String?
@@ -419,21 +459,164 @@ final class Assistant: ObservableObject {
                     self.messages[last].raw += "\n\n(" + problem + ")"
                 }
                 self.checkSetup()
-            } else if self.messages[last].text.isEmpty && !self.messages[last].raw.contains(TimetableAgent.openTag) {
+            } else if self.messages[last].text.isEmpty && !self.messages[last].raw.contains(TimetableAgent.openTag)
+                        && !self.messages[last].raw.contains(PlannerAgent.openTag) {
                 self.messages[last].raw = "(Stopped)"
             }
-            // The assistant asked to change the timetable: make the changes, then say what changed.
-            if problem == nil && !Task.isCancelled && self.messages[last].raw.contains(TimetableAgent.closeTag) {
-                let found = TimetableAgent.extract(from: self.messages[last].raw)
+            // The assistant asked to change the timetable or the planner: make the changes,
+            // then say what changed.
+            guard problem == nil, !Task.isCancelled else { return }
+            let raw = self.messages[last].raw
+            var notes: [String] = []
+            if raw.contains(TimetableAgent.closeTag) {
+                let found = TimetableAgent.extract(from: raw)
                 if let plan = found.plan, let apply = self.applyTimetable {
-                    let changes = apply(plan)
-                    let note = changes.isEmpty ? "(The timetable already had that.)"
-                        : "✓ Timetable updated: " + changes.prefix(12).joined(separator: "; ") + (changes.count > 12 ? "; and \(changes.count - 12) more" : "")
-                    self.messages[last].raw = (found.text.isEmpty ? "" : found.text + "\n\n") + note
+                    notes.append(Assistant.note("Timetable updated", changes: apply(plan), nothing: "(The timetable already had that.)"))
                 } else if found.plan == nil {
-                    self.messages[last].raw = found.text + "\n\n(I tried to change your timetable, but the change didn't come through right. Ask again?)"
+                    notes.append("(I tried to change your timetable, but the change didn't come through right. Ask again?)")
                 }
             }
+            if raw.contains(PlannerAgent.closeTag) {
+                let found = PlannerAgent.extract(from: raw)
+                if let plan = found.plan, let apply = self.applyPlanner {
+                    notes.append(Assistant.note("Planner updated", changes: apply(plan), nothing: "(The planner already had that.)"))
+                } else if found.plan == nil {
+                    notes.append("(I tried to change your planner, but the change didn't come through right. Ask again?)")
+                }
+            }
+            if !notes.isEmpty {
+                let said = AgentBlock.hidden(AssistantPrompt.withoutThinking(raw))
+                self.messages[last].raw = (said.isEmpty ? "" : said + "\n\n") + notes.joined(separator: "\n")
+            }
+        }
+    }
+
+    /// "✓ Timetable updated: Tue 5 pm: Soccer; Wed 6 pm: cleared".
+    private static func note(_ heading: String, changes: [String], nothing: String) -> String {
+        guard !changes.isEmpty else { return nothing }
+        return "✓ \(heading): " + changes.prefix(12).joined(separator: "; ") + (changes.count > 12 ? "; and \(changes.count - 12) more" : "")
+    }
+
+    // MARK: One question, one answer
+
+    /// What went wrong, in words.
+    struct Problem: Error {
+        let message: String
+    }
+
+    /// Asks once and waits for the whole answer, outside the chat: for jobs behind the scenes,
+    /// like finding due dates in emails. Claude answers with its fastest model.
+    func complete(system: String, prompt: String) async -> Result<String, Problem> {
+        switch engine {
+        case .claudeCode:
+            return await completeWithClaudeCode(system: system, prompt: prompt)
+        case .claudeAPI:
+            return await completeWithAnthropic(system: system, prompt: prompt)
+        case .qwen:
+            return await completeWithQwen(system: system, prompt: prompt)
+        }
+    }
+
+    private func completeWithClaudeCode(system: String, prompt: String) async -> Result<String, Problem> {
+        guard let path = claudePath ?? ClaudeCode.find() else {
+            return .failure(Problem(message: "Couldn't find Claude Code on this Mac."))
+        }
+        var streamed = ""
+        var whole = ""
+        var problem: String?
+        do {
+            for compatible in [false, true] {
+                streamed = ""
+                whole = ""
+                problem = nil
+                let outcome = try await ClaudeCode.run(
+                    path: path,
+                    arguments: ClaudeStream.codeArguments(model: .haiku, system: system, compatible: compatible),
+                    prompt: prompt
+                ) { piece in
+                    switch piece {
+                    case .text(let text): streamed += text
+                    case .finished(let text): whole = text
+                    case .failed(let reason): problem = reason
+                    case .done: break
+                    }
+                }
+                if !compatible && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
+                    continue
+                }
+                if problem == nil && streamed.isEmpty && whole.isEmpty {
+                    problem = ClaudeStream.codeProblem(outcome.errorOutput)
+                }
+                break
+            }
+        } catch {
+            problem = "Couldn't start Claude Code: \(error.localizedDescription)"
+        }
+        if let problem = problem {
+            return .failure(Problem(message: problem))
+        }
+        return .success(whole.isEmpty ? streamed : whole)
+    }
+
+    private func completeWithAnthropic(system: String, prompt: String) async -> Result<String, Problem> {
+        guard let key = APIKeyFile.read() else {
+            return .failure(Problem(message: "Add your Anthropic API key in Settings → Assistant."))
+        }
+        var request = URLRequest(url: ClaudeStream.apiURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue(ClaudeStream.apiVersion, forHTTPHeaderField: "anthropic-version")
+        request.timeoutInterval = 90
+        request.httpBody = ClaudeStream.apiBody(model: .haiku, system: system, turns: [ChatTurn(role: .user, text: prompt)],
+                                                maxTokens: 1500, stream: false)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard code == 200 else {
+                return .failure(Problem(message: ClaudeStream.apiProblem(status: code, body: String(decoding: data.prefix(8000), as: UTF8.self))))
+            }
+            guard let text = ClaudeStream.apiText(from: data) else {
+                return .failure(Problem(message: "Claude's answer couldn't be read."))
+            }
+            return .success(text)
+        } catch {
+            return .failure(Problem(message: "Couldn't reach Anthropic. Check your internet connection."))
+        }
+    }
+
+    private func completeWithQwen(system: String, prompt: String) async -> Result<String, Problem> {
+        guard let model = qwenModel else {
+            return .failure(Problem(message: "Qwen isn't set up yet."))
+        }
+        var request = URLRequest(url: ollama.appendingPathComponent("api/chat"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 180
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [["role": "system", "content": system], ["role": "user", "content": prompt]],
+            "stream": false,
+            "think": false,
+            "format": "json",
+            "keep_alive": "5m",
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let code = (response as? HTTPURLResponse)?.statusCode, code != 200 {
+                return .failure(Problem(message: "Ollama answered \(code). Is \(model) still downloaded?"))
+            }
+            let chunk = AssistantPrompt.chunk(from: String(decoding: data, as: UTF8.self))
+            if let error = chunk?.error {
+                return .failure(Problem(message: error))
+            }
+            guard let text = chunk?.message?.content, !text.isEmpty else {
+                return .failure(Problem(message: "Qwen's answer couldn't be read."))
+            }
+            return .success(text)
+        } catch {
+            return .failure(Problem(message: "Couldn't reach Ollama. Is it running?"))
         }
     }
 }

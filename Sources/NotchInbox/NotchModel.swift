@@ -187,6 +187,7 @@ final class NotchModel: ObservableObject {
     /// Which tool the open panel shows. Inboxes and notes both use the lanes and detail sizes.
     enum Tool: Equatable {
         case mail
+        case planner
         case notes
         case assistant
         case timetable
@@ -220,6 +221,26 @@ final class NotchModel: ObservableObject {
 
     /// Which week of a two-week timetable is on screen: 0 for Week A, 1 for Week B.
     @Published var timetableWeek = 0
+
+    /// The planner (homework and exams), shared by every screen (set by the app).
+    var plannerStore: PlannerStore?
+
+    /// What the planner's side panel is editing.
+    enum PlannerEdit: Equatable {
+        case task(UUID)
+        case exam(UUID)
+    }
+
+    @Published var plannerEdit: PlannerEdit? {
+        didSet {
+            // Finished with one: homework or an exam left without a name goes.
+            if let before = oldValue, before != plannerEdit {
+                removeIfUnnamed(before)
+            }
+        }
+    }
+    /// Whether the planner's list shows finished homework as well.
+    @Published var plannerShowsDone = false
 
     /// Sizes you've dragged each open level to; missing means the standard size.
     @Published var customSizes: [NotchLevel: CGSize] = [:]
@@ -310,6 +331,96 @@ final class NotchModel: ObservableObject {
         if let id = added {
             timetableEdit = .period(id)
         }
+    }
+
+    // MARK: Planner
+
+    /// Homework and exams.
+    func openPlanner() {
+        tool = .planner
+        plannerEdit = nil
+        level = .lanes
+    }
+
+    func expandPlanner() {
+        tool = .planner
+        level = .detail
+    }
+
+    /// Click homework to edit it; click it again to stop.
+    func editTask(_ id: UUID) {
+        tool = .planner
+        plannerEdit = plannerEdit == .task(id) ? nil : .task(id)
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    func editExam(_ id: UUID) {
+        tool = .planner
+        plannerEdit = plannerEdit == .exam(id) ? nil : .exam(id)
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Adds homework from one typed line ("Maths worksheet fri 4pm 45m"). A subject from the
+    /// timetable named in it becomes its subject. Returns false if nothing was typed.
+    @discardableResult
+    func addTask(typed: String, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let store = plannerStore else { return false }
+        let entry = QuickEntry.parse(typed, now: now, calendar: calendar)
+        guard !entry.title.isEmpty else { return false }
+        var task = PlannerTask(title: entry.title, due: entry.due, hasTime: entry.hasTime)
+        task.minutes = entry.minutes ?? PlannerTask.guessMinutes(for: entry.title)
+        task.subject = Planner.subject(in: entry.title, among: timetableStore?.timetable.classes ?? []) ?? ""
+        store.change { $0.add(task) }
+        return true
+    }
+
+    /// A new exam a week from today, opened for editing.
+    func newExam(now: Date = Date(), calendar: Calendar = .current) {
+        guard let store = plannerStore else { return }
+        let date = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: now)) ?? now
+        let exam = Exam(title: "", date: date)
+        store.change { $0.add(exam) }
+        tool = .planner
+        plannerEdit = .exam(exam.id)
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Closes the planner's side panel.
+    func closePlannerEdit() {
+        plannerEdit = nil
+    }
+
+    private func removeIfUnnamed(_ edit: PlannerEdit) {
+        plannerStore?.change { planner in
+            switch edit {
+            case .task(let id):
+                if planner.task(id)?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                    planner.removeTask(id)
+                }
+            case .exam(let id):
+                if planner.exam(id)?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                    planner.removeExam(id)
+                }
+            }
+        }
+    }
+
+    /// Opens the email homework or an exam came from, in the notch.
+    func openEmail(_ id: String) {
+        guard let message = messages.first(where: { $0.id == id }) else { return }
+        open(accountID: message.accountID, messageID: id)
+    }
+
+    /// Whether the notch still has an email (to offer "Open email").
+    func hasEmail(_ id: String?) -> Bool {
+        guard let id = id else { return false }
+        return messages.contains { $0.id == id }
     }
 
     /// The assistant (Claude or Qwen).
@@ -419,6 +530,7 @@ final class NotchModel: ObservableObject {
         endSearch()
         notesStore?.removeEmpty(except: nil)
         timetableEdit = nil
+        closePlannerEdit()
     }
 
     /// Expand one inbox, opening the given message (or the newest).

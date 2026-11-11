@@ -45,7 +45,7 @@ struct NotchMetrics: Equatable {
         case .rest:
             return CGSize(width: notchWidth + max(0, ears) * 2, height: notchHeight)
         case .peek:
-            return CGSize(width: 860, height: topRow + 110)
+            return CGSize(width: 1000, height: topRow + 110)
         case .lanes:
             return CGSize(width: 900, height: topRow + 318)
         case .detail:
@@ -81,7 +81,7 @@ struct NotchMetrics: Equatable {
     func minimumSize(_ level: NotchLevel) -> CGSize {
         switch level {
         case .rest: return bodySize(.rest)
-        case .peek: return CGSize(width: 720, height: topRow + 104)
+        case .peek: return CGSize(width: 860, height: topRow + 104)
         case .lanes: return CGSize(width: 640, height: topRow + 220)
         case .detail: return CGSize(width: 820, height: topRow + 340)
         }

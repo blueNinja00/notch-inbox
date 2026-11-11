@@ -35,6 +35,11 @@ enum Theme {
 
     static let hairline = Color.white.opacity(0.06)
 
+    /// Overdue, due today, and all's well.
+    static let danger = Color(hex: 0xFF6B6B)
+    static let warning = Color(hex: 0xFFB547)
+    static let good = Color(hex: 0x34C759)
+
     /// Subject colours for the timetable: bright enough to read on black, distinct side by side.
     static let subjectHexes: [UInt32] = [0x5E9EFF, 0x3DD6A3, 0xFFB547, 0xFF6B6B, 0xB18CFF, 0xFF7AC6, 0x56CFE1, 0xA6D85A]
 

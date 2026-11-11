@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The primary menu: one tile per tool (Mail, Timetable, Notes, Assistant). Hovering the
+/// The primary menu: one tile per tool (Mail, Planner, Timetable, Notes, Assistant). Hovering the
 /// notch shows it; clicking a tile opens that tool.
 struct HomeView: View {
     @ObservedObject var model: NotchModel
@@ -13,6 +13,10 @@ struct HomeView: View {
             TopRow(metrics: metrics) {
                 HStack(spacing: 10) {
                     TodayLabel()
+                        .fixedSize()
+                    if let planner = model.plannerStore {
+                        ExamCountdownChip(model: model, store: planner)
+                    }
                     if let phone = model.phoneConnected {
                         HStack(spacing: 5) {
                             PhoneDot(size: 6)
@@ -30,37 +34,34 @@ struct HomeView: View {
             }
 
             // Short: the tools in a row. Dragged taller: Mail on the left with your latest
-            // emails; the timetable, notes and assistant on the right.
+            // emails; the planner, timetable, notes and assistant on the right.
             GeometryReader { area in
                 if area.size.height > 200 {
                     HStack(spacing: 8) {
                         MailToolTile(model: model)
                         VStack(spacing: 8) {
-                            if let timetable = model.timetableStore {
-                                TimetableToolTile(model: model, store: timetable)
+                            HStack(spacing: 8) {
+                                plannerTile
+                                timetableTile
                             }
                             HStack(spacing: 8) {
-                                if let store = model.notesStore {
-                                    NotesToolTile(model: model, store: store)
-                                }
+                                notesTile
                                 AssistantToolTile(model: model, assistant: Assistant.shared)
                             }
                         }
-                        .frame(width: min(max(area.size.width * 0.42, 320), 520))
+                        .frame(width: min(max(area.size.width * 0.46, 360), 560))
                     }
                 } else {
                     HStack(spacing: 8) {
                         MailToolTile(model: model)
-                        if let timetable = model.timetableStore {
-                            TimetableToolTile(model: model, store: timetable)
-                                .frame(width: min(max(area.size.width * 0.22, 172), 300))
-                        }
-                        if let store = model.notesStore {
-                            NotesToolTile(model: model, store: store)
-                                .frame(width: min(max(area.size.width * 0.19, 140), 260))
-                        }
+                        plannerTile
+                            .frame(width: min(max(area.size.width * 0.19, 150), 280))
+                        timetableTile
+                            .frame(width: min(max(area.size.width * 0.19, 150), 280))
+                        notesTile
+                            .frame(width: min(max(area.size.width * 0.135, 110), 240))
                         AssistantToolTile(model: model, assistant: Assistant.shared)
-                            .frame(width: min(max(area.size.width * 0.19, 140), 260))
+                            .frame(width: min(max(area.size.width * 0.135, 110), 240))
                     }
                 }
             }
@@ -72,6 +73,27 @@ struct HomeView: View {
         .frame(width: size.width, height: size.height, alignment: .top)
         .contentShape(Rectangle())
         .onTapGesture { model.pinHome() }
+    }
+
+    @ViewBuilder
+    private var plannerTile: some View {
+        if let planner = model.plannerStore, let timetable = model.timetableStore {
+            PlannerToolTile(model: model, store: planner, timetable: timetable)
+        }
+    }
+
+    @ViewBuilder
+    private var timetableTile: some View {
+        if let timetable = model.timetableStore {
+            TimetableToolTile(model: model, store: timetable)
+        }
+    }
+
+    @ViewBuilder
+    private var notesTile: some View {
+        if let store = model.notesStore {
+            NotesToolTile(model: model, store: store)
+        }
     }
 }
 

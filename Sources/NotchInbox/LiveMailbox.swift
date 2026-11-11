@@ -285,6 +285,21 @@ struct LiveMailbox {
         showing > 0 ? new : Array(new.dropFirst())
     }
 
+    /// Meets the accounts reporting in. Of the ones never seen before (not in `met`), the
+    /// first shows if nothing else is showing, and every other starts out of the notch until
+    /// it's added. Returns the accounts that were new.
+    @discardableResult
+    mutating func admit(_ reporting: [String], met: inout Set<String>) -> [String] {
+        var new: [String] = []
+        for account in reporting where !met.contains(account) && !new.contains(account) {
+            new.append(account)
+        }
+        guard !new.isEmpty else { return [] }
+        hidden.formUnion(LiveMailbox.startingHidden(new: new, showing: accounts.count))
+        met.formUnion(new)
+        return new
+    }
+
     /// Swaps two accounts' places in the order they show in. Returns whether anything moved.
     @discardableResult
     mutating func swapPlaces(_ first: String, _ second: String) -> Bool {

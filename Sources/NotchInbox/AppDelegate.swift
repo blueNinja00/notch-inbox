@@ -811,20 +811,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Accounts seen for the first time. The notch starts with one inbox: the first account
-    /// ever linked shows by itself, and any other waits until you add it (the + in Mail, or
-    /// Settings → Mail accounts).
+    /// ever linked shows by itself, and any other waits until you add it ("Add an inbox" in
+    /// Mail, or Settings → Mail accounts).
     private func admitNewAccounts(_ accounts: [String]) {
-        var new: [String] = []
-        for account in accounts where !metAccounts.contains(account) && !new.contains(account) {
-            new.append(account)
-        }
-        guard !new.isEmpty else { return }
-        let waiting = LiveMailbox.startingHidden(new: new, showing: mailbox.accounts.count)
-        if !waiting.isEmpty {
-            mailbox.hidden.formUnion(waiting)
-            UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
-        }
-        metAccounts.formUnion(new)
+        guard !mailbox.admit(accounts, met: &metAccounts).isEmpty else { return }
+        UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
         UserDefaults.standard.set(Array(metAccounts).sorted(), forKey: AppDelegate.metAccountsKey)
     }
 

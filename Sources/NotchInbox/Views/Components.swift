@@ -134,6 +134,11 @@ struct ToolTabs<Extra: View>: View {
             .background(Capsule().fill(Theme.raised))
 
             extra()
+
+            // You came here from the tour: one click goes back to it.
+            if model.tourPaused {
+                TourChip(title: "Tour", symbol: "arrow.uturn.backward", hint: "Back to the tour", action: { model.openTour() })
+            }
         }
         .padding(.leading, 4)
     }
@@ -222,6 +227,16 @@ struct InboxMenu: View {
         if !model.isSample {
             Divider()
             Button("Open This Inbox in Gmail") { model.openAccountInGmail(account.id) }
+        }
+        if model.accounts.count > 1 {
+            Divider()
+            if model.canMoveInbox(account.id, by: -1) {
+                Button("Move Left") { model.moveInbox(account.id, by: -1) }
+            }
+            if model.canMoveInbox(account.id, by: 1) {
+                Button("Move Right") { model.moveInbox(account.id, by: 1) }
+            }
+            Button("Take Out of the Notch") { model.hideInbox(account.id) }
         }
     }
 }

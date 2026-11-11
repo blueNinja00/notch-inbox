@@ -1,8 +1,10 @@
 # Notch Inbox
 
-A menu-bar app that turns the MacBook notch into one inbox for three email accounts. Hover to peek, click to see all three side by side, click an inbox to expand it.
+A menu-bar app that turns the MacBook notch into an inbox for up to three email accounts, with a planner, a timetable, notes and an assistant beside it. Hover to peek, click to see your inboxes side by side, click an inbox to expand it.
 
 It shows sample mail until you link your Gmail through the browser (below). **Settings** open inside the notch from the gear at its top right.
+
+**New here?** The first time the app runs, the notch opens by itself with a **tour**: what the notch is, then a page each for Mail, the Planner, the Timetable, Notes, the Assistant, the Extras, the themes, and what does and doesn't leave your Mac. It takes about a minute. See [The tour](#the-tour).
 
 ## Install
 
@@ -22,12 +24,23 @@ Notch Inbox reads your mail through the browser where your Gmail accounts are al
 2. In the browser, open `chrome://extensions` (Arc: `arc://extensions`) and turn on **Developer mode**.
 3. Drag the **Notch Inbox Link** folder onto that page.
 
-Within a minute, the notch shows the unread mail of every Gmail account signed in to that browser (up to three), with Gmail's unread counts:
+Within a minute, the notch shows the unread mail of the first Gmail account signed in to that browser, with Gmail's unread count. Signed in to more than one? The others wait under **Add an inbox** in Mail; the notch shows up to three side by side (see [Choosing your inboxes](#choosing-your-inboxes)). Each inbox shows:
 
 - **Primary tab, plus Google mail** for everyday accounts: Google Classroom, Docs, Drive and Calendar notices are included even when Gmail files them under Updates.
 - **Whole inbox** (every tab) for an address made for receipts or sign-ups (a catch-all, say), since Gmail files that mail outside Primary.
 
-Change either per account, or hide an account, in **Settings → Mail accounts**.
+Change either per account in **Settings → Mail accounts**.
+
+### Choosing your inboxes
+
+The notch starts with **one inbox**, and you choose the rest:
+
+- **Add one:** while there's room, Mail has an **Add an inbox** column on the right listing the accounts that are linked but not showing. Click one and it appears beside the others. Up to three show side by side.
+- **Take one out:** point at an inbox's name and click the **minus** that appears, or right-click the name and choose **Take Out of the Notch**. Its mail is kept, read and unread included, and it goes back under **Add an inbox**. The last inbox always stays.
+- **Reorder:** right-click an inbox's name and choose **Move Left** or **Move Right**. The keys **1**, **2** and **3** and the counts beside the notch follow the new order.
+- **Settings → Mail accounts** has the same choices in one list: a switch per account, and arrows to move it up or down.
+
+An inbox that isn't in the notch isn't counted beside the notch, searched, read for homework or shown to the assistant. If you updated from a build that showed every account, the inboxes you had stay as they were; only accounts you link from now on wait to be added.
 
 **Read and unread are the notch's own.** Gmail itself is never changed; the notch keeps its own tally, saved on this Mac, so it holds through restarts and every update.
 
@@ -66,8 +79,8 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
 
-- **General:** the theme (below), Notch at the top or Mail tab, and resetting panel sizes.
-- **Mail accounts:** per account, Primary or Whole inbox, and whether it shows in the notch; how much mail is kept on this Mac, and how many emails to keep in full.
+- **General:** the theme (below), Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
+- **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox; how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history and the shelf.
@@ -90,6 +103,17 @@ Ask about your day, your email or anything else. In **Settings → Assistant**, 
 
 For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **See and change my timetable** and **See and change my planner** (both on to start with) let it read your timetable, homework and exams, and change them when you ask. **Share my newest emails and notes** lets it see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
 
+## The tour
+
+The first time Notch Inbox runs, and once after updating to the first build that has it, the notch opens with a tour of what everything does. Each page has a sentence on what a tool is for, a few things worth knowing, and the real thing beside it as it looks right now: Mail's tile with your mail, the Planner's with your homework, the themes to click and try.
+
+- **Next** and **Back** (or the **←** and **→** keys, once you've clicked in the panel) turn the pages; the dots jump to any page.
+- Most pages have a button that opens the real tool: **Open the Planner**, say. The tour waits, and a **Tour** button at the top left of every tool takes you back to the page you were on.
+- **Skip the Tour** or **Done** closes it for good. Clicking away or pressing Esc only puts it aside: until it's finished or skipped, the primary menu has a **Take the Tour** button at its top right.
+- **Settings → General → Show the Tour** opens it again whenever you like.
+
+The tour is worded for how the app is set up: it says so if you're still on sample mail, names whichever assistant you've chosen, and lists what's left to set up on its last page.
+
 ## Using it
 
 It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at the top of any external display. It appears on every desktop (Space) too, including full-screen apps. Only one notch opens at a time.
@@ -103,8 +127,8 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 - **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
 - **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
-- **Click the Mail tile:** it opens into three lanes, one per inbox. The grid button at the top left goes back to the primary menu.
-- **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other two inboxes shrink to slim tabs at the sides; click one to switch.
+- **Click the Mail tile:** it opens into a lane per inbox: one to start with, and up to three once you [add more](#choosing-your-inboxes). The grid button at the top left goes back to the primary menu.
+- **Click a lane's header, or any email in it:** that inbox expands, with the list on the left and the full email plus a reply box on the right. The other inboxes shrink to slim tabs at the sides; click one to switch.
 - **Click outside, or press Esc** to close. Esc steps back one level: email → inboxes → primary menu → closed.
 - **Two modes:** **Settings → General** picks between **Notch at the top**, which opens when you hover, and **Mail tab**: everything at the notch is hidden, numbers included, leaving a small black tab with a mail icon hanging from the top of the screen. Drag it along the top, even onto another screen; it stays where you leave it and steps around a camera notch. Click it to open the primary menu (the tab steps aside while it's open) and right-click it for a short menu.
 
@@ -152,7 +176,7 @@ A row under the primary menu's tiles. Click any of them for the **Extras** panel
 
 ## Sample mail
 
-Until the browser link is set up, the accounts (Personal, Work, Studio) and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Snooze is a placeholder for now.
+Until the browser link is set up, the accounts and emails are made up, marked **Sample mail**, and archiving and replying only happen inside the app. Like your own mail, it starts with one inbox (Personal); Work and Studio are under **Add an inbox**, so you can try adding, taking out and reordering. Snooze is a placeholder for now.
 
 ## Building it yourself (optional)
 
@@ -184,7 +208,8 @@ open "build/Notch Inbox.app"
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
-| `NotchModel.swift` | State and actions: open, search, mark read and unread, reply |
+| `NotchModel.swift` | State and actions: open, search, mark read and unread, reply; which inboxes show; where the tour is up to |
+| `Tour.swift`, `Views/TourView.swift` | The tour: what each page says for how the app is set up, whether it has been seen, and how it's drawn |
 | `Mail.swift`, `SampleMail.swift` | Account and message types, sample data. A real mail source plugs in by implementing `MailProvider` |
 | `Updater.swift`, `ReleaseFeed.swift` | Checks this repo's releases and installs newer builds |
 | `BrowserExtension/` | The **Notch Inbox Link** browser add-on |
@@ -195,7 +220,7 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, assistant, settings |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, assistant, settings, tour |
 | `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, and the sums that check its text reads clearly |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
 | `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

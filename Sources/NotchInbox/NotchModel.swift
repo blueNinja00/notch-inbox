@@ -64,32 +64,138 @@ final class NotchModel: ObservableObject {
 
     @Published var wholeEmails: WholeEmails = .coming
 
+    /// An inbox that's linked but isn't in the notch: what "Add an inbox" offers.
+    struct SpareInbox: Identifiable, Equatable {
+        let id: String
+        let name: String
+    }
+
+    /// The most inboxes the notch shows side by side.
+    static let mostInboxes = LiveMailbox.maxAccounts
+
+    /// Inboxes you could add to the notch.
+    @Published private(set) var spareInboxes: [SpareInbox] = []
+    /// For your own mail, the app keeps which inboxes show and in what order, for every screen.
+    var onShowInbox: ((String) -> Void)?
+    var onHideInbox: ((String) -> Void)?
+    var onMoveInbox: ((String, Int) -> Void)?
+
+    /// Every sample inbox, and the ones showing, in order. Sample mail starts with one
+    /// inbox, the way your own mail does.
+    private let sampleAccounts: [MailAccount]
+    private var sampleShown: [String]
+
     init(provider: MailProvider, metrics: NotchMetrics) {
-        let accounts = provider.accounts()
-        self.accounts = accounts
+        let all = provider.accounts()
+        let first = Array(all.prefix(1))
+        sampleAccounts = all
+        sampleShown = first.map { $0.id }
+        self.accounts = NotchModel.numbered(first)
         self.messages = provider.messages()
         self.metrics = metrics
-        self.activeAccountID = accounts.first?.id ?? ""
+        self.activeAccountID = first.first?.id ?? ""
+        spareInboxes = all.dropFirst().map { SpareInbox(id: $0.id, name: $0.name) }
         regroup()
+    }
+
+    // MARK: Which inboxes show
+
+    /// Whether there's room for another inbox, and one to add.
+    var canAddInbox: Bool {
+        accounts.count < NotchModel.mostInboxes && !spareInboxes.isEmpty
+    }
+
+    /// Puts another inbox in the notch, after the ones already there.
+    func showInbox(_ id: String) {
+        guard accounts.count < NotchModel.mostInboxes, spareInboxes.contains(where: { $0.id == id }) else { return }
+        if isSample {
+            sampleShown.append(id)
+            refreshSample()
+        } else {
+            onShowInbox?(id)
+        }
+    }
+
+    /// Takes an inbox out of the notch. Its mail is kept, and it can be added back. The
+    /// last inbox stays.
+    func hideInbox(_ id: String) {
+        guard accounts.count > 1, accounts.contains(where: { $0.id == id }) else { return }
+        if isSample {
+            sampleShown.removeAll { $0 == id }
+            refreshSample()
+        } else {
+            onHideInbox?(id)
+        }
+    }
+
+    /// Whether an inbox can move one place left (-1) or right (1).
+    func canMoveInbox(_ id: String, by offset: Int) -> Bool {
+        LiveMailbox.neighbour(of: id, by: offset, among: accounts.map { $0.id }) != nil
+    }
+
+    /// Moves an inbox one place left or right.
+    func moveInbox(_ id: String, by offset: Int) {
+        guard canMoveInbox(id, by: offset) else { return }
+        if isSample {
+            guard let index = sampleShown.firstIndex(of: id) else { return }
+            sampleShown.swapAt(index, index + offset)
+            refreshSample()
+        } else {
+            onMoveInbox?(id, offset)
+        }
+    }
+
+    /// Sample mail: the inboxes showing changed.
+    private func refreshSample() {
+        let shown = sampleShown.compactMap { id in sampleAccounts.first { $0.id == id } }
+        accounts = NotchModel.numbered(shown)
+        spareInboxes = sampleAccounts.filter { !sampleShown.contains($0.id) }.map { SpareInbox(id: $0.id, name: $0.name) }
+        if !accounts.contains(where: { $0.id == activeAccountID }) {
+            activeAccountID = accounts.first?.id ?? ""
+            openMessageID = nil
+            replyFromID = nil
+            if level == .detail {
+                level = .lanes
+            }
+        }
+        regroup()
+    }
+
+    /// Inboxes numbered 1, 2, 3 in the order they show: the keys that open them.
+    private static func numbered(_ accounts: [MailAccount]) -> [MailAccount] {
+        accounts.enumerated().map { index, account in
+            var numbered = account
+            numbered.shortcut = String(index + 1)
+            return numbered
+        }
     }
 
     /// Real Gmail arrives read-only: archive and reply happen in Gmail. (Read and unread are
     /// the notch's own, so those work on real mail too.)
     var canAct: Bool { isSample }
 
-    /// Swap in real accounts and mail from the browser link.
-    func showLive(accounts: [MailAccount], messages: [MailMessage], unread: [String: Int]) {
+    /// Swap in real accounts and mail from the browser link. `spare` is the linked inboxes
+    /// that aren't in the notch.
+    func showLive(accounts: [MailAccount], messages: [MailMessage], unread: [String: Int], spare: [SpareInbox] = []) {
         let wasSample = isSample
         self.accounts = accounts
         self.messages = messages
         reportedUnread = unread
         isSample = false
+        if spareInboxes != spare {
+            spareInboxes = spare
+        }
 
-        if wasSample || !accounts.contains(where: { $0.id == activeAccountID }) {
+        let lostOpenInbox = !wasSample && !accounts.contains(where: { $0.id == activeAccountID })
+        if wasSample || lostOpenInbox {
             activeAccountID = accounts.first?.id ?? ""
             openMessageID = nil
             replyFromID = nil
             sentFrom = nil
+        }
+        // The inbox you had open was taken out of the notch: back to the ones still in it.
+        if lostOpenInbox, tool == .mail, level == .detail {
+            level = .lanes
         }
         if let id = openMessageID, !messages.contains(where: { $0.id == id }) {
             openMessageID = nil
@@ -193,6 +299,8 @@ final class NotchModel: ObservableObject {
         case timetable
         case extras
         case settings
+        /// The tour of what everything does.
+        case tour
     }
 
     @Published var tool: Tool = .mail
@@ -340,6 +448,66 @@ final class NotchModel: ObservableObject {
         if let id = added {
             timetableEdit = .period(id)
         }
+    }
+
+    // MARK: The tour
+
+    /// Which page of the tour is showing.
+    @Published var tourPage = 0
+    /// The tour hasn't been finished or skipped yet: the primary menu offers it.
+    @Published var tourPending = false
+    /// You left the tour to try something: every tool shows a way back to it.
+    @Published var tourPaused = false
+    /// The tour was finished or skipped (the app remembers, for every screen).
+    var onTourFinished: (() -> Void)?
+
+    /// Opens the tour where you left it, or from the start.
+    func openTour(fromStart: Bool = false) {
+        if fromStart || tourPage >= Tour.pageCount {
+            tourPage = 0
+        }
+        tourPaused = false
+        tool = .tour
+        level = .detail
+    }
+
+    /// The next page; after the last one, the tour is finished.
+    func tourNext() {
+        if tourPage >= Tour.pageCount - 1 {
+            finishTour()
+        } else {
+            tourPage += 1
+        }
+    }
+
+    func tourBack() {
+        tourPage = max(0, tourPage - 1)
+    }
+
+    /// Finished or skipped: it isn't offered again (Settings → General can still show it),
+    /// and you land on the primary menu.
+    func finishTour() {
+        tourPage = 0
+        tourPaused = false
+        tourPending = false
+        onTourFinished?()
+        tool = .mail
+        goHome()
+    }
+
+    /// A page's button: go and look at the real thing. The tour waits, and each tool shows
+    /// a way back to it.
+    func tryFromTour(_ target: TourPage.Target) {
+        switch target {
+        case .mail: openLanes()
+        case .planner: openPlanner()
+        case .timetable: openTimetable()
+        case .notes: openNotes()
+        case .assistant: openAssistant()
+        case .extras: openExtras()
+        case .settings(let section): openSettings(section)
+        }
+        tourPaused = true
     }
 
     /// The Mac extras: the shelf, clipboard history, the focus timer, now playing.
@@ -536,6 +704,10 @@ final class NotchModel: ObservableObject {
     func goHome() {
         homePinned = true
         level = .peek
+        // Leaving the tour this way keeps your page; the primary menu offers it again.
+        if tool == .tour {
+            tool = .mail
+        }
     }
 
     /// A click on the hover menu keeps it open.
@@ -560,6 +732,11 @@ final class NotchModel: ObservableObject {
         notesStore?.removeEmpty(except: nil)
         timetableEdit = nil
         closePlannerEdit()
+        // A tour left open, or left to try something, waits on the primary menu.
+        tourPaused = false
+        if tool == .tour {
+            tool = .mail
+        }
     }
 
     /// Expand one inbox, opening the given message (or the newest).

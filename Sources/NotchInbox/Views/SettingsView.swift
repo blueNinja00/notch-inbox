@@ -195,9 +195,23 @@ struct GeneralSettings: View {
             PillButton(title: "Reset All Sizes", action: { model.resetAllSizes() })
         }
         SettingsDivider()
+        GeneralHelp(model: model)
+    }
+}
+
+/// The keyboard shortcuts, and the tour to watch again.
+struct GeneralHelp: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
         SettingsRow(title: "Keyboard",
                     detail: "Esc goes back a step. In Mail, 1, 2 and 3 open your inboxes, / searches, U marks the open email unread (or read) and O opens it in Gmail.") {
             EmptyView()
+        }
+        SettingsDivider()
+        SettingsRow(title: "Tour",
+                    detail: "A minute-long look at what everything does. It opened by itself the first time; this shows it again.") {
+            PillButton(title: "Show the Tour", action: { model.openTour(fromStart: true) })
         }
     }
 }
@@ -332,8 +346,10 @@ struct AccountSettings: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
+        let showing = settings.accounts.filter { $0.inNotch }.count
+
         SettingsHeading(title: "Mail accounts",
-                        detail: "The notch shows up to three accounts. Primary shows Gmail's Primary tab plus Classroom and other mail from Google; Whole inbox shows every tab.")
+                        detail: "Choose which inboxes show in the notch, up to three side by side, and their order (the arrows). The notch starts with one; switch others on here, or use Add an inbox in Mail. Primary shows Gmail's Primary tab plus Classroom and other mail from Google; Whole inbox shows every tab.")
         if settings.accounts.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("No Gmail accounts linked yet.")
@@ -343,8 +359,10 @@ struct AccountSettings: View {
             }
         } else {
             VStack(spacing: 8) {
-                ForEach(settings.accounts) { account in
-                    AccountSettingRow(account: account, settings: settings)
+                ForEach(Array(settings.accounts.enumerated()), id: \.element.id) { index, account in
+                    AccountSettingRow(account: account, settings: settings,
+                                      isFirst: index == 0, isLast: index == settings.accounts.count - 1,
+                                      isOnly: account.inNotch && showing == 1)
                 }
             }
         }
@@ -373,6 +391,11 @@ struct MailStorageSettings: View {
 struct AccountSettingRow: View {
     let account: AppSettings.Account
     @ObservedObject var settings: AppSettings
+    /// Where it is in the list, for the arrows that move it.
+    var isFirst = false
+    var isLast = false
+    /// The only inbox in the notch: the notch always keeps one, so it can't be switched off.
+    var isOnly = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -391,6 +414,16 @@ struct AccountSettingRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                IconButton(symbol: "chevron.up", label: "Move earlier in the notch", size: 22,
+                           tint: isFirst ? Theme.tertiary.opacity(0.4) : Theme.secondary,
+                           action: { settings.moveAccount(account.id, by: -1) })
+                    .disabled(isFirst)
+                IconButton(symbol: "chevron.down", label: "Move later in the notch", size: 22,
+                           tint: isLast ? Theme.tertiary.opacity(0.4) : Theme.secondary,
+                           action: { settings.moveAccount(account.id, by: 1) })
+                    .disabled(isLast)
+            }
             ChoiceSegments(options: [
                 ChoiceSegments<InboxChoice>.Option(value: .primary, title: "Primary",
                                       help: "Gmail's Primary tab, plus Classroom and other mail from Google"),
@@ -402,7 +435,8 @@ struct AccountSettingRow: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
-                .help(account.hidden ? "Show in the notch" : "Hide from the notch")
+                .disabled(isOnly)
+                .help(switchHelp)
         }
         .padding(.horizontal, 12)
         .frame(height: 50)
@@ -410,9 +444,14 @@ struct AccountSettingRow: View {
     }
 
     private var status: String {
-        if account.hidden { return "Hidden from the notch" }
-        if !account.inNotch { return "No room: hide another account to show this one" }
+        if account.hidden { return "Not in the notch" }
+        if !account.inNotch { return "No room: three show already. Switch one off, or move this up." }
         return "\(UnreadText.format(account.unread)) unread · in the notch"
+    }
+
+    private var switchHelp: String {
+        if isOnly { return "The notch always keeps one inbox. Add another before taking this one out." }
+        return account.hidden ? "Show in the notch" : "Take out of the notch"
     }
 }
 

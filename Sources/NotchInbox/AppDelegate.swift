@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Choices you made in Settings. (Version 2: build 5's automatic guesses are dropped.)
     private static let inboxChoicesKey = "inboxChoices.v2"
     private static let hiddenAccountsKey = "hiddenAccounts"
+    /// Every account the app has met. One it hasn't met before starts out of the notch
+    /// (unless it's the very first), so the notch starts with one inbox and you add the rest.
+    private static let metAccountsKey = "accountsMet"
+    private var metAccounts: Set<String> = []
 
     /// One notch per connected screen, keyed by display.
     private var screens: [CGDirectDisplayID: NotchWindowController] = [:]
@@ -181,6 +185,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.received(email)
         }
         browserLink.start()
+        offerTour()
+    }
+
+    // MARK: The tour
+
+    /// The first time the app runs (or the first time after the update that brought the
+    /// tour), the notch opens by itself and shows what everything does. It only ever opens
+    /// by itself once; until it's finished or skipped, the primary menu keeps offering it.
+    private func offerTour() {
+        guard Tour.opensAtLaunch() else { return }
+        // Give the notch a moment to settle in first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self = self, Tour.opensAtLaunch(), let model = self.notchNearPointer(),
+                  model.level == .rest || model.level == .peek else { return }
+            Tour.markOffered()
+            model.openTour(fromStart: true)
+        }
+    }
+
+    private func tourFinished() {
+        Tour.markSeen()
+        for model in models where model.tourPending {
+            model.tourPending = false
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -246,6 +274,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onUndoMarkAll = { [weak self] in
             self?.undoMarkAll()
         }
+        model.tourPending = Tour.isPending()
+        model.onTourFinished = { [weak self] in
+            self?.tourFinished()
+        }
         model.undoAccount = mailbox.undoAccount
         model.minimised = minimised
         model.phoneConnected = PhoneCableWatcher.shared.phone
@@ -264,8 +296,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.panelResized(sizes)
         }
         model.wholeEmails = wholeEmails
+        model.onShowInbox = { [weak self] account in
+            self?.setHidden(false, for: account, atTheEnd: true)
+        }
+        model.onHideInbox = { [weak self] account in
+            self?.setHidden(true, for: account)
+        }
+        model.onMoveInbox = { [weak self] account, offset in
+            self?.moveInbox(account, by: offset, amongShown: true)
+        }
         if lastFeedAt != nil {
-            model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.shownUnread)
+            model.showLive(accounts: mailbox.accounts, messages: mailbox.messages, unread: mailbox.shownUnread, spare: spareInboxes)
         }
         model.pendingUpdate = updater.availableRelease?.build
         return model
@@ -295,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return LinkReply(want: [], addon: addOn)
         }
         lastFeeds = feeds
+        admitNewAccounts(feeds.map { $0.account })
         var showing: [GmailFeed] = []
         for account in feeds {
             let choice = inboxChoice(for: account.account)
@@ -396,6 +438,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The linked inboxes that aren't in the notch, for "Add an inbox".
+    private var spareInboxes: [NotchModel.SpareInbox] {
+        mailbox.spareAccounts.map { NotchModel.SpareInbox(id: $0, name: LiveMailbox.label(for: $0)) }
+    }
+
     private func showMailEverywhere() {
         // Whatever each screen has open keeps its whole text in memory.
         for model in models {
@@ -407,8 +454,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let messages = mailbox.messages
         let unread = mailbox.shownUnread
         let undo = mailbox.undoAccount
+        let spare = spareInboxes
         for model in models {
-            model.showLive(accounts: accounts, messages: messages, unread: unread)
+            model.showLive(accounts: accounts, messages: messages, unread: unread, spare: spare)
             if model.undoAccount != undo {
                 model.undoAccount = undo
             }
@@ -646,6 +694,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onSetHidden = { [weak self] account, hidden in
             self?.setHidden(hidden, for: account)
         }
+        settings.onMoveAccount = { [weak self] account, offset in
+            self?.moveInbox(account, by: offset, amongShown: false)
+        }
         settings.onCheckForUpdates = { [weak self] in
             self?.checkForUpdates()
         }
@@ -732,14 +783,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveMailboxSoon()
     }
 
-    private func setHidden(_ hidden: Bool, for account: String) {
+    /// Takes an inbox out of the notch, or puts it back. Added from Mail ("Add an inbox"),
+    /// it goes after the inboxes already there; switched on in Settings, it keeps its place
+    /// in the list.
+    private func setHidden(_ hidden: Bool, for account: String, atTheEnd: Bool = false) {
         if hidden {
+            // The notch always keeps one inbox.
+            guard mailbox.accounts.count > 1 || !mailbox.accounts.contains(where: { $0.id == account }) else {
+                // Settings' switch flipped by itself when clicked: put it back.
+                settings.objectWillChange.send()
+                return
+            }
             mailbox.hidden.insert(account)
         } else {
+            if atTheEnd, mailbox.moveAfterShown(account) {
+                UserDefaults.standard.set(mailbox.order, forKey: AppDelegate.accountOrderKey)
+                saveMailboxSoon()
+            }
             mailbox.hidden.remove(account)
         }
         UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
         showMailEverywhere()
+        if !hidden {
+            // An inbox that's just been added may hold homework for the planner.
+            readMailForPlannerSoon()
+        }
+    }
+
+    /// Accounts seen for the first time. The notch starts with one inbox: the first account
+    /// ever linked shows by itself, and any other waits until you add it (the + in Mail, or
+    /// Settings → Mail accounts).
+    private func admitNewAccounts(_ accounts: [String]) {
+        var new: [String] = []
+        for account in accounts where !metAccounts.contains(account) && !new.contains(account) {
+            new.append(account)
+        }
+        guard !new.isEmpty else { return }
+        let waiting = LiveMailbox.startingHidden(new: new, showing: mailbox.accounts.count)
+        if !waiting.isEmpty {
+            mailbox.hidden.formUnion(waiting)
+            UserDefaults.standard.set(Array(mailbox.hidden).sorted(), forKey: AppDelegate.hiddenAccountsKey)
+        }
+        metAccounts.formUnion(new)
+        UserDefaults.standard.set(Array(metAccounts).sorted(), forKey: AppDelegate.metAccountsKey)
+    }
+
+    /// Moves an account one place earlier or later: among the inboxes in the notch (from
+    /// Mail), or among every linked account (from Settings).
+    private func moveInbox(_ account: String, by offset: Int, amongShown: Bool) {
+        let accounts = amongShown ? mailbox.accounts.map { $0.id } : mailbox.linkedAccounts
+        guard let other = LiveMailbox.neighbour(of: account, by: offset, among: accounts),
+              mailbox.swapPlaces(account, other) else { return }
+        UserDefaults.standard.set(mailbox.order, forKey: AppDelegate.accountOrderKey)
+        showMailEverywhere()
+        saveMailboxSoon()
     }
 
     /// Only one copy runs at a time: the one just opened (after an update, say) takes over
@@ -780,6 +877,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                      + (assistant.engine == .claudeCode ? " · Claude Code at \(assistant.claudePath ?? "not found")" : ""))
         let copies = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count
         lines.append("Copies of the app running: \(copies) · app at \(Bundle.main.bundlePath)")
+        lines.append("Tour: \(Tour.isPending() ? "not finished yet" : "finished or skipped") · \(Tour.opensAtLaunch() ? "will open at the next launch" : "has opened by itself already")")
         lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")
         let lastSync = lastFeedAt.map { MailTime.label(for: $0) } ?? "never"
         if let upload = lastUpload {
@@ -799,7 +897,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let account = parsed.account
             let view = inboxChoice(for: account) == .everything ? "whole inbox" : "Primary + Google mail"
             let how = inboxChoices[account] == nil ? "default" : "chosen"
-            let place = mailbox.hidden.contains(account) ? "hidden" : (shown.contains(account) ? "in the notch" : "no room")
+            let place = mailbox.hidden.contains(account) ? "not in the notch (add it in Mail)" : (shown.contains(account) ? "in the notch" : "no room")
             lines.append("\(number + 1). \(account) · Gmail slot \(feed.index) · \(place) · showing \(view) (\(how))")
 
             let main = feed.primary == false ? "inbox (no Primary feed)" : "Primary"
@@ -866,6 +964,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         mailbox.hidden = Set(UserDefaults.standard.stringArray(forKey: AppDelegate.hiddenAccountsKey) ?? [])
+        if let met = UserDefaults.standard.stringArray(forKey: AppDelegate.metAccountsKey) {
+            metAccounts = Set(met)
+        } else {
+            // The first run of a build where the notch starts with one inbox: every account
+            // linked before now has been met, so what's showing stays as it is.
+            metAccounts = Set(mailbox.order)
+            metAccounts.formUnion(UserDefaults.standard.stringArray(forKey: AppDelegate.accountOrderKey) ?? [])
+            metAccounts.formUnion(inboxChoices.keys)
+            metAccounts.formUnion(mailbox.hidden)
+            UserDefaults.standard.set(Array(metAccounts).sorted(), forKey: AppDelegate.metAccountsKey)
+        }
         measureStorage()
     }
 
@@ -941,7 +1050,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             2. Drag the highlighted “Notch Inbox Link” folder from Finder onto that page.
                Or click “Load unpacked”, press ⌘⇧G, paste (the folder's path is already copied) and choose it.
 
-            Within a minute, the unread mail of every Gmail account signed in to that browser shows up in the notch: the Primary tab, plus Google Classroom and other mail from Google. Your mail only travels from the browser to this app, on this Mac.
+            Within a minute, the unread mail of the first Gmail account signed in to that browser shows up in the notch: the Primary tab, plus Google Classroom and other mail from Google. Signed in to more than one? Add the others with “Add an inbox” in Mail, up to three side by side. Your mail only travels from the browser to this app, on this Mac.
             """
             alert.addButton(withTitle: "Done")
             alert.runModal()

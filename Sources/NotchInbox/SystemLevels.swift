@@ -187,8 +187,14 @@ final class BrightnessControl {
     /// The brightness now, or nil if there's no built-in screen to ask.
     func read() -> LevelReading? {
         guard let getter = getter, let display = BrightnessControl.builtIn else { return nil }
-        var value: Float = 0
-        guard getter(display, &value) == 0, value.isFinite else { return nil }
+        // Room to spare around the number it fills in, in case a future macOS answers differently.
+        var room = [Float](repeating: -1, count: 4)
+        let status = room.withUnsafeMutableBufferPointer { buffer -> Int32 in
+            guard let first = buffer.baseAddress else { return -1 }
+            return getter(display, first)
+        }
+        let value = room[0]
+        guard status == 0, value.isFinite, value >= 0, value <= 1 else { return nil }
         return LevelReading(kind: .brightness, value: Double(value))
     }
 

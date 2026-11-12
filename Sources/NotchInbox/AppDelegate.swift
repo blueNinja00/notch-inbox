@@ -387,6 +387,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for (other, controller) in screens where other != id && controller.model.level != .rest {
             controller.model.close()
         }
+        // A good moment to notice that macOS's permission to press keys was given, or taken away.
+        if DocumentTyper.isTrusted != settings.accessibilityAllowed {
+            DispatchQueue.main.async { [weak self] in
+                self?.checkAccessibility()
+            }
+        }
     }
 
     // MARK: Gmail via the browser add-on

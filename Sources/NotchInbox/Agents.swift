@@ -954,8 +954,8 @@ final class AgentsStore: ObservableObject {
             self?.saveNow()
         }
         pendingSave = work
-        // Agents write often while they work: save at most every couple of seconds.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+        // Agents write often while they work: save at most every few seconds.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
     }
 
     /// Writes the team to disk straight away (also on quit).

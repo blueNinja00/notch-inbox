@@ -689,37 +689,39 @@ struct AgentsWelcome: View {
         let tools = assistant.engine == .claudeCode
         let needsSetup = !assistant.status.isReady && assistant.status != .checking
 
-        VStack(alignment: .leading, spacing: 9) {
-            Text("The agent room")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.text)
-            Text("Hand a job to an agent and it works on it by itself while you get on with something else. Each agent gets a floor: watch what it's doing, then read its report. You can also just ask the assistant, and it hands the big jobs out for you.")
-                .font(.system(size: 12.5))
-                .foregroundStyle(Theme.body)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(AgentBrief.powers(tools: tools, web: tools && settings.agentsUseWeb, engine: assistant.engine.title,
-                                   claude: assistant.engine.isClaude))
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.tertiary)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-            if needsSetup {
-                PillButton(title: "Set Up \(assistant.engine.name) First", prominent: true, action: { model.openAssistant() })
-            } else {
-                AgentCaption(text: "Jobs to start from")
-                    .padding(.top, 2)
-                HStack(spacing: 6) {
-                    ForEach(AgentBrief.examples) { example in
-                        SmallPill(title: example.title, symbol: example.symbol, action: { model.agentDraft = example.job })
-                            .help(example.job)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("The agent room")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text("Hand a job to an agent and it works on it by itself while you get on with something else. Each agent gets a floor: watch what it's doing, then read its report. Or just ask the assistant, and it hands the big jobs out for you.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.body)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(AgentBrief.powers(tools: tools, web: tools && settings.agentsUseWeb, engine: assistant.engine.title,
+                                       claude: assistant.engine.isClaude))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.tertiary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if needsSetup {
+                    PillButton(title: "Set Up \(assistant.engine.name) First", prominent: true, action: { model.openAssistant() })
+                } else {
+                    AgentCaption(text: "Jobs to start from")
+                        .padding(.top, 2)
+                    HStack(spacing: 6) {
+                        ForEach(AgentBrief.examples) { example in
+                            SmallPill(title: example.title, symbol: example.symbol, action: { model.agentDraft = example.job })
+                                .help(example.job)
+                        }
                     }
                 }
             }
-            Spacer(minLength: 0)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scrollIndicators(.hidden)
     }
 }
 

@@ -37,6 +37,7 @@ struct AssistantView: View {
                 }
             } trailing: {
                 HStack(spacing: 2) {
+                    IconButton(symbol: HomeTile.agents.symbol, label: "The agent room: jobs handed to agents", action: { model.openAgents() })
                     IconButton(symbol: "square.and.pencil", label: "New chat", action: {
                         assistant.newChat()
                         typing = true

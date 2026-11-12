@@ -616,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return changes
             },
-            heading: "Agents",
+            heading: "In the Agents room",
             nothing: "(No agents needed starting.)")
         let work = Assistant.Ability(
             tag: AssignmentAgent.tag,

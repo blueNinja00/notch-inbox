@@ -5,7 +5,7 @@ import Foundation
 /// the block, so you only see the answer in words.
 enum AgentBlock {
     /// Every kind of block the assistant may use.
-    static let tags = ["timetable", "planner"]
+    static let tags = ["timetable", "planner", StaffAgent.tag, AssignmentAgent.tag, BookmarkAgent.tag]
 
     /// The JSON inside the last <tag>…</tag> block, without any code fence around it.
     static func json(in text: String, tag: String) -> String? {

@@ -72,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shelf = ShelfStore()
     private let bookmarks = BookmarksStore()
     private let assignments = AssignmentsStore()
+    /// Your agents and their jobs, shared by every screen's notch.
+    private let agents = AgentsStore()
+    private lazy var agentRunner = AgentRunner(store: agents, assistant: Assistant.shared, settings: settings)
     /// Homework and exams, shared by every screen's notch.
     private let planner = PlannerStore()
     /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
@@ -131,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onPlannerSettingsChanged = { [weak self] in
             self?.readMailForPlannerSoon()
         }
+        connectAgents()
         planner.change { $0.tidy() }
         Assistant.shared.checkSetup()
         readMailForPlannerSoon()
@@ -225,6 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         planner.saveNow()
         bookmarks.saveNow()
         assignments.saveNow()
+        // Agents still working are stopped: what they'd written so far is kept.
+        agentRunner.stopAll()
     }
 
     // MARK: Screens
@@ -301,6 +307,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.assignmentsStore = assignments
         model.onPlanAssignment = { [weak self] id in
             self?.planAssignment(id)
+        }
+        model.agentsStore = agents
+        model.onStartAgent = { [weak self] name, task in
+            self?.agentRunner.start(name: name, task: task, origin: .you)?.id
+        }
+        model.onStopAgent = { [weak self] id in
+            self?.agentRunner.stop(id)
+        }
+        model.onAgentAgain = { [weak self] id in
+            self?.agentRunner.again(id)?.id
+        }
+        model.onRemoveAgent = { [weak self] id in
+            self?.agentRunner.remove(id)
+        }
+        model.onClearAgents = { [weak self] in
+            self?.agentRunner.clearFinished()
+        }
+        model.onShowAgentFolder = { [weak self] id in
+            self?.showAgentFolder(id)
+        }
+        model.onOpenAgentFile = { [weak self] id, file in
+            self?.openAgentFile(file, of: id)
         }
         model.homeMenu = settings.homeMenu
         model.onArrangeHome = { [weak self] menu in
@@ -553,6 +581,150 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSSound(named: NSSound.Name("Glass"))?.play()
         guard let model = notchNearPointer(), model.level == .rest || model.level == .peek else { return }
         model.goHome()
+    }
+
+    // MARK: Agents and the chief of staff
+
+    /// What the assistant can see and change besides the timetable and planner: its team
+    /// of agents, your assignments and marks, your bookmarks. Each can be switched off in
+    /// Settings → Assistant.
+    private func connectAgents() {
+        let assistant = Assistant.shared
+        let staff = Assistant.Ability(
+            tag: StaffAgent.tag,
+            title: "Hand jobs to agents",
+            detail: "It can start agents on bigger jobs, stop them, and read their reports.",
+            instructions: { [weak self] in
+                let tools = Assistant.shared.engine == .claudeCode
+                return StaffAgent.instructions(tools: tools, web: tools && (self?.settings.agentsUseWeb ?? false))
+            },
+            describe: { [weak self] in
+                guard let self = self else { return "" }
+                return StaffAgent.describe(self.agents.team, now: Date())
+            },
+            apply: { [weak self] json in
+                guard let self = self, let plan = StaffAgent.plan(from: json) else { return nil }
+                var changes: [String] = []
+                for job in StaffAgent.stops(in: plan, team: self.agents.team) {
+                    self.agentRunner.stop(job.id)
+                    changes.append("\(job.name) stopped")
+                }
+                for job in StaffAgent.jobs(in: plan) {
+                    if let started = self.agentRunner.start(name: job.name, task: job.task, origin: .chief) {
+                        changes.append("\(started.name) started")
+                    }
+                }
+                return changes
+            },
+            heading: "Agents",
+            nothing: "(No agents needed starting.)")
+        let work = Assistant.Ability(
+            tag: AssignmentAgent.tag,
+            title: "Assignments and marks",
+            detail: "It can see your assignments and marks, add to them and record marks.",
+            instructions: { AssignmentAgent.instructions },
+            describe: { [weak self] in
+                guard let self = self else { return "" }
+                return AssignmentAgent.describe(self.assignments.assignments, now: Date())
+            },
+            apply: { [weak self] json in
+                guard let self = self, let plan = AssignmentAgent.plan(from: json) else { return nil }
+                var changes: [String] = []
+                self.assignments.change { changes = AssignmentAgent.apply(plan, to: &$0, now: Date()) }
+                return changes
+            },
+            heading: "Assignments updated",
+            nothing: "(Your assignments already had that.)")
+        let links = Assistant.Ability(
+            tag: BookmarkAgent.tag,
+            title: "Bookmarks",
+            detail: "It can see your bookmarks, add links and remove them.",
+            instructions: { BookmarkAgent.instructions },
+            describe: { [weak self] in
+                guard let self = self else { return "" }
+                return BookmarkAgent.describe(self.bookmarks.bookmarks)
+            },
+            apply: { [weak self] json in
+                guard let self = self, let plan = BookmarkAgent.plan(from: json) else { return nil }
+                return BookmarkAgent.apply(plan, to: self.bookmarks, now: Date())
+            },
+            heading: "Bookmarks updated",
+            nothing: "(Your bookmarks already had that.)")
+        assistant.abilities = [staff, work, links]
+
+        agentRunner.onFinished = { [weak self] job in
+            self?.agentFinished(job)
+        }
+        // More agents may work at once now: start the ones that were waiting.
+        settings.onAgentsChanged = { [weak self] in
+            self?.agentRunner.pump()
+        }
+        settings.onChooseAgentFolder = { [weak self] in
+            self?.chooseAgentFolder()
+        }
+        settings.onShowAgentsFolder = {
+            let home = AgentBrief.home
+            try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(home)
+        }
+    }
+
+    /// An agent finished or couldn't: a chime, if that's on. (Not for one you stopped.)
+    private func agentFinished(_ job: AgentJob) {
+        guard settings.agentsChime, job.status == .done || job.status == .failed else { return }
+        NSSound(named: NSSound.Name(job.status == .done ? "Glass" : "Basso"))?.play()
+    }
+
+    /// Shows an agent's own folder in Finder.
+    private func showAgentFolder(_ id: UUID) {
+        guard let job = agents.team.job(id), !job.folder.isEmpty else { return }
+        let folder = URL(fileURLWithPath: job.folder, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(folder)
+    }
+
+    /// Opens a file an agent saved. Only plain documents open straight away; anything that
+    /// could run (a web page, a script) is shown in Finder instead.
+    private func openAgentFile(_ file: String, of id: UUID) {
+        guard let job = agents.team.job(id), let path = AgentFiles.path(of: file, in: job.folder),
+              FileManager.default.fileExists(atPath: path) else {
+            NSSound.beep()
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        if AgentFiles.opensDirectly(file) {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    /// Settings → Assistant → "Add a folder": a folder of yours agents may read.
+    private func chooseAgentFolder() {
+        // The notch sits above other windows: close it so the folder chooser isn't under it.
+        let asking = models.first { $0.level != .rest }
+        for model in models where model.level != .rest {
+            model.close()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.canCreateDirectories = false
+            panel.prompt = "Let Agents Read"
+            panel.message = "Choose a folder your agents may read. They can't change anything in it."
+            if panel.runModal() == .OK, let url = panel.url {
+                self.settings.addAgentFolder(url.path)
+            }
+            // Back to Settings, to see it in the list (or why it wasn't taken).
+            (asking ?? self.notchNearPointer())?.openSettings(.assistant)
+        }
     }
 
     // MARK: Planner
@@ -954,6 +1126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let offMenu = menu.order.filter { !menu.isShown($0) }.map { $0.title }
         lines.append("Primary menu: \(menu.shown.map { $0.title }.joined(separator: ", "))\(offMenu.isEmpty ? "" : " · hidden: " + offMenu.joined(separator: ", "))")
         lines.append("Theme: \(settings.theme.title)\(settings.theme == .custom ? " (" + settings.customTheme.stamp + ")" : "") · Bookmarks: \(bookmarks.bookmarks.count)")
+        let team = agents.team
+        let agentsDone = team.jobs.count - team.active.count
+        lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once")
+        let agentsWeb = settings.agentsUseWeb ? "on" : "off"
+        let assistantWeb = assistant.usesWeb ? "on" : "off"
+        lines.append("Agents' web: \(agentsWeb) · folders shared with agents: \(settings.agentReadFolders.count) · assistant's web: \(assistantWeb)")
         let work = assignments.assignments
         lines.append("Assignments: \(work.open.count) to hand in, \(work.awaiting.count) waiting for a mark, \(work.marked.count) marked · \(work.subjects.count) subjects")
         lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")

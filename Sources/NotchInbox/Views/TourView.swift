@@ -204,6 +204,12 @@ struct TourPreview: View {
             AssistantToolTile(model: model, assistant: assistant)
                 .frame(height: 132)
                 .allowsHitTesting(false)
+        case .agents:
+            if let agents = model.agentsStore {
+                AgentsToolTile(model: model, store: agents)
+                    .frame(height: 132)
+                    .allowsHitTesting(false)
+            }
         case .extras:
             TourExtras(model: model, settings: settings)
         case .looks:
@@ -219,7 +225,7 @@ struct TourPreview: View {
     static func caption(_ kind: TourPage.Kind) -> String? {
         switch kind {
         case .welcome: return "The notch, open: a tile for each tool."
-        case .mail, .planner, .assignments, .timetable, .assistant: return "Its tile on the primary menu, as it is right now."
+        case .mail, .planner, .assignments, .timetable, .assistant, .agents: return "Its tile on the primary menu, as it is right now."
         case .notes: return "Their tiles on the primary menu, as they are right now."
         case .extras: return "The extras, as they are right now."
         case .looks: return "Click a theme to try it."

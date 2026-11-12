@@ -79,7 +79,8 @@ struct AssistantView: View {
                             Suggestions(assistant: assistant)
                         }
                         ForEach(assistant.messages) { message in
-                            ChatBubble(message: message, thinking: assistant.isAnswering && message.id == assistant.messages.last?.id)
+                            ChatBubble(message: message, thinking: assistant.isAnswering && message.id == assistant.messages.last?.id,
+                                       doing: assistant.activity)
                                 .id(message.id)
                         }
                     }
@@ -133,21 +134,30 @@ struct AssistantView: View {
 struct ChatBubble: View {
     let message: Assistant.Message
     let thinking: Bool
+    /// What it's doing before it answers ("Searching the web for …"), for the answer being written.
+    var doing: String? = nil
 
     var body: some View {
         let mine = message.role == .user
         let text = message.text
+        let busy = thinking ? doing : nil
 
         HStack {
             if mine { Spacer(minLength: 60) }
-            Group {
+            VStack(alignment: .leading, spacing: 6) {
                 if text.isEmpty && thinking {
-                    Text("Thinking…")
+                    Text(busy ?? "Thinking…")
                         .foregroundStyle(Theme.tertiary)
                 } else {
                     Text(ChatBubble.formatted(text))
                         .foregroundStyle(message.failed ? Theme.tertiary : (mine ? Theme.text : Theme.body))
                         .textSelection(.enabled)
+                    if let busy = busy {
+                        // Looking something up part-way through its answer.
+                        Text(busy)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.tertiary)
+                    }
                 }
             }
             .font(.system(size: 13))
@@ -161,9 +171,13 @@ struct ChatBubble: View {
     }
 
     /// Bold, italics, code and links from the answer's Markdown, keeping its line breaks.
+    /// Only links to the web can be clicked.
     static func formatted(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        guard let parsed = try? AttributedString(markdown: text, options: options) else {
+            return AttributedString(text)
+        }
+        return RichText.webLinksOnly(parsed)
     }
 }
 
@@ -171,24 +185,31 @@ struct ChatBubble: View {
 struct Suggestions: View {
     @ObservedObject var assistant: Assistant
 
+    /// Something to ask. The ones that end mid-sentence go in the box for you to finish.
+    private struct Idea: Identifiable {
+        let text: String
+        var finish = false
+        var id: String { text }
+    }
+
     private let ideas = [
-        "Summarise my unread emails",
-        "What's due soon?",
-        "What have I got tomorrow?",
-        "Add an activity to my timetable",
+        Idea(text: "What's due soon?"),
+        Idea(text: "How are my marks going?"),
+        Idea(text: "What have I got tomorrow?"),
+        Idea(text: "Explain ", finish: true),
+        Idea(text: "Get an agent to research ", finish: true),
     ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(assistant.engine.isClaude
-                 ? "Ask about your day, your email or anything else."
-                 : "Ask about your day, your email or anything else. Qwen runs on this Mac.")
+            Text(intro)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
-                ForEach(ideas, id: \.self) { idea in
-                    Button(action: { assistant.send(idea) }) {
-                        Text(idea)
+                ForEach(ideas) { idea in
+                    Button(action: { pick(idea) }) {
+                        Text(idea.finish ? idea.text.trimmingCharacters(in: .whitespaces) + "…" : idea.text)
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(Theme.secondary)
                             .lineLimit(1)
@@ -200,6 +221,24 @@ struct Suggestions: View {
                 }
             }
         }
+    }
+
+    private func pick(_ idea: Idea) {
+        if idea.finish {
+            assistant.draft = idea.text
+        } else {
+            assistant.send(idea.text)
+        }
+    }
+
+    private var intro: String {
+        if assistant.searchesWeb {
+            return "Your chief of staff. Ask anything: it can look things up on the web, keep your planner, timetable, assignments and bookmarks in order, and hand bigger jobs to agents."
+        }
+        if assistant.engine.isClaude {
+            return "Your chief of staff. Ask anything: it can keep your planner, timetable, assignments and bookmarks in order, and hand bigger jobs to agents."
+        }
+        return "Your chief of staff. Ask anything: it can keep your planner, timetable, assignments and bookmarks in order. Qwen runs on this Mac."
     }
 }
 

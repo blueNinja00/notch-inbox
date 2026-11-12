@@ -96,6 +96,52 @@ final class Assistant: ObservableObject {
         }
     }
 
+    /// Whether the assistant may search the web and read pages before it answers. Only
+    /// Claude through Claude Code can; your question goes to Anthropic either way.
+    @Published var usesWeb: Bool {
+        didSet { UserDefaults.standard.set(usesWeb, forKey: Assistant.webKey) }
+    }
+
+    /// Something more the assistant can see and change, through a block of JSON at the end
+    /// of its answer: your assignments, your bookmarks, its team of agents.
+    struct Ability {
+        let tag: String
+        /// What Settings calls it, and what switching it on lets the assistant do.
+        let title: String
+        let detail: String
+        /// How to use it, for the assistant's instructions.
+        let instructions: () -> String
+        /// What it may know about it, in words.
+        let describe: () -> String
+        /// Makes the changes asked for in the block's JSON and says what changed; nil if
+        /// the block couldn't be read.
+        let apply: (String) -> [String]?
+        /// "Assignments updated", and what to say when nothing needed changing.
+        let heading: String
+        let nothing: String
+    }
+
+    /// Set by the app.
+    var abilities: [Ability] = []
+
+    /// The abilities you've switched off in Settings.
+    @Published private(set) var abilitiesOff: Set<String> {
+        didSet { UserDefaults.standard.set(Array(abilitiesOff).sorted(), forKey: Assistant.abilitiesOffKey) }
+    }
+
+    func allows(_ tag: String) -> Bool { !abilitiesOff.contains(tag) }
+
+    func setAllowed(_ tag: String, _ allowed: Bool) {
+        if allowed {
+            abilitiesOff.remove(tag)
+        } else {
+            abilitiesOff.insert(tag)
+        }
+    }
+
+    /// What it's doing before it answers, e.g. "Searching the web for …".
+    @Published private(set) var activity: String?
+
     /// "sk-ant-…a1b2" when an API key is saved.
     @Published private(set) var apiKeyHint: String?
     /// Where Claude Code was found.
@@ -116,6 +162,8 @@ final class Assistant: ObservableObject {
     private static let claudeModelKey = "assistantClaudeModel"
     private static let timetableKey = "assistantEditsTimetable"
     private static let plannerKey = "assistantEditsPlanner"
+    private static let webKey = "assistantUsesWeb"
+    private static let abilitiesOffKey = "assistantAbilitiesOff"
     private let ollama = URL(string: "http://127.0.0.1:11434")!
     private var qwenModel: String?
     private var answering: Task<Void, Never>?
@@ -129,8 +177,13 @@ final class Assistant: ObservableObject {
         editsTimetable = defaults.object(forKey: Assistant.timetableKey) == nil ? true : defaults.bool(forKey: Assistant.timetableKey)
         editsPlanner = defaults.object(forKey: Assistant.plannerKey) == nil ? true : defaults.bool(forKey: Assistant.plannerKey)
         findsDueDates = Assistant.loadFinding(for: engine)
+        usesWeb = defaults.object(forKey: Assistant.webKey) == nil ? true : defaults.bool(forKey: Assistant.webKey)
+        abilitiesOff = Set(defaults.stringArray(forKey: Assistant.abilitiesOffKey) ?? [])
         apiKeyHint = APIKeyFile.read().map(APIKeyFile.hint(for:))
     }
+
+    /// Whether answers can draw on the web right now: only Claude Code has the tools for it.
+    var searchesWeb: Bool { engine == .claudeCode && usesWeb }
 
     private static func sharingKey(for engine: AssistantEngine) -> String {
         engine.isClaude ? "assistantSharesWithClaude" : "assistantUsesContext"
@@ -247,9 +300,13 @@ final class Assistant: ObservableObject {
 
         let timetable = editsTimetable ? (timetableDescription?() ?? "") : ""
         let planner = editsPlanner ? (plannerDescription?() ?? "") : ""
-        let shared = [sharesContext ? (context?() ?? "") : "", timetable, planner].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let able = abilities.filter { allows($0.tag) }
+        let known = able.map { $0.describe() }
+        let shared = ([sharesContext ? (context?() ?? "") : "", timetable, planner] + known).filter { !$0.isEmpty }.joined(separator: "\n\n")
         let canEdit = !timetable.isEmpty
         let canPlan = !planner.isEmpty
+        let how = able.map { $0.instructions() }
+        let web = searchesWeb
         var history = messages.map { (role: $0.role, text: $0.text, failed: $0.failed) }
         history.append((role: .user, text: question, failed: false))
         let turns = ClaudeStream.turns(from: history)
@@ -264,12 +321,12 @@ final class Assistant: ObservableObject {
             guard let self = self else { return }
             switch engine {
             case .claudeCode:
-                await self.askClaudeCode(model: model, context: shared, turns: turns, timetable: canEdit, planner: canPlan)
+                await self.askClaudeCode(model: model, context: shared, turns: turns, timetable: canEdit, planner: canPlan, web: web, abilities: how)
             case .claudeAPI:
-                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true, timetable: canEdit, planner: canPlan)
+                let system = AssistantPrompt.system(now: Date(), context: shared, claude: true, timetable: canEdit, planner: canPlan, abilities: how)
                 await self.askAnthropic(model: model, system: system, turns: turns)
             case .qwen:
-                let system = AssistantPrompt.system(now: Date(), context: shared, timetable: canEdit, planner: canPlan)
+                let system = AssistantPrompt.system(now: Date(), context: shared, timetable: canEdit, planner: canPlan, abilities: how)
                 await self.askQwen(system: system, turns: turns)
             }
         }
@@ -288,25 +345,31 @@ final class Assistant: ObservableObject {
 
     // MARK: Claude Code
 
-    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn], timetable: Bool, planner: Bool) async {
+    private func askClaudeCode(model: ClaudeModel, context: String, turns: [ChatTurn], timetable: Bool, planner: Bool,
+                               web: Bool, abilities: [String]) async {
         guard let path = claudePath ?? ClaudeCode.find() else {
             await finish(problem: "Couldn't find Claude Code on this Mac. See Settings → Assistant.")
             return
         }
         // The context goes in with the question, so it never appears on a command line.
-        let system = AssistantPrompt.system(now: Date(), context: "", claude: true, timetable: timetable, planner: planner)
         let prompt = ClaudeStream.codeInput(context: context, turns: turns)
 
         var problem: String?
         var streamed = false
         do {
-            for compatible in [false, true] {
+            // With the web first, if that's on. A Claude Code that doesn't know the options for
+            // that is asked again without the web, and an older one still without the newer options.
+            var attempts: [(web: Bool, compatible: Bool)] = [(false, false), (false, true)]
+            if web {
+                attempts.insert((true, false), at: 0)
+            }
+            for (index, attempt) in attempts.enumerated() {
                 problem = nil
-                let outcome = try await ClaudeCode.run(
-                    path: path,
-                    arguments: ClaudeStream.codeArguments(model: model, system: system, compatible: compatible),
-                    prompt: prompt
-                ) { piece in
+                let system = AssistantPrompt.system(now: Date(), context: "", claude: true, timetable: timetable, planner: planner,
+                                                    web: attempt.web, abilities: abilities)
+                let arguments = attempt.compatible ? ClaudeStream.codeArguments(model: model, system: system, compatible: true)
+                    : ClaudeStream.chiefArguments(model: model, system: system, web: attempt.web)
+                let outcome = try await ClaudeCode.run(path: path, arguments: arguments, prompt: prompt) { piece in
                     switch piece {
                     case .text(let text):
                         streamed = true
@@ -319,13 +382,17 @@ final class Assistant: ObservableObject {
                         }
                     case .failed(let reason):
                         problem = reason
+                    case .activity(let doing):
+                        await MainActor.run { self.activity = doing }
+                    case .newMessage:
+                        // It looked something up and is writing again: a new paragraph.
+                        await MainActor.run { self.startParagraph() }
                     case .done:
                         break
                     }
                 }
                 if Task.isCancelled { break }
-                // An older Claude Code that doesn't know the newer options: ask again without them.
-                if !compatible && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
+                if index < attempts.count - 1 && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
                     continue
                 }
                 if problem == nil && !streamed {
@@ -378,7 +445,7 @@ final class Assistant: ObservableObject {
                         break reading
                     case .done?:
                         break reading
-                    case .finished?, nil:
+                    case .finished?, .activity?, .newMessage?, nil:
                         continue
                     }
                 }
@@ -444,11 +511,24 @@ final class Assistant: ObservableObject {
     private func appendToAnswer(_ piece: String) {
         guard let last = messages.indices.last, messages[last].role == .assistant else { return }
         messages[last].raw += piece
+        if activity != nil {
+            activity = nil
+        }
+    }
+
+    /// What it writes after looking something up starts on a new line.
+    private func startParagraph() {
+        guard let last = messages.indices.last, messages[last].role == .assistant else { return }
+        let written = messages[last].raw
+        if !written.isEmpty && !written.hasSuffix("\n\n") {
+            messages[last].raw += written.hasSuffix("\n") ? "\n" : "\n\n"
+        }
     }
 
     private func finish(problem: String?) async {
         await MainActor.run {
             self.isAnswering = false
+            self.activity = nil
             guard let last = self.messages.indices.last, self.messages[last].role == .assistant else { return }
             if let problem = problem {
                 if self.messages[last].text.isEmpty {
@@ -459,8 +539,7 @@ final class Assistant: ObservableObject {
                     self.messages[last].raw += "\n\n(" + problem + ")"
                 }
                 self.checkSetup()
-            } else if self.messages[last].text.isEmpty && !self.messages[last].raw.contains(TimetableAgent.openTag)
-                        && !self.messages[last].raw.contains(PlannerAgent.openTag) {
+            } else if self.messages[last].text.isEmpty && !AgentBlock.tags.contains(where: { self.messages[last].raw.contains("<\($0)>") }) {
                 self.messages[last].raw = "(Stopped)"
             }
             // The assistant asked to change the timetable or the planner: make the changes,
@@ -482,6 +561,14 @@ final class Assistant: ObservableObject {
                     notes.append(Assistant.note("Planner updated", changes: apply(plan), nothing: "(The planner already had that.)"))
                 } else if found.plan == nil {
                     notes.append("(I tried to change your planner, but the change didn't come through right. Ask again?)")
+                }
+            }
+            // And the same for whatever else it may change: assignments, bookmarks, its agents.
+            for ability in self.abilities where self.allows(ability.tag) && raw.contains("</\(ability.tag)>") {
+                if let json = AgentBlock.json(in: raw, tag: ability.tag), let changes = ability.apply(json) {
+                    notes.append(Assistant.note(ability.heading, changes: changes, nothing: ability.nothing))
+                } else {
+                    notes.append("(I tried to do that, but it didn't come through right. Ask again?)")
                 }
             }
             if !notes.isEmpty {
@@ -507,14 +594,17 @@ final class Assistant: ObservableObject {
     /// Asks once and waits for the whole answer, outside the chat: for jobs behind the scenes,
     /// like finding due dates in emails. Claude answers with its fastest model unless another
     /// is asked for.
-    func complete(system: String, prompt: String, model: ClaudeModel = .haiku) async -> Result<String, Problem> {
+    /// `json` asks for an answer in JSON (Qwen is held to it); `maxTokens` is how long an
+    /// answer through the API may be.
+    func complete(system: String, prompt: String, model: ClaudeModel = .haiku, json: Bool = true,
+                  maxTokens: Int = 1500) async -> Result<String, Problem> {
         switch engine {
         case .claudeCode:
             return await completeWithClaudeCode(system: system, prompt: prompt, model: model)
         case .claudeAPI:
-            return await completeWithAnthropic(system: system, prompt: prompt, model: model)
+            return await completeWithAnthropic(system: system, prompt: prompt, model: model, maxTokens: maxTokens)
         case .qwen:
-            return await completeWithQwen(system: system, prompt: prompt)
+            return await completeWithQwen(system: system, prompt: prompt, json: json)
         }
     }
 
@@ -539,7 +629,7 @@ final class Assistant: ObservableObject {
                     case .text(let text): streamed += text
                     case .finished(let text): whole = text
                     case .failed(let reason): problem = reason
-                    case .done: break
+                    case .done, .activity, .newMessage: break
                     }
                 }
                 if !compatible && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
@@ -559,7 +649,7 @@ final class Assistant: ObservableObject {
         return .success(whole.isEmpty ? streamed : whole)
     }
 
-    private func completeWithAnthropic(system: String, prompt: String, model: ClaudeModel) async -> Result<String, Problem> {
+    private func completeWithAnthropic(system: String, prompt: String, model: ClaudeModel, maxTokens: Int) async -> Result<String, Problem> {
         guard let key = APIKeyFile.read() else {
             return .failure(Problem(message: "Add your Anthropic API key in Settings → Assistant."))
         }
@@ -570,7 +660,7 @@ final class Assistant: ObservableObject {
         request.setValue(ClaudeStream.apiVersion, forHTTPHeaderField: "anthropic-version")
         request.timeoutInterval = 90
         request.httpBody = ClaudeStream.apiBody(model: model, system: system, turns: [ChatTurn(role: .user, text: prompt)],
-                                                maxTokens: 1500, stream: false)
+                                                maxTokens: maxTokens, stream: false)
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -586,7 +676,7 @@ final class Assistant: ObservableObject {
         }
     }
 
-    private func completeWithQwen(system: String, prompt: String) async -> Result<String, Problem> {
+    private func completeWithQwen(system: String, prompt: String, json: Bool) async -> Result<String, Problem> {
         guard let model = qwenModel else {
             return .failure(Problem(message: "Qwen isn't set up yet."))
         }
@@ -594,14 +684,16 @@ final class Assistant: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 180
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [["role": "system", "content": system], ["role": "user", "content": prompt]],
             "stream": false,
             "think": false,
-            "format": "json",
             "keep_alive": "5m",
         ]
+        if json {
+            body["format"] = "json"
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

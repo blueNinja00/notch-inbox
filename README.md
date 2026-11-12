@@ -1,10 +1,10 @@
 # Notch Inbox
 
-A menu-bar app that turns the MacBook notch into an inbox for up to three email accounts, with a planner, a timetable, notes and an assistant beside it. Hover to peek, click to see your inboxes side by side, click an inbox to expand it.
+A menu-bar app that turns the MacBook notch into an inbox for up to three email accounts, with a planner, a timetable, notes, an assistant and a room of AI agents beside it. Hover to peek, click to see your inboxes side by side, click an inbox to expand it.
 
 It shows sample mail until you link your Gmail through the browser (below). **Settings** open inside the notch from the gear at its top right.
 
-**New here?** The first time the app runs, the notch opens by itself with a **tour**: what the notch is, then a page each for Mail, the Planner, Assignments, the Timetable, Notes, the Assistant, the Extras, the themes, and what does and doesn't leave your Mac. It takes about a minute. See [The tour](#the-tour).
+**New here?** The first time the app runs, the notch opens by itself with a **tour**: what the notch is, then a page each for Mail, the Planner, Assignments, the Timetable, Notes, the Assistant, Agents, the Extras, the themes, and what does and doesn't leave your Mac. It takes about a minute. See [The tour](#the-tour).
 
 ## Install
 
@@ -81,7 +81,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 
 - **General:** the theme (below), which tools are on the primary menu and in what order, Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
 - **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox; how much mail is kept on this Mac, and how many emails to keep in full.
-- **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
+- **Assistant:** who answers (below), which Claude model, and a switch for each thing it may see and do: look things up on the web, your timetable, your planner, your assignments and marks, your bookmarks, handing jobs to agents, and your newest emails and notes. Then the [agents](#agents): how many work at once, whether they use the web, the chime, and the folders they may read.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history and the shelf.
 - **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
@@ -97,13 +97,30 @@ An envelope in the menu bar has a short menu too (Open, Settings…, Quit), as d
 
 ## The assistant
 
-Ask about your day, your email or anything else. In **Settings → Assistant**, pick who answers:
+Your chief of staff: ask it anything, not only about your day. It answers questions, explains things, drafts and checks writing, keeps your planner, timetable, assignments and bookmarks in order when you ask, and hands bigger jobs to [agents](#agents). In **Settings → Assistant**, pick who answers:
 
-- **Claude, with your Claude plan** (the default): answers through [Claude Code](https://claude.com/claude-code) on your Mac, signed in to your Claude account, so it counts toward your plan's usage and needs no API key. Install it once in Terminal with `curl -fsSL https://claude.ai/install.sh | bash`, then type `claude` and sign in. Each question runs Claude Code with no tools, skills or MCP servers, in a folder of its own, and nothing is saved to your Claude Code history.
+- **Claude, with your Claude plan** (the default): answers through [Claude Code](https://claude.com/claude-code) on your Mac, signed in to your Claude account, so it counts toward your plan's usage and needs no API key. Install it once in Terminal with `curl -fsSL https://claude.ai/install.sh | bash`, then type `claude` and sign in. Each question runs Claude Code in a folder of its own with no skills or MCP servers, and nothing is saved to your Claude Code history. The only tools it has are searching the web and reading pages (**Look things up on the web**, on to start with); it can't run commands or touch files. While it's looking something up, the chat says what it's searching for or reading.
 - **Claude, with an API key:** paste a key from [console.anthropic.com](https://console.anthropic.com); you pay Anthropic per question. The key is kept in `~/Library/Application Support/Notch Inbox`, readable only by you.
 - **Qwen, on this Mac:** runs locally through [Ollama](https://ollama.com); free and private, but slower and less capable. Settings shows the one Terminal command to download the right Qwen model for your Mac's memory (several GB).
 
 For Claude, pick **Haiku 5.5** (fastest), **Sonnet 5.5** (the default) or **Opus 5.5** (smartest). **See and change my timetable** and **See and change my planner** (both on to start with) let it read your timetable, homework and exams, and change them when you ask. **Share my newest emails and notes** lets it see the senders, subjects and times of your 20 newest emails and your latest notes. With Claude they're sent to Anthropic with your question, so it starts off; with Qwen they stay on your Mac, so it starts on.
+
+It can also see and change your **assignments and marks** ("I got 17 out of 20 on the Chemistry prac", "add an English essay due the 20th, worth 25%") and your **bookmarks** ("bookmark Desmos under Maths"), and **hand jobs to agents** ("get an agent to find sources on the Cold War"). Each has a switch in **Settings → Assistant**, on to start with. It only changes anything when you ask, and its answer ends with a line saying what it changed. Links in its answers open only if they're web addresses.
+
+## Agents
+
+The **Agents** tile opens the agent room. An agent is a separate AI that takes one job and works on it by itself, over many steps, while you do something else: finding and reading sources, writing study notes, comparing things, planning an essay.
+
+- **Hand out a job:** type it in the box along the bottom and press Return. Say what you want back ("…summarise each in a paragraph, with links"). Or ask the assistant, and it writes the jobs and starts the agents for you; those have a small sparkle beside their name.
+- **Watch them work:** each agent has a floor, numbered from the first job you ever gave, newest on top. A floor shows what its agent is doing right now ("Searching the web for…", "Reading bbc.co.uk", "Writing Notes.md") and how long it has been going. Click one to see its job, every step it has taken, and what it's writing.
+- **The report:** when an agent finishes there's a chime (Settings can turn it off) and its report is on its floor, with headings, lists and tables drawn properly. **Copy** copies it, the file chips open what it saved, **Folder** opens its folder, **Again** gives the same job to a new agent, and the bin takes it out of the room (its files stay).
+- **A few at a time:** up to three work at once to start with (one to four, in Settings); the rest wait their turn. **Stop** stops one and keeps what it had written. An agent that's still going after 25 minutes is stopped. Quitting the app stops them all.
+- **What an agent can do**, with Claude on your Claude plan: search the web, read pages, and read and write files in a folder of its own inside `~/Notch Agents`. That's all. It has no way to run commands, and it can't see your mail, your notes, your planner or any other file. It knows only the job it was given.
+- **Folders agents may read:** for a job that needs your own files (notes to revise from, say), add a folder in **Settings → Assistant**. Agents can read it and can't change it. Whole disks, your home folder, your Library and hidden folders can't be added. An agent that reads a folder and also uses the web could be tricked by a web page into passing on what it read, so only share folders with nothing private in them. If the folder is in Documents, Desktop or Downloads, macOS asks whether Notch Inbox may use it, and asks again after an update.
+- **With an API key, or Qwen**, an agent can only think and write: no web, no files. Its report is still kept in the room.
+- **What goes online:** the job you type, what the agent reads and writes while it works, and what it searches for all go to Anthropic (with Qwen, nothing leaves your Mac). Each agent is its own run of Claude Code, so it counts toward your plan's usage like any other use of Claude.
+
+Under the hood each agent is `claude -p` with only the web and file tools switched on, in Claude Code's **restricted mode**: Claude Code itself keeps the file tools to the agent's folder (and the folders you shared, which it's also told it may not edit) and loads no settings files. A Claude Code too old for restricted mode is run without it, with only your own settings loaded and writing to `.claude` in the agent's folder refused. Text from web pages is treated as information, never as instructions, and links in a report open only if they're web addresses. A file an agent saved opens with a click only if it's a plain document (text, Markdown, CSV, PDF, an image); anything else is shown in Finder for you to decide. The room is kept in `~/Library/Application Support/Notch Inbox/Agents.json`, readable only by you: the 30 newest finished agents, with their reports.
 
 ## The tour
 
@@ -122,11 +139,12 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes. Click its name for its maker and how fast the cable is. An iPhone's battery level shows too if you've installed [libimobiledevice](https://libimobiledevice.org) (`brew install libimobiledevice`) and the phone trusts this Mac; macOS doesn't tell apps that by itself. Otherwise nothing is read from the phone.
-- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Assignments** (what's due next and how many steps are done, or your average), **Notes** (how many, and the latest), **Assistant** and **Bookmarks** (your first few links, each a click away). With all seven showing they sit in two rows, Mail down the left with your newest emails. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Assignments** (what's due next and how many steps are done, or your average), **Notes** (how many, and the latest), **Assistant**, **Agents** (how many are working, and the latest one's news) and **Bookmarks** (your first few links, each a click away). With all eight showing they sit in two rows, Mail down the left with your newest emails. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
 - **Arrange the primary menu:** right-click a tile for **Move Left**, **Move Right** and **Hide from the Primary Menu**, or open **Settings → General → Primary menu** for the whole list, with a switch and arrows for each tool. The last tile always stays. Up to five tiles sit in a row at the usual width, six in a slightly wider one, and more than six in two rows. If you'd dragged the menu to a size of your own, it goes back to standard when the number of tiles changes, so they aren't squashed.
 - **Planner:** homework, exam countdowns and a study plan. See [Planner](#planner).
 - **Extras:** a row under the tiles with what's playing, a focus timer, clipboard history and a shelf for files. See [Extras](#extras).
-- **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
+- **Assistant:** your chief of staff. Chat with Claude (or Qwen, on your Mac) about anything: it can look things up, keep your planner, timetable, assignments and bookmarks in order, and hand bigger jobs to agents. See [The assistant](#the-assistant).
+- **Agents:** hand a job to an AI agent and watch it work, floor by floor. See [Agents](#agents).
 - **Timetable:** your school week, Monday to Friday, with every class in its subject's colour. See [Timetable](#timetable).
 - **Notes:** a list on the left, the note on the right; it saves as you type, and the first line is the title. The expand button makes it bigger. Notes are kept in `~/Library/Application Support/Notch Inbox/Notes.json`, readable only by you.
 - **Make it bigger:** drag the bottom edge of the open panel, or the grip in its bottom-right corner (it grows on both sides, staying centred on the notch). Double-click the grip for the standard size. Sizes are remembered.
@@ -240,6 +258,8 @@ open "build/Notch Inbox.app"
 | `ClipboardHistory.swift`, `ClipboardWatcher.swift` | The last things you copied, in memory only |
 | `Shelf.swift`, `Views/ExtrasView.swift` | The shelf for parked files; the extras row and panel |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
+| `StaffAgent.swift` | What the assistant is told about its agents, your assignments and your bookmarks, and making the changes it asks for |
+| `Agents.swift`, `AgentRunner.swift`, `Views/AgentsView.swift` | Agents: their jobs and floors, running each one with Claude Code and reading what it does, drawing reports, and the agent room |
 | `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
@@ -255,7 +275,7 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, assignments, timetable, notes, bookmarks, assistant, settings, tour |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, assignments, timetable, notes, bookmarks, assistant, agents, settings, tour |
 | `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, the one you make yourself, and the sums that keep text reading clearly |
 | `HomeMenu.swift` | Which tools have a tile on the primary menu, in what order, and how they're laid out |
 | `Assignments.swift`, `Views/AssignmentsView.swift` | Assignments and their steps, planning one with the assistant, the marks tracker's sums, and their screens |

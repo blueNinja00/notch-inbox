@@ -80,10 +80,24 @@ enum ClaudeCode {
     /// Cancelling the task stops Claude Code.
     static func run(path: String, arguments: [String], prompt: String,
                     onPiece: @escaping (StreamPiece) async -> Void) async throws -> Outcome {
+        var answered = false
+        let ended = try await runLines(path: path, arguments: arguments, prompt: prompt, folder: nil) { line in
+            guard let piece = ClaudeStream.codePiece(fromLine: line) else { return }
+            answered = true
+            await onPiece(piece)
+        }
+        return Outcome(exitStatus: ended.exitStatus, errorOutput: ended.errorOutput, answered: answered)
+    }
+
+    /// Runs `claude` once, handing each line of what it prints to `onLine` as it arrives.
+    /// `folder` is where it runs: an agent's own folder, or the assistant's (which has no
+    /// project settings in it) when nil. Cancelling the task stops Claude Code.
+    static func runLines(path: String, arguments: [String], prompt: String, folder: URL?,
+                         onLine: @escaping (String) async -> Void) async throws -> Outcome {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
-        process.currentDirectoryURL = workFolder
+        process.currentDirectoryURL = folder ?? workFolder
 
         // Apps don't get your Terminal's PATH; npm installs need Node on it.
         var environment = ProcessInfo.processInfo.environment
@@ -114,12 +128,11 @@ enum ClaudeCode {
             return String(decoding: data.prefix(4000), as: UTF8.self)
         }
 
-        var answered = false
+        var any = false
         try await withTaskCancellationHandler {
             for try await line in output.fileHandleForReading.bytes.lines {
-                guard let piece = ClaudeStream.codePiece(fromLine: line) else { continue }
-                answered = true
-                await onPiece(piece)
+                any = true
+                await onLine(line)
             }
         } onCancel: {
             if process.isRunning {
@@ -127,6 +140,6 @@ enum ClaudeCode {
             }
         }
         process.waitUntilExit()
-        return Outcome(exitStatus: process.terminationStatus, errorOutput: await errorText.value, answered: answered)
+        return Outcome(exitStatus: process.terminationStatus, errorOutput: await errorText.value, answered: any)
     }
 }

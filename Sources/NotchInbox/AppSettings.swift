@@ -274,6 +274,81 @@ final class AppSettings: ObservableObject {
         onExtrasChanged?()
     }
 
+    // MARK: Agents
+
+    private static let agentsAtOnceKey = "agents.atOnce"
+    private static let agentsWebKey = "agents.web"
+    private static let agentFoldersKey = "agents.readFolders"
+    private static let agentsChimeKey = "agents.chime"
+    /// The choices for how many agents work at once.
+    static let agentChoices = [1, 2, 3, 4]
+    static let standardAgents = 3
+
+    /// How many agents work at the same time; the rest wait their turn.
+    @Published var agentsAtOnce: Int = AppSettings.savedAgentsAtOnce() {
+        didSet {
+            guard agentsAtOnce != oldValue else { return }
+            UserDefaults.standard.set(agentsAtOnce, forKey: AppSettings.agentsAtOnceKey)
+            onAgentsChanged?()
+        }
+    }
+
+    /// Whether agents may search the web and read pages.
+    @Published var agentsUseWeb: Bool = AppSettings.saved(AppSettings.agentsWebKey, otherwise: true) {
+        didSet {
+            guard agentsUseWeb != oldValue else { return }
+            UserDefaults.standard.set(agentsUseWeb, forKey: AppSettings.agentsWebKey)
+        }
+    }
+
+    /// Folders of yours that agents may read (and not change), besides their own.
+    @Published var agentReadFolders: [String] = UserDefaults.standard.stringArray(forKey: AppSettings.agentFoldersKey) ?? [] {
+        didSet {
+            guard agentReadFolders != oldValue else { return }
+            UserDefaults.standard.set(agentReadFolders, forKey: AppSettings.agentFoldersKey)
+        }
+    }
+
+    /// Whether there's a chime when an agent finishes.
+    @Published var agentsChime: Bool = AppSettings.saved(AppSettings.agentsChimeKey, otherwise: true) {
+        didSet {
+            guard agentsChime != oldValue else { return }
+            UserDefaults.standard.set(agentsChime, forKey: AppSettings.agentsChimeKey)
+        }
+    }
+
+    /// Why the last folder you tried to add wasn't taken, if it wasn't.
+    @Published var agentFolderProblem: String?
+
+    var onAgentsChanged: (() -> Void)?
+    /// Opens the panel for choosing a folder agents may read (set by the app).
+    var onChooseAgentFolder: (() -> Void)?
+    /// Shows the folder all the agents' folders are in (set by the app).
+    var onShowAgentsFolder: (() -> Void)?
+
+    private static func savedAgentsAtOnce() -> Int {
+        guard let saved = UserDefaults.standard.object(forKey: agentsAtOnceKey) as? Int, agentChoices.contains(saved) else {
+            return standardAgents
+        }
+        return saved
+    }
+
+    /// Lets agents read a folder, if it's a sensible one to share.
+    func addAgentFolder(_ path: String) {
+        let folder = AgentFolders.clean(path)
+        if let problem = AgentFolders.problem(with: folder, home: NSHomeDirectory(), already: agentReadFolders) {
+            agentFolderProblem = problem
+            return
+        }
+        agentFolderProblem = nil
+        agentReadFolders.append(folder)
+    }
+
+    func removeAgentFolder(_ path: String) {
+        agentFolderProblem = nil
+        agentReadFolders.removeAll { $0 == path }
+    }
+
     // MARK: Planner
 
     private static let classroomKey = "plannerReadsClassroom"

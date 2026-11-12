@@ -81,6 +81,8 @@ struct AgentJob: Codable, Equatable, Identifiable {
     /// done. (Optional so that rooms saved by earlier builds still open.)
     var tokens: Int?
     var cost: Double?
+    /// Its place in a chain of agents, if it's part of one.
+    var chain: AgentChain?
 
     var isActive: Bool { status == .queued || status == .working }
 
@@ -175,14 +177,15 @@ struct AgentTeam: Codable, Equatable {
 
     /// A new job, waiting to start.
     @discardableResult
-    mutating func add(name: String, task: String, origin: AgentJob.Origin = .you, now: Date = Date()) -> AgentJob {
+    mutating func add(name: String, task: String, origin: AgentJob.Origin = .you, chain: AgentChain? = nil, now: Date = Date()) -> AgentJob {
         let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
         var title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty {
             title = AgentBrief.name(for: brief)
         }
-        let job = AgentJob(name: String(title.prefix(40)), task: brief, origin: origin,
+        var job = AgentJob(name: String(title.prefix(40)), task: brief, origin: origin,
                            created: Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down)))
+        job.chain = chain
         started += 1
         floors[job.id] = started
         jobs.append(job)
@@ -242,6 +245,7 @@ struct AgentTeam: Codable, Equatable {
     }
 
     mutating func finish(_ id: UUID, report: String, turns: Int = 0, now: Date = Date()) {
+        var finishedNow = false
         change(id) { job in
             guard job.status == .working else { return }
             let whole = report.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -255,7 +259,26 @@ struct AgentTeam: Codable, Equatable {
             job.turns = turns
             job.activity = ""
             job.problem = nil
+            finishedNow = true
         }
+        // In a chain, the next agent takes over from here.
+        if finishedNow, let done = job(id), let next = done.chain?.next(after: id) {
+            add(name: next.agentName, task: done.task, origin: done.origin, chain: next, now: now)
+        }
+    }
+
+    /// The first agent of a chain: one job done in stages by several agents in turn. Each
+    /// stage is added as the one before it finishes.
+    @discardableResult
+    mutating func addChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin = .you, source: UUID? = nil,
+                           now: Date = Date()) -> AgentJob {
+        let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = AgentChain.title(title)
+        if name.isEmpty {
+            name = AgentChain.title(AgentBrief.name(for: task))
+        }
+        let first = AgentChain(kind: kind, title: name, source: source)
+        return add(name: first.agentName, task: task, origin: origin, chain: first, now: now)
     }
 
     /// It couldn't finish. What it had written so far is kept.
@@ -285,6 +308,10 @@ struct AgentTeam: Codable, Equatable {
     @discardableResult
     mutating func again(_ id: UUID, now: Date = Date()) -> AgentJob? {
         guard let old = job(id) else { return nil }
+        // One stage of a chain done again carries on down the chain from there.
+        if let link = old.chain {
+            return add(name: link.agentName, task: old.task, origin: old.origin, chain: link, now: now)
+        }
         return add(name: old.name, task: old.task, origin: old.origin, now: now)
     }
 
@@ -316,14 +343,17 @@ struct AgentTeam: Codable, Equatable {
         change(id) { $0.files = files }
     }
 
+    /// Takes a finished job out of the room. (One that a chain still going is built on stays.)
     mutating func remove(_ id: UUID) {
+        guard !heldForChains.contains(id) else { return }
         jobs.removeAll { $0.id == id && !$0.isActive }
         floors = floors.filter { entry in jobs.contains { $0.id == entry.key } }
     }
 
-    /// Clears away every job that isn't still going.
+    /// Clears away every job that isn't still going, or that a chain still going is built on.
     mutating func clearFinished() {
-        jobs.removeAll { !$0.isActive }
+        let held = heldForChains
+        jobs.removeAll { !$0.isActive && !held.contains($0.id) }
         floors = floors.filter { entry in jobs.contains { $0.id == entry.key } }
     }
 
@@ -337,7 +367,8 @@ struct AgentTeam: Codable, Equatable {
 
     /// Keeps the newest finished jobs and lets the oldest go.
     private mutating func trim() {
-        let finished = jobs.filter { !$0.isActive }
+        let held = heldForChains
+        let finished = jobs.filter { !$0.isActive && !held.contains($0.id) }
         guard finished.count > AgentTeam.keepFinished else { return }
         let going = Set(finished.prefix(finished.count - AgentTeam.keepFinished).map { $0.id })
         jobs.removeAll { going.contains($0.id) }
@@ -457,9 +488,13 @@ enum AgentBrief {
                 job: "Plan an essay answering: QUESTION. Give a thesis, the point of each paragraph, and evidence I could use, with sources."),
     ]
 
-    /// What goes to the agent as its job.
-    static func prompt(for job: AgentJob) -> String {
-        "Your job (\(job.name)):\n<job>\n\(job.task)\n</job>"
+    /// What goes to the agent as its job. In a chain, that's its stage, with what the
+    /// stages before it handed on.
+    static func prompt(for job: AgentJob, team: AgentTeam = AgentTeam(), tools: Bool = true, web: Bool = true) -> String {
+        if let chain = job.chain {
+            return chain.prompt(goal: job.task, team: team, tools: tools, web: web)
+        }
+        return "Your job (\(job.name)):\n<job>\n\(job.task)\n</job>"
     }
 }
 

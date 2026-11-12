@@ -35,6 +35,17 @@ final class AgentRunner {
         return added
     }
 
+    /// Hands a job to a chain: a researcher starts on it, and each of the others takes
+    /// over as the one before finishes. `source` is the assignment it's for, if any.
+    @discardableResult
+    func startChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin, source: UUID? = nil) -> AgentJob? {
+        guard !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var added: AgentJob?
+        store.change { added = $0.addChain(title: title, goal: goal, kind: kind, origin: origin, source: source) }
+        pump()
+        return added
+    }
+
     func stop(_ id: UUID) {
         running[id]?.cancel()
         running[id] = nil
@@ -47,6 +58,15 @@ final class AgentRunner {
     func again(_ id: UUID) -> AgentJob? {
         var added: AgentJob?
         store.change { added = $0.again(id) }
+        pump()
+        return added
+    }
+
+    /// A stage of a chain stopped short: the next agent starts from what it left.
+    @discardableResult
+    func carryOn(_ id: UUID) -> AgentJob? {
+        var added: AgentJob?
+        store.change { added = $0.carryOn(id) }
         pump()
         return added
     }
@@ -114,8 +134,14 @@ final class AgentRunner {
             readFolders.append(TeamChat.room.path)
             teamChat = TeamChat.file.path
         }
+        // In a chain, it may read (and not change) what the stages before it saved.
+        if tools, let chain = job.chain {
+            for earlier in chain.earlierFolders(in: store.team) where AgentRunner.isFolder(earlier) && !readFolders.contains(earlier) {
+                readFolders.append(earlier)
+            }
+        }
         let system = AgentBrief.system(now: Date(), tools: tools, web: web, readFolders: readFolders, teamChat: teamChat)
-        let prompt = AgentBrief.prompt(for: job)
+        let prompt = AgentBrief.prompt(for: job, team: store.team, tools: tools, web: web)
         let path = assistant.claudePath
 
         let work = Task { [weak self] in

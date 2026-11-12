@@ -428,6 +428,9 @@ final class NotchModel: ObservableObject {
     @Published var agentOpen: UUID?
     /// The job being typed for a new agent.
     @Published var agentDraft = ""
+    /// Whether the job in the box goes to a chain: a researcher, a writer, then a checker.
+    /// It switches itself off after each chain, since a chain uses three agents' worth.
+    @Published var agentDraftChain = false
 
     /// The team chat agents share with the chief of staff and you (set by the app).
     var teamStore: TeamStore?
@@ -461,15 +464,26 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    /// Hands the job in the box to a new agent.
+    /// Hands the job in the box to a new agent, or to a chain of them.
     func startDraftedAgent() {
-        if startAgent(task: agentDraft) {
+        if agentDraftChain {
+            if startChain(goal: agentDraft) {
+                agentDraft = ""
+                agentDraftChain = false
+            }
+        } else if startAgent(task: agentDraft) {
             agentDraft = ""
         }
     }
 
     /// The app runs the agents; without it (in checks) jobs are only listed.
     var onStartAgent: ((String, String) -> UUID?)?
+    /// Starts a chain on a job (its name, then the job), or carries one on from a stage
+    /// that stopped short. Set by the app.
+    var onStartChain: ((String, String) -> UUID?)?
+    var onCarryOnChain: ((UUID) -> UUID?)?
+    /// Has agents research an assignment (set by the app).
+    var onResearchAssignment: ((UUID) -> UUID?)?
     var onStopAgent: ((UUID) -> Void)?
     var onAgentAgain: ((UUID) -> UUID?)?
     var onRemoveAgent: ((UUID) -> Void)?
@@ -516,6 +530,52 @@ final class NotchModel: ObservableObject {
             agentOpen = added?.id ?? agentOpen
         }
         return true
+    }
+
+    /// Gives a job to a chain of agents: the researcher starts, and the others follow by
+    /// themselves. Returns false if nothing was typed.
+    @discardableResult
+    func startChain(goal: String, title: String = "") -> Bool {
+        let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else { return false }
+        teamChatOpen = false
+        if let start = onStartChain {
+            if let id = start(title, task) {
+                agentOpen = id
+            }
+        } else if let store = agentsStore {
+            var added: AgentJob?
+            store.change { added = $0.addChain(title: title, goal: task, kind: .write) }
+            agentOpen = added?.id ?? agentOpen
+        }
+        return true
+    }
+
+    /// A stage of a chain stopped short: the next agent starts from what it left.
+    func carryOnChain(_ id: UUID) {
+        if let carryOn = onCarryOnChain {
+            if let new = carryOn(id) {
+                agentOpen = new
+            }
+        } else if let store = agentsStore {
+            var added: AgentJob?
+            store.change { added = $0.carryOn(id) }
+            agentOpen = added?.id ?? agentOpen
+        }
+    }
+
+    /// "Research This" on an assignment: a researcher, a planner and a checker take it on
+    /// in turn, working from its task sheet. You stay on the assignment, which says how
+    /// they're going.
+    func researchAssignment(_ id: UUID) {
+        guard let item = assignmentsStore?.assignments.item(id), AgentChain.canResearch(item) else { return }
+        if let research = onResearchAssignment {
+            _ = research(id)
+        } else {
+            agentsStore?.change { team in
+                team.addChain(title: item.title, goal: AgentChain.goal(for: item, now: Date()), kind: .assignment, source: id)
+            }
+        }
     }
 
     func stopAgent(_ id: UUID) {

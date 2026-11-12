@@ -42,7 +42,7 @@ struct AgentsView: View {
                     if model.teamChatOpen, let room = model.teamStore {
                         TeamChatView(model: model, store: room, on: settings.agentsTeamChat)
                     } else if let job = open {
-                        AgentDetail(model: model, job: job, floor: team.floor(of: job.id))
+                        AgentDetail(model: model, job: job, floor: team.floor(of: job.id), team: team)
                             .id(job.id)
                     } else {
                         AgentsWelcome(model: model, assistant: assistant, settings: settings)
@@ -190,6 +190,7 @@ struct AgentTower: View {
     var body: some View {
         let jobs = team.newestFirst
         let finished = jobs.filter { !$0.isActive }.count
+        let held = team.heldForChains
 
         VStack(spacing: 0) {
             if let room = model.teamStore {
@@ -204,13 +205,16 @@ struct AgentTower: View {
                         ForEach(jobs) { job in
                             AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen && !model.teamChatOpen,
                                           open: { model.showAgent(job.id) })
-                                .contextMenu { AgentMenu(model: model, job: job) }
+                                .contextMenu {
+                                    AgentMenu(model: model, job: job, held: held.contains(job.id), canCarryOn: team.canCarryOn(job.id))
+                                }
                         }
                     }
                     .padding(6)
                 }
                 .scrollIndicators(.hidden)
-                if finished > 0 {
+                // (Finished agents that a chain still going is built on can't be cleared yet.)
+                if team.clearable > 0 {
                     AgentTowerFoot(finished: finished, clear: { model.clearFinishedAgents() })
                 }
             }
@@ -285,6 +289,12 @@ struct AgentFloorRow: View {
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(Theme.tertiary)
                                 .help("The assistant handed out this job")
+                        }
+                        if let chain = job.chain {
+                            Image(systemName: "link")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Theme.tertiary)
+                                .help("\(chain.place) of a chain: \(chain.line)")
                         }
                     }
                     Text(job.summary)
@@ -376,6 +386,10 @@ struct AgentClock: View {
 struct AgentMenu: View {
     @ObservedObject var model: NotchModel
     let job: AgentJob
+    /// A chain still going is built on its work, so it can't be taken out yet.
+    var held = false
+    /// It's a stage of a chain that stopped short, and the next agent could start from it.
+    var canCarryOn = false
 
     var body: some View {
         if job.isActive {
@@ -383,10 +397,13 @@ struct AgentMenu: View {
         } else {
             Button("Run Again") { model.agentAgain(job.id) }
         }
+        if canCarryOn {
+            Button("Carry On the Chain from Here") { model.carryOnChain(job.id) }
+        }
         if !job.folder.isEmpty {
             Button("Show Its Folder") { model.onShowAgentFolder?(job.id) }
         }
-        if !job.isActive {
+        if !job.isActive && !held {
             Divider()
             Button("Remove from the Room") { model.removeAgent(job.id) }
         }
@@ -530,15 +547,22 @@ struct AgentDetail: View {
     @ObservedObject var model: NotchModel
     let job: AgentJob
     let floor: Int
+    let team: AgentTeam
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            AgentHeader(model: model, job: job, floor: floor)
+            AgentHeader(model: model, job: job, floor: floor, held: team.heldForChains.contains(job.id))
+            if job.chain != nil {
+                AgentChainStrip(model: model, steps: team.chainSteps(of: job))
+            }
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 10) {
                     AgentTask(task: job.task)
                     if let problem = job.problem, !problem.isEmpty {
                         AgentProblem(text: problem, failed: job.status == .failed)
+                    }
+                    if team.canCarryOn(job.id) {
+                        AgentCarryOn(next: job.chain?.next(after: job.id)?.role ?? "next agent", carryOn: { model.carryOnChain(job.id) })
                     }
                     if !job.files.isEmpty {
                         AgentFileChips(model: model, job: job)
@@ -570,6 +594,7 @@ struct AgentHeader: View {
     @ObservedObject var model: NotchModel
     let job: AgentJob
     let floor: Int
+    var held = false
 
     var body: some View {
         HStack(spacing: 11) {
@@ -587,8 +612,109 @@ struct AgentHeader: View {
                 }
             }
             Spacer(minLength: 6)
-            AgentActions(model: model, job: job)
+            AgentActions(model: model, job: job, held: held)
         }
+    }
+}
+
+/// Where an agent stands in its chain: every stage in order. Click another stage to see
+/// the agent that did it.
+struct AgentChainStrip: View {
+    @ObservedObject var model: NotchModel
+    let steps: [AgentChainStep]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(steps) { step in
+                AgentChainPill(step: step, open: { open(step) })
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func open(_ step: AgentChainStep) {
+        if let job = step.job, step.opens {
+            model.showAgent(job.id)
+        }
+    }
+}
+
+/// One stage in the strip: how it went, and whose it is.
+struct AgentChainPill: View {
+    let step: AgentChainStep
+    let open: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if step.index > 0 {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Theme.tertiary)
+            }
+            HStack(spacing: 5) {
+                Image(systemName: AgentChainPill.symbol(for: step))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AgentChainPill.tint(for: step))
+                Text(step.role)
+                    .font(.system(size: 11.5, weight: step.isCurrent ? .semibold : .medium))
+                    .foregroundStyle(AgentChainPill.ink(for: step))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().fill(fill))
+            .contentShape(Capsule())
+            .onTapGesture(perform: open)
+            .onHover { hovering = $0 }
+            .help(step.help)
+            .accessibilityLabel(Text(step.help))
+        }
+    }
+
+    private var fill: Color {
+        if step.isCurrent {
+            return Theme.raised
+        }
+        return hovering && step.opens ? Theme.hover : Theme.lane
+    }
+
+    static func symbol(for step: AgentChainStep) -> String {
+        guard let job = step.job else { return step.symbol }
+        return AgentLook.symbol(job.status)
+    }
+
+    static func tint(for step: AgentChainStep) -> Color {
+        guard let job = step.job else { return Theme.tertiary }
+        return AgentLook.tint(job.status)
+    }
+
+    static func ink(for step: AgentChainStep) -> Color {
+        if step.isCurrent {
+            return Theme.text
+        }
+        return step.job == nil ? Theme.tertiary : Theme.secondary
+    }
+}
+
+/// Under a stage of a chain that stopped short: the next agent can start from what it left.
+struct AgentCarryOn: View {
+    let next: String
+    let carryOn: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("The chain stopped here. The \(next.lowercased()) can start from what this one left, or run this stage again.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            SmallPill(title: "Carry On", symbol: "arrow.right", action: carryOn)
+                .help("Start the \(next.lowercased()) on what this agent had written and saved")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.lane))
     }
 }
 
@@ -596,6 +722,8 @@ struct AgentHeader: View {
 struct AgentActions: View {
     @ObservedObject var model: NotchModel
     let job: AgentJob
+    /// A chain still going is built on its work, so it can't be taken out yet.
+    var held = false
     @State var copied = false
 
     var body: some View {
@@ -609,13 +737,13 @@ struct AgentActions: View {
                         .help("Copy the report")
                 }
                 SmallPill(title: "Again", symbol: "arrow.clockwise", action: { model.agentAgain(job.id) })
-                    .help("Give the same job to a new agent")
+                    .help(job.chain == nil ? "Give the same job to a new agent" : "Do this stage again with a new agent. The chain carries on from it.")
             }
             if !job.folder.isEmpty {
                 SmallPill(title: "Folder", symbol: "folder", action: { model.onShowAgentFolder?(job.id) })
                     .help("Open this agent's folder in Finder")
             }
-            if !job.isActive {
+            if !job.isActive && !held {
                 IconButton(symbol: "trash", label: "Take this agent out of the room (its files stay in its folder)", size: 26,
                            action: { model.removeAgent(job.id) })
             }
@@ -872,6 +1000,11 @@ struct AgentsWelcome: View {
                     .foregroundStyle(Theme.tertiary)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Switch on Chain beside the box for work that has to be right. " + AgentChain.about)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.tertiary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if needsSetup {
                     PillButton(title: "Set Up \(assistant.engine.name) First", prominent: true, action: { model.openAssistant() })
                 } else {
@@ -905,8 +1038,7 @@ struct AgentJobField: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(model.teamChatOpen ? "Say something to the team: the chief and every working agent can read it…"
-                      : "Give an agent a job: what to find out, write or compare…", text: $model.agentDraft, axis: .vertical)
+            TextField(AgentJobField.prompt(teamChat: model.teamChatOpen, chain: model.agentDraftChain), text: $model.agentDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
@@ -916,10 +1048,28 @@ struct AgentJobField: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
-            IconButton(symbol: "arrow.up", label: model.teamChatOpen ? "Post it (Return)" : "Start an agent on it (Return)", size: 32,
+            if !model.teamChatOpen {
+                ChainToggle(on: $model.agentDraftChain)
+            }
+            IconButton(symbol: "arrow.up", label: AgentJobField.sendLabel(teamChat: model.teamChatOpen, chain: model.agentDraftChain), size: 32,
                        tint: Theme.text, action: start)
         }
         .onAppear { typing = true }
+    }
+
+    static func prompt(teamChat: Bool, chain: Bool) -> String {
+        if teamChat {
+            return "Say something to the team: the chief and every working agent can read it…"
+        }
+        return chain ? "Give a chain a job: it's researched, written, then checked against its sources…"
+                     : "Give an agent a job: what to find out, write or compare…"
+    }
+
+    static func sendLabel(teamChat: Bool, chain: Bool) -> String {
+        if teamChat {
+            return "Post it (Return)"
+        }
+        return chain ? "Start a chain on it (Return)" : "Start an agent on it (Return)"
     }
 
     private func start() {
@@ -930,6 +1080,41 @@ struct AgentJobField: View {
         }
         model.sendAgentDraft()
         typing = true
+    }
+}
+
+/// Beside the job box: sends the job to a chain of three agents (a researcher, a writer,
+/// then a checker) in place of one. It switches itself off again after each chain.
+struct ChainToggle: View {
+    @Binding var on: Bool
+    @State var hovering = false
+
+    var body: some View {
+        Button(action: { on.toggle() }) {
+            HStack(spacing: 5) {
+                Image(systemName: "link")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Chain")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(on ? Theme.onAccent : Theme.secondary)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(Capsule().fill(fill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(on ? "On: this job goes to a chain. " + AgentChain.about : AgentChain.about)
+        .accessibilityLabel(Text(on ? "Chain, on" : "Chain, off"))
+    }
+
+    private var fill: Color {
+        if on {
+            return Theme.accent
+        }
+        return hovering ? Theme.hover : Theme.surface
     }
 }
 

@@ -344,6 +344,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onStartAgent = { [weak self] name, task in
             self?.agentRunner.start(name: name, task: task, origin: .you)?.id
         }
+        model.onStartChain = { [weak self] title, goal in
+            self?.agentRunner.startChain(title: title, goal: goal, kind: .write, origin: .you)?.id
+        }
+        model.onCarryOnChain = { [weak self] id in
+            self?.agentRunner.carryOn(id)?.id
+        }
+        model.onResearchAssignment = { [weak self] id in
+            self?.researchAssignment(id)
+        }
         model.onStopAgent = { [weak self] id in
             self?.agentRunner.stop(id)
         }
@@ -717,7 +726,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     changes.append("\(job.name) stopped")
                 }
                 for job in StaffAgent.jobs(in: plan) {
-                    if let started = self.agentRunner.start(name: job.name, task: job.task, origin: .chief) {
+                    if let kind = job.chain {
+                        // A researcher now; the others follow by themselves. A plan for an
+                        // assignment in your list gets its task sheet too (if the assistant
+                        // may see your assignments), and shows on that assignment.
+                        var goal = job.task
+                        var source: UUID?
+                        if Assistant.shared.allows(AssignmentAgent.tag),
+                           let item = StaffAgent.assignment(for: job, in: self.assignments.assignments) {
+                            goal = StaffAgent.planGoal(for: job, item: item, now: Date())
+                            source = item.id
+                        }
+                        if let started = self.agentRunner.startChain(title: job.name, goal: goal, kind: kind, origin: .chief, source: source) {
+                            changes.append("\(started.name) started (a chain: \(AgentChain.line(for: kind)))")
+                        }
+                    } else if let started = self.agentRunner.start(name: job.name, task: job.task, origin: .chief) {
                         changes.append("\(started.name) started")
                     }
                 }
@@ -785,10 +808,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// An agent finished or couldn't: a chime, if that's on. (Not for one you stopped.)
+    /// An agent finished or couldn't: a chime, if that's on. (Not for one you stopped, and
+    /// not for a stage of a chain that the next agent is carrying on from.)
     private func agentFinished(_ job: AgentJob) {
-        guard settings.agentsChime, job.status == .done || job.status == .failed else { return }
+        guard settings.agentsChime, job.status == .done || job.status == .failed, !job.isHandingOn else { return }
         NSSound(named: NSSound.Name(job.status == .done ? "Glass" : "Basso"))?.play()
+    }
+
+    /// "Research This" on an assignment: a researcher, a planner and a checker take it on
+    /// in turn, from its name, due date and task sheet. They plan it; the writing stays yours.
+    private func researchAssignment(_ id: UUID) -> UUID? {
+        guard let item = assignments.assignments.item(id), AgentChain.canResearch(item) else { return nil }
+        let goal = AgentChain.goal(for: item, now: Date())
+        return agentRunner.startChain(title: item.title, goal: goal, kind: .assignment, origin: .you, source: id)?.id
     }
 
     /// Shows an agent's own folder in Finder.
@@ -1521,7 +1553,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lines.append("Theme: \(settings.theme.title)\(settings.theme == .custom ? " (" + settings.customTheme.stamp + ")" : "") · Bookmarks: \(bookmarks.bookmarks.count)")
         let team = agents.team
         let agentsDone = team.jobs.count - team.active.count
-        lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once")
+        let inChains = team.jobs.filter { $0.chain != nil }.count
+        lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once · in chains: \(inChains)")
         lines.append("Chats saved: \(assistant.chats.book.chats.count)")
         let usedToday = assistant.usage.log.today()
         lines.append("Usage today: \(UsageText.line(usedToday)) · daily cap for agents: \(UsageText.cap(settings.agentDailyCap))")

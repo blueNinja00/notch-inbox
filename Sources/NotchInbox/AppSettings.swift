@@ -377,6 +377,21 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// How much the notch may use in a day, in tokens, before new agents are held back
+    /// until tomorrow. 0 is no cap.
+    @Published var agentDailyCap: Int = AppSettings.savedCap() {
+        didSet {
+            guard agentDailyCap != oldValue else { return }
+            UserDefaults.standard.set(agentDailyCap, forKey: "agents.dailyCap")
+            onAgentsChanged?()
+        }
+    }
+
+    private static func savedCap() -> Int {
+        let saved = UserDefaults.standard.integer(forKey: "agents.dailyCap")
+        return UsageText.caps.contains(saved) ? saved : 0
+    }
+
     /// Why the last folder you tried to add wasn't taken, if it wasn't.
     @Published var agentFolderProblem: String?
 

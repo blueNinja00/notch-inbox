@@ -77,6 +77,10 @@ struct AgentJob: Codable, Equatable, Identifiable {
     var turns = 0
     /// Which model did the work, e.g. "Claude Sonnet 5.5".
     var model = ""
+    /// What it has used so far, in tokens, and Claude Code's estimate of the cost once it's
+    /// done. (Optional so that rooms saved by earlier builds still open.)
+    var tokens: Int?
+    var cost: Double?
 
     var isActive: Bool { status == .queued || status == .working }
 
@@ -284,6 +288,29 @@ struct AgentTeam: Codable, Equatable {
         return add(name: old.name, task: old.task, origin: old.origin, now: now)
     }
 
+    /// What it has used, as counted so far or at the end.
+    mutating func setUsage(_ id: UUID, tokens: Int, cost: Double?) {
+        change(id) { job in
+            job.tokens = tokens
+            if let cost = cost {
+                job.cost = cost
+            }
+        }
+    }
+
+    /// Jobs still waiting say why they're held (the day's usage cap), or stop saying so.
+    mutating func hold(_ reason: String) {
+        for job in jobs where job.status == .queued && job.activity != reason {
+            change(job.id) { $0.activity = reason }
+        }
+    }
+
+    mutating func unhold() {
+        for job in jobs where job.status == .queued && !job.activity.isEmpty {
+            change(job.id) { $0.activity = "" }
+        }
+    }
+
     /// What's in its folder now (looked up when it finishes).
     mutating func setFiles(_ id: UUID, _ files: [String]) {
         change(id) { $0.files = files }
@@ -482,7 +509,8 @@ extension AgentJob {
     var summary: String {
         switch status {
         case .queued:
-            return "Waiting its turn"
+            // Held back by the day's usage cap, it says so.
+            return activity.isEmpty ? "Waiting its turn" : activity
         case .working:
             return activity.isEmpty ? "Working" : activity
         case .done:
@@ -519,6 +547,10 @@ extension AgentJob {
         }
         if !isActive, !steps.isEmpty {
             parts.append(steps.count == 1 ? "1 step" : "\(steps.count) steps")
+        }
+        let used = UsageText.run(tokens: tokens ?? 0, cost: cost)
+        if !used.isEmpty {
+            parts.append(used)
         }
         if !model.isEmpty {
             parts.append(model)

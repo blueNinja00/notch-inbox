@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Assignments: what's to hand in, broken into steps, on one side; the marks that came
 /// back, and what you need for your goal in each subject, on the other.
@@ -9,6 +10,8 @@ struct AssignmentsView: View {
     @ObservedObject var timetable: TimetableStore
     @ObservedObject var assistant: Assistant
     let expanded: Bool
+    /// A file is being dragged over: let go to read it as a task sheet.
+    @State private var dropping = false
 
     init(model: NotchModel, store: AssignmentsStore, planner: PlannerStore, timetable: TimetableStore, assistant: Assistant, expanded: Bool) {
         self.model = model
@@ -37,6 +40,10 @@ struct AssignmentsView: View {
                 }
             } trailing: {
                 HStack(spacing: 2) {
+                    if !marks {
+                        IconButton(symbol: "doc.badge.plus", label: "New from a task sheet: a PDF, Word file or photo (or drag one here)",
+                                   action: { model.onPickAssignmentSheet?() })
+                    }
                     IconButton(symbol: "plus", label: marks ? "Add a result" : "New assignment",
                                action: { marks ? model.newResult(subject: model.marksSubject ?? "") : model.newAssignment() })
                     IconButton(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
@@ -45,6 +52,15 @@ struct AssignmentsView: View {
                     SettingsButton(model: model)
                 }
                 .padding(.trailing, 4)
+            }
+
+            if let reading = model.sheetReading {
+                SheetBanner(text: "Reading “\(reading)”: \(assistant.engine.name) is picking out the title, due date, weighting and steps…",
+                            symbol: "doc.text.magnifyingglass", dismiss: nil)
+                    .padding(.top, 6)
+            } else if let note = model.sheetNote {
+                SheetBanner(text: note, symbol: "info.circle", dismiss: { model.sheetNote = nil })
+                    .padding(.top, 6)
             }
 
             TimelineView(.periodic(from: Date(), by: 60)) { context in
@@ -68,6 +84,81 @@ struct AssignmentsView: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
         .frame(width: size.width, height: size.height, alignment: .top)
+        .overlay {
+            if dropping {
+                SheetDropHint()
+            }
+        }
+        .onDrop(of: SheetDrop.types, isTargeted: $dropping) { providers in
+            SheetDrop.take(providers, into: model)
+        }
+    }
+}
+
+/// Takes a file dropped on Assignments as a task sheet to read.
+enum SheetDrop {
+    static let types: [UTType] = [.fileURL]
+
+    @discardableResult
+    static func take(_ providers: [NSItemProvider], into model: NotchModel) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) }) else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url = url, url.isFileURL else { return }
+            DispatchQueue.main.async {
+                model.readAssignmentSheet(url)
+            }
+        }
+        return true
+    }
+}
+
+/// Shown over Assignments while a file is dragged across it.
+struct SheetDropHint: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "doc.badge.plus")
+                .font(.system(size: 24, weight: .medium))
+            Text("Drop the task sheet")
+                .font(.system(size: 14, weight: .semibold))
+            Text("Its title, due date, weighting and steps are filled in for you to check.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondary)
+        }
+        .foregroundStyle(Theme.text)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.black.opacity(0.82)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [7, 5])))
+        .padding(8)
+        .allowsHitTesting(false)
+    }
+}
+
+/// A line across the top of Assignments: a sheet being read, or how reading it went.
+struct SheetBanner: View {
+    let text: String
+    let symbol: String
+    let dismiss: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if let dismiss = dismiss {
+                IconButton(symbol: "xmark", label: "Dismiss", size: 22, action: dismiss)
+            }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.raised))
     }
 }
 
@@ -173,13 +264,16 @@ struct AssignmentsEmpty: View {
             Text("No assignments to hand in")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.text2)
-            Text("Add one, paste in its task sheet, and have it broken into steps that the planner fits into your week.")
+            Text("Drag a task sheet here (a PDF, Word file or photo) and it's filled in for you. Or add one by hand and have it broken into steps that the planner fits into your week.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.tertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
-            PillButton(title: "New Assignment", prominent: true, action: { model.newAssignment() })
-                .padding(.top, 2)
+            HStack(spacing: 8) {
+                PillButton(title: "From a Task Sheet…", action: { model.onPickAssignmentSheet?() })
+                PillButton(title: "New Assignment", prominent: true, action: { model.newAssignment() })
+            }
+            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -1102,6 +1196,10 @@ struct AssignmentsToolTile: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture { model.openAssignments() }
+        .onDrop(of: SheetDrop.types, isTargeted: nil) { providers in
+            // A file dropped on this tile is read as a task sheet (anywhere else it goes on the shelf).
+            SheetDrop.take(providers, into: model)
+        }
         .onHover { hovering = $0 }
         .help("Open your assignments and marks")
     }

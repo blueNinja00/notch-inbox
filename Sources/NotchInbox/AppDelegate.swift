@@ -251,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bookmarks.saveNow()
         assignments.saveNow()
         Assistant.shared.saveChats()
+        Assistant.shared.usage.saveNow()
         // Agents still working are stopped: what they'd written so far is kept.
         agentRunner.stopAll()
         team.saveNow()
@@ -332,6 +333,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.assignmentsStore = assignments
         model.onPlanAssignment = { [weak self] id in
             self?.planAssignment(id)
+        }
+        model.onReadAssignmentSheet = { [weak self, weak model] url in
+            self?.readAssignmentSheet(url, for: model)
+        }
+        model.onPickAssignmentSheet = { [weak self, weak model] in
+            self?.pickAssignmentSheet(for: model)
         }
         model.agentsStore = agents
         model.onStartAgent = { [weak self] name, task in
@@ -1165,6 +1172,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: A task sheet
+
+    /// Reads a file as a task sheet: its words are got out here on the Mac, the assistant
+    /// picks out the title, due date, weighting and steps, and a new assignment opens to
+    /// be checked. If the assistant can't be asked, the assignment is still made, named
+    /// after the file with the sheet's words as its brief.
+    private func readAssignmentSheet(_ url: URL, for model: NotchModel?) {
+        let name = url.lastPathComponent
+        let assistant = Assistant.shared
+        let ready = assistant.status.isReady
+        Task.detached { [weak self] in
+            let text = SheetReader.text(of: url)
+            guard let self = self else { return }
+            guard !text.isEmpty else {
+                await MainActor.run {
+                    if let model = model {
+                        model.finishSheet(nil, note: AssignmentSheet.noWords)
+                    }
+                }
+                return
+            }
+            var found: AssignmentSheet.Found?
+            var note: String?
+            if ready {
+                let result = await assistant.complete(system: AssignmentSheet.system,
+                                                      prompt: AssignmentSheet.prompt(text: text, fileName: name, now: Date()),
+                                                      maxTokens: 1800)
+                switch result {
+                case .success(let answer):
+                    found = AssignmentSheet.parse(answer, now: Date())
+                    if found == nil {
+                        note = "The assistant's reading of the sheet couldn't be understood, so its words are in the brief for you to fill in the rest."
+                    }
+                case .failure(let problem):
+                    note = "The sheet's words are in the brief, but the rest is for you to fill in: \(problem.message)"
+                }
+            } else {
+                note = "\(assistant.engine.name) isn't set up yet, so the sheet's words are in the brief and the rest is for you to fill in."
+            }
+            let item = AssignmentSheet.assignment(found, text: text, fileName: name)
+            let why = note
+            await MainActor.run {
+                self.assignments.change { $0.add(item) }
+                if let model = model {
+                    model.finishSheet(item.id, note: why)
+                }
+            }
+        }
+    }
+
+    /// The button in Assignments: choose the sheet's file, then read it.
+    private func pickAssignmentSheet(for model: NotchModel?) {
+        // The notch sits above other windows: close it so the file chooser isn't under it.
+        for open in models where open.level != .rest {
+            open.close()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.prompt = "Read Sheet"
+            panel.message = "Choose the task sheet: a PDF, a Word or text file, or a photo or screenshot of it."
+            let picked = panel.runModal() == .OK ? panel.url : nil
+            let target = model ?? self.notchNearPointer()
+            target?.openAssignments()
+            if let url = picked {
+                target?.readAssignmentSheet(url)
+            }
+        }
+    }
+
     private func finishPlanning(_ id: UUID, steps: [AssignmentStep]?, problem: String) {
         for model in models {
             model.finishPlanning(id, steps: steps, problem: problem)
@@ -1442,6 +1523,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let agentsDone = team.jobs.count - team.active.count
         lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once")
         lines.append("Chats saved: \(assistant.chats.book.chats.count)")
+        let usedToday = assistant.usage.log.today()
+        lines.append("Usage today: \(UsageText.line(usedToday)) · daily cap for agents: \(UsageText.cap(settings.agentDailyCap))")
         let levels = settings.showsLevels ? (settings.levelsAlways ? "on, always showing" : "on") : "off"
         let ownKeys = settings.replacesSystemLevels ? (mediaKeys.isRunning ? "yes" : "wanted, not running") : "no"
         let trusted = DocumentTyper.isTrusted ? "allowed" : "not allowed"

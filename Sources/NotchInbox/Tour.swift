@@ -11,6 +11,7 @@ struct TourPage: Equatable, Identifiable {
         case timetable
         case notes
         case assistant
+        case agents
         case extras
         case looks
         case privacy
@@ -35,6 +36,7 @@ struct TourPage: Equatable, Identifiable {
         case extras
         case bookmarks
         case assignments
+        case agents
         case settings(SettingsSection)
     }
 
@@ -202,15 +204,27 @@ enum Tour {
         case .assistant:
             return TourPage(
                 kind: kind, symbol: "sparkles", title: "Assistant",
-                summary: "Ask \(assistant) about your day, and have it change your timetable and planner for you.",
+                summary: "Your chief of staff. Ask \(assistant) anything, and have it keep your planner, timetable, assignments and bookmarks in order.",
                 points: [
-                    .init(symbol: "text.bubble", text: "Try \"what's due this week?\" or \"add a Maths test on Friday at 9\"."),
+                    .init(symbol: "text.bubble", text: "Try \"what's due this week?\", \"add a Maths test on Friday at 9\" or \"I got 17 out of 20 on the Chemistry prac\"."),
+                    .init(symbol: "globe", text: "On your Claude plan, Claude can also look things up on the web and read pages before it answers."),
                     .init(symbol: "cpu", text: "It runs on Claude, with your Claude plan or an API key, or on Qwen, which works entirely on this Mac."),
                     .init(symbol: "hand.raised", text: setup.assistantIsClaude
                               ? "Claude only sees what you allow in Settings → Assistant. Sharing your emails and notes with it is off to start with."
                               : "Qwen only sees what you allow in Settings → Assistant, and nothing it reads leaves this Mac."),
                 ],
                 action: .init(title: setup.assistantReady ? "Open the Assistant" : "Set Up the Assistant", target: .assistant))
+        case .agents:
+            return TourPage(
+                kind: kind, symbol: "building.2", title: "Agents",
+                summary: "Bigger jobs, handed to agents that work on them by themselves while you get on with something else.",
+                points: [
+                    .init(symbol: "arrow.up.circle", text: "Type a job in the agent room, like \"find five reliable sources on the Cold War and summarise each\", and an agent starts on it."),
+                    .init(symbol: "building.2", text: "Each agent gets a floor. Watch what it's searching and reading, then read its report. A few work at once; the rest wait their turn."),
+                    .init(symbol: "sparkles", text: "Or just ask the assistant, and it hands the big jobs out for you."),
+                    .init(symbol: "hand.raised", text: "On your Claude plan, an agent can use the web and save files in a folder of its own. It can't run commands, and it can't see your mail, notes or other files."),
+                ],
+                action: .init(title: setup.assistantReady ? "Open the Agent Room" : "Set Up the Assistant", target: setup.assistantReady ? .agents : .assistant))
         case .extras:
             return TourPage(
                 kind: kind, symbol: "tray.full", title: "Extras",
@@ -242,8 +256,8 @@ enum Tour {
                 kind: kind, symbol: "lock.shield", title: "What stays on your Mac",
                 summary: "Nearly everything. This is what does go online, and when.",
                 points: [
-                    .init(symbol: "internaldrive", text: "Your mail, notes, timetable and planner are kept on this Mac. Mail comes straight from your browser to this app."),
-                    .init(symbol: "sparkles", text: "Questions you ask Claude go to Anthropic, along with only what you've allowed it to see. Qwen stays on this Mac."),
+                    .init(symbol: "internaldrive", text: "Your mail, notes, timetable, planner, assignments and bookmarks are kept on this Mac. Mail comes straight from your browser to this app."),
+                    .init(symbol: "sparkles", text: "Questions you ask Claude, and jobs you give its agents, go to Anthropic with only what you've allowed it to see. So does what they search the web for. Qwen stays on this Mac."),
                     .init(symbol: "photo", text: "Opening an email loads its pictures from the web, the way Gmail does."),
                     .init(symbol: "arrow.down.circle", text: "Checking for updates asks GitHub for the newest build."),
                 ])

@@ -142,6 +142,10 @@ enum StreamPiece: Equatable {
     case finished(String)
     case failed(String)
     case done
+    /// What it's doing before it answers: "Searching the web for …".
+    case activity(String)
+    /// It has looked something up and is starting to write again.
+    case newMessage
 }
 
 /// The parts of talking to Claude that don't need the network or a process: what to send,
@@ -292,6 +296,55 @@ enum ClaudeStream {
         return arguments
     }
 
+    /// The same, able to search the web and read pages before it answers: a few turns, the
+    /// two web tools and nothing else. Anything else it might try is refused, not asked about.
+    static func chiefArguments(model: ClaudeModel, system: String, web: Bool) -> [String] {
+        guard web else { return codeArguments(model: model, system: system) }
+        return ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                "--model", model.alias, "--system-prompt", system, "--max-turns", "12",
+                "--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch", "--permission-mode", "dontAsk",
+                "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
+    }
+
+    /// `claude` as an agent working on one job: many turns, in a folder of its own where it
+    /// may read and write. With `web` it can also search and read pages. It has no shell,
+    /// and nothing outside its folder: `readFolders` are folders you chose that it may read
+    /// (and not change). Anything else it tries is refused, not asked about.
+    ///
+    /// `restricted` runs Claude Code in its restricted mode, where Claude Code itself keeps
+    /// the file tools to these folders and loads no settings files at all. An older Claude
+    /// Code doesn't have that mode; without it, no settings file in the agent's folder is
+    /// loaded (only your own), and the agent can't write one there.
+    static func agentArguments(model: ClaudeModel, system: String, web: Bool, readFolders: [String] = [], folder: String = "",
+                               restricted: Bool = true, maxTurns: Int = 40) -> [String] {
+        var tools = ["Read", "Write", "Edit", "Glob", "Grep"]
+        if web {
+            tools = ["WebSearch", "WebFetch"] + tools
+        }
+        var arguments = ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                         "--model", model.alias, "--system-prompt", system, "--max-turns", "\(maxTurns)",
+                         "--tools", tools.joined(separator: ","), "--permission-mode", "acceptEdits",
+                         "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
+        arguments += restricted ? ["--restricted"] : ["--setting-sources", "user"]
+        if web {
+            arguments += ["--allowedTools", "WebSearch,WebFetch"]
+        }
+        let folders = readFolders.filter { $0.hasPrefix("/") }
+        for shared in folders {
+            arguments += ["--add-dir", shared]
+        }
+        // Readable, not writable: an absolute path in a rule starts with two slashes. And
+        // nothing that Claude Code would read as its own settings may be written.
+        var denied = folders.map { "Edit(/" + ($0.hasSuffix("/") ? String($0.dropLast()) : $0) + "/**)" }
+        if folder.hasPrefix("/") {
+            denied.append("Edit(/" + (folder.hasSuffix("/") ? String(folder.dropLast()) : folder) + "/.claude/**)")
+        }
+        if !denied.isEmpty {
+            arguments += ["--disallowedTools"] + denied
+        }
+        return arguments
+    }
+
     /// What Claude Code reads from its input: what it may know about your day, the
     /// conversation so far, and your newest message.
     static func codeInput(context: String, turns: [ChatTurn]) -> String {
@@ -318,13 +371,29 @@ enum ClaudeStream {
         switch object["type"] as? String {
         case "stream_event":
             // Only the text: Claude Code ends with its own result line.
-            guard let event = object["event"] as? [String: Any],
-                  case .text(let text)? = piece(fromEvent: event) else { return nil }
+            guard let event = object["event"] as? [String: Any] else { return nil }
+            if event["type"] as? String == "message_start" {
+                return .newMessage
+            }
+            guard case .text(let text)? = piece(fromEvent: event) else { return nil }
             return .text(text)
+        case "assistant":
+            // A tool it's using before it answers: say what it's doing.
+            guard let message = object["message"] as? [String: Any], let content = message["content"] as? [[String: Any]] else { return nil }
+            for block in content where block["type"] as? String == "tool_use" {
+                guard let name = block["name"] as? String else { continue }
+                if case .step(_, let text, _) = AgentStream.step(tool: name, input: block["input"] as? [String: Any] ?? [:], folder: "") {
+                    return .activity(ClaudeStream.doing(text))
+                }
+            }
+            return nil
         case "result":
             let result = object["result"] as? String ?? ""
             let subtype = object["subtype"] as? String ?? "success"
             let isError = object["is_error"] as? Bool == true
+            if subtype == "error_max_turns" {
+                return .failed("That took more looking up than fits in one answer. Ask again more narrowly, or hand it to an agent.")
+            }
             if isError || (subtype != "success" && result.isEmpty) {
                 return .failed(codeProblem(result.isEmpty ? subtype : result))
             }
@@ -332,6 +401,16 @@ enum ClaudeStream {
         default:
             return nil
         }
+    }
+
+    /// "Searched the web for “x”" as something happening now: "Searching the web for “x”…".
+    static func doing(_ done: String) -> String {
+        let swaps = [("Searched ", "Searching "), ("Read ", "Reading "), ("Wrote ", "Writing "), ("Changed ", "Changing "),
+                     ("Opened ", "Opening "), ("Looked ", "Looking "), ("Used ", "Using ")]
+        for (past, present) in swaps where done.hasPrefix(past) {
+            return present + done.dropFirst(past.count) + "…"
+        }
+        return done + "…"
     }
 
     /// Claude Code's complaint, with what to do about it.
@@ -355,6 +434,7 @@ enum ClaudeStream {
     static func isUnknownOption(_ errorOutput: String) -> Bool {
         let lower = errorOutput.lowercased()
         return lower.contains("unknown option") || lower.contains("unknown argument") || lower.contains("unrecognized")
+            || lower.contains("allowed choices") || (lower.contains("option") && lower.contains("is invalid"))
     }
 
     // MARK: JSON

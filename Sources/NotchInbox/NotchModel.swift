@@ -300,6 +300,7 @@ final class NotchModel: ObservableObject {
         case extras
         case bookmarks
         case assignments
+        case agents
         case settings
         /// The tour of what everything does.
         case tour
@@ -413,7 +414,117 @@ final class NotchModel: ObservableObject {
         case .timetable: openTimetable()
         case .notes: openNotes()
         case .assistant: openAssistant()
+        case .agents: openAgents()
         case .bookmarks: openBookmarks()
+        }
+    }
+
+    // MARK: Agents
+
+    /// Your agents and their jobs, shared by every screen (set by the app).
+    var agentsStore: AgentsStore?
+
+    /// The agent whose work is showing on the right of the Agents room.
+    @Published var agentOpen: UUID?
+    /// The job being typed for a new agent.
+    @Published var agentDraft = ""
+
+    /// Hands the job in the box to a new agent.
+    func startDraftedAgent() {
+        if startAgent(task: agentDraft) {
+            agentDraft = ""
+        }
+    }
+
+    /// The app runs the agents; without it (in checks) jobs are only listed.
+    var onStartAgent: ((String, String) -> UUID?)?
+    var onStopAgent: ((UUID) -> Void)?
+    var onAgentAgain: ((UUID) -> UUID?)?
+    var onRemoveAgent: ((UUID) -> Void)?
+    var onClearAgents: (() -> Void)?
+    /// Shows an agent's folder, or opens one of the files it saved (set by the app).
+    var onShowAgentFolder: ((UUID) -> Void)?
+    var onOpenAgentFile: ((UUID, String) -> Void)?
+
+    /// The Agents room: every agent, newest on top, with the one you pick on the right.
+    func openAgents() {
+        tool = .agents
+        if agentsStore?.team.job(agentOpen) == nil {
+            agentOpen = agentsStore?.team.newestFirst.first?.id
+        }
+        level = .lanes
+    }
+
+    func expandAgents() {
+        tool = .agents
+        level = .detail
+    }
+
+    func showAgent(_ id: UUID) {
+        tool = .agents
+        agentOpen = id
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Gives an agent a job you typed. Returns false if nothing was typed.
+    @discardableResult
+    func startAgent(task: String, name: String = "") -> Bool {
+        let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !brief.isEmpty else { return false }
+        if let start = onStartAgent {
+            if let id = start(name, brief) {
+                agentOpen = id
+            }
+        } else if let store = agentsStore {
+            var added: AgentJob?
+            store.change { added = $0.add(name: name, task: brief) }
+            agentOpen = added?.id ?? agentOpen
+        }
+        return true
+    }
+
+    func stopAgent(_ id: UUID) {
+        if let stop = onStopAgent {
+            stop(id)
+        } else {
+            agentsStore?.change { $0.stop(id) }
+        }
+    }
+
+    /// The same job again, as a new agent on top.
+    func agentAgain(_ id: UUID) {
+        if let again = onAgentAgain {
+            if let new = again(id) {
+                agentOpen = new
+            }
+        } else if let store = agentsStore {
+            var added: AgentJob?
+            store.change { added = $0.again(id) }
+            agentOpen = added?.id ?? agentOpen
+        }
+    }
+
+    func removeAgent(_ id: UUID) {
+        if let remove = onRemoveAgent {
+            remove(id)
+        } else {
+            agentsStore?.change { $0.remove(id) }
+        }
+        if agentsStore?.team.job(agentOpen) == nil {
+            agentOpen = agentsStore?.team.newestFirst.first?.id
+        }
+    }
+
+    func clearFinishedAgents() {
+        if let clear = onClearAgents {
+            clear()
+        } else {
+            agentsStore?.change { $0.clearFinished() }
+        }
+        if agentsStore?.team.job(agentOpen) == nil {
+            agentOpen = agentsStore?.team.newestFirst.first?.id
         }
     }
 
@@ -743,6 +854,7 @@ final class NotchModel: ObservableObject {
         case .extras: openExtras()
         case .bookmarks: openBookmarks()
         case .assignments: openAssignments()
+        case .agents: openAgents()
         case .settings(let section): openSettings(section)
         }
         tourPaused = true

@@ -159,6 +159,10 @@ struct HomeTileView: View {
             }
         case .assistant:
             AssistantToolTile(model: model, assistant: Assistant.shared)
+        case .agents:
+            if let store = model.agentsStore {
+                AgentsToolTile(model: model, store: store)
+            }
         case .bookmarks:
             if let store = model.bookmarksStore {
                 BookmarksToolTile(model: model, store: store)

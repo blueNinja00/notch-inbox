@@ -40,7 +40,7 @@ struct SettingsView: View {
                         case .accounts:
                             AccountSettings(model: model, settings: settings)
                         case .assistant:
-                            AssistantSettings(assistant: assistant)
+                            AssistantSettings(assistant: assistant, settings: settings)
                         case .timetable:
                             if let store = model.timetableStore {
                                 TimetableSettings(model: model, store: store)
@@ -718,6 +718,7 @@ struct AccountSettingRow: View {
 
 struct AssistantSettings: View {
     @ObservedObject var assistant: Assistant
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         SettingsHeading(title: "Who answers")
@@ -746,21 +747,10 @@ struct AssistantSettings: View {
         }
 
         SettingsDivider()
-        SettingsToggle(title: "See and change my timetable",
-                       detail: assistant.engine.isClaude
-                           ? "Ask things like \"add soccer on Tuesdays at 5\". Your timetable is sent to Anthropic with each question; changes are made only when you ask."
-                           : "Ask things like \"add soccer on Tuesdays at 5\". Your timetable stays on this Mac; changes are made only when you ask.",
-                       isOn: $assistant.editsTimetable)
-        SettingsToggle(title: "See and change my planner",
-                       detail: assistant.engine.isClaude
-                           ? "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams are sent to Anthropic with each question; changes are made only when you ask."
-                           : "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams stay on this Mac; changes are made only when you ask.",
-                       isOn: $assistant.editsPlanner)
-        SettingsToggle(title: "Share my newest emails and notes",
-                       detail: assistant.engine.isClaude
-                           ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
-                           : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
-                       isOn: $assistant.sharesContext)
+        AssistantReach(assistant: assistant)
+
+        SettingsDivider()
+        AgentSettings(assistant: assistant, settings: settings)
     }
 
     private var modelDetail: String {
@@ -769,6 +759,137 @@ struct AssistantSettings: View {
         case .sonnet: return "Sonnet is quick and capable: the best fit for most things."
         case .opus: return "Opus thinks hardest, but is slower and uses more of your plan."
         }
+    }
+}
+
+/// What the assistant may see and do: the web, your timetable and planner, your
+/// assignments, bookmarks and agents, your emails and notes. Each has its own switch.
+struct AssistantReach: View {
+    @ObservedObject var assistant: Assistant
+
+    var body: some View {
+        let claude = assistant.engine.isClaude
+
+        SettingsHeading(title: "What it can see and do",
+                        detail: "It only changes anything when you ask it to, and it says what it changed.")
+        if assistant.engine == .claudeCode {
+            SettingsToggle(title: "Look things up on the web",
+                           detail: "It can search the web and read pages before it answers. What it searches for is sent to Anthropic.",
+                           isOn: $assistant.usesWeb)
+        } else {
+            SettingsDetail(text: "Looking things up on the web needs “Claude, with your Claude plan”. \(assistant.engine.name) here answers from what it knows.")
+        }
+        SettingsToggle(title: "See and change my timetable",
+                       detail: claude
+                           ? "Ask things like \"add soccer on Tuesdays at 5\". Your timetable is sent to Anthropic with each question."
+                           : "Ask things like \"add soccer on Tuesdays at 5\". Your timetable stays on this Mac.",
+                       isOn: $assistant.editsTimetable)
+        SettingsToggle(title: "See and change my planner",
+                       detail: claude
+                           ? "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams are sent to Anthropic with each question."
+                           : "Ask things like \"what's due this week?\" or \"add a Maths test on Friday\". Your homework and exams stay on this Mac.",
+                       isOn: $assistant.editsPlanner)
+        ForEach(assistant.abilities, id: \.tag) { ability in
+            SettingsToggle(title: ability.title,
+                           detail: ability.detail + (claude ? " What it sees of them is sent to Anthropic with each question." : " They stay on this Mac."),
+                           isOn: Binding(get: { assistant.allows(ability.tag) }, set: { assistant.setAllowed(ability.tag, $0) }))
+        }
+        SettingsToggle(title: "Share my newest emails and notes",
+                       detail: claude
+                           ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
+                           : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
+                       isOn: $assistant.sharesContext)
+    }
+}
+
+/// Agents: how many work at once, whether they use the web, and which folders they may read.
+struct AgentSettings: View {
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        let tools = assistant.engine == .claudeCode
+
+        SettingsHeading(title: "Agents",
+                        detail: tools
+                            ? "Separate Claudes that you, or the assistant, hand bigger jobs to. Each works in a folder of its own, and can't run commands or see your mail, notes or other files."
+                            : "Separate AIs that you, or the assistant, hand bigger jobs to. With \(assistant.engine.title), an agent can only think and write; the web and saved files need “Claude, with your Claude plan”.")
+        SettingsRow(title: "Working at once", detail: "The rest wait their turn. More at once uses more of your plan.") {
+            ChoiceSegments(options: AgentSettings.options, selected: settings.agentsAtOnce, choose: { settings.agentsAtOnce = $0 })
+        }
+        if tools {
+            SettingsToggle(title: "Let agents use the web",
+                           detail: "They can search and read pages, and what they search for is sent to Anthropic. Off, they work from what they know.",
+                           isOn: $settings.agentsUseWeb)
+        }
+        SettingsToggle(title: "Chime when an agent finishes",
+                       detail: "A sound when a report is ready, or when an agent couldn't finish.",
+                       isOn: $settings.agentsChime)
+        if tools {
+            AgentFolderSettings(settings: settings)
+            SettingsRow(title: "What agents have saved",
+                        detail: "Each agent's files are kept in its own folder, inside “Notch Agents” in your home folder, until you delete them.") {
+                PillButton(title: "Show in Finder", action: { settings.onShowAgentsFolder?() })
+            }
+        }
+    }
+}
+
+extension AgentSettings {
+    /// One to four agents at a time.
+    static let options: [ChoiceSegments<Int>.Option] = AppSettings.agentChoices.map { count in
+        ChoiceSegments<Int>.Option(value: count, title: "\(count)",
+                                   help: count == 1 ? "One agent at a time" : "Up to \(count) agents at a time")
+    }
+}
+
+/// The folders of yours that agents may read.
+struct AgentFolderSettings: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsRow(title: "Folders agents may read",
+                    detail: "For a job that needs your own files, like notes to revise from. Agents can read these folders and can't change them. An agent that also uses the web could be tricked by a page into passing on what it read, so only share folders with nothing private in them.") {
+            PillButton(title: "Add a Folder…", action: { settings.onChooseAgentFolder?() })
+        }
+        if !settings.agentReadFolders.isEmpty {
+            VStack(spacing: 4) {
+                ForEach(settings.agentReadFolders, id: \.self) { folder in
+                    AgentFolderRow(path: folder, remove: { settings.removeAgentFolder(folder) })
+                }
+            }
+        }
+        if let problem = settings.agentFolderProblem {
+            Text(problem)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.warning)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+struct AgentFolderRow: View {
+    let path: String
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+            Text(AgentFolders.shown(path, home: NSHomeDirectory()))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(path)
+            Spacer(minLength: 6)
+            IconButton(symbol: "xmark", label: "Stop sharing this folder with agents", size: 24, action: remove)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.lane))
     }
 }
 

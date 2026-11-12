@@ -285,7 +285,10 @@ struct AgentChain: Codable, Equatable {
         guard let chain = job.chain else { return job.statusWord }
         let role = chain.role
         switch job.status {
-        case .queued: return "\(role) waiting its turn (\(chain.place.lowercased()))"
+        case .queued:
+            // Held back by the day's usage cap, it says so.
+            let waiting = "\(role) waiting its turn (\(chain.place.lowercased()))"
+            return job.activity.isEmpty ? waiting : waiting + ". " + job.activity
         case .working: return "\(role) working (\(chain.place.lowercased()))"
         case .done: return chain.isLast ? "Done: the checked \(chain.kind == .assignment ? "plan" : "piece") is ready" : "\(role) done"
         case .failed: return "The \(role.lowercased()) couldn't finish"

@@ -68,12 +68,22 @@ The app keeps the notch's mail in `~/Library/Application Support/Notch Inbox`, r
 
 ## Updates
 
-Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)). The app looks for a new build when it starts and every 2 minutes, by checking where github.com's "latest release" link leads. (Not GitHub's API, which allows apps that aren't signed in 60 questions an hour per network, shared by every app on it; it's only asked for a new build's notes, or when github.com doesn't answer. If a check you ask for fails, **Settings → Updates** says why.) When one is ready:
+Every change pushed to this repository is built on GitHub's Macs and published as a numbered build (see [Releases](../../releases)), first as a test build and then, when it's ready, released to everyone (below). The app looks for a new build when it starts and every 2 minutes, by checking where github.com's "latest release" link leads. (Not GitHub's API, which allows apps that aren't signed in 60 questions an hour per network, shared by every app on it; it's only asked for a new build's notes, or when github.com doesn't answer. If a check you ask for fails, **Settings → Updates** says why.) When one is ready:
 
 - an **Update** button appears at the top right of the open notch, and
 - **Settings → Updates** shows the new build, its notes and an **Install** button.
 
 Click either one to download the new build, swap it in and restart. Nothing installs without your click. **Settings → Updates** also has **Check for Updates** and shows which build you're running.
+
+### Test builds, and releasing to everyone
+
+A new build starts out as a **test build**. It's on the Releases page marked *Pre-release*, and only a copy with **Settings → Updates → Get test builds** switched on is offered it. Every other copy stays on the newest build that has been **released to everyone**, and the install command above installs that one. So a build can be tried on one Mac before anyone else gets it.
+
+- **Get test builds** is off on a copy installed fresh. (On a copy that was already in use when Build 43 brought the switch in, it starts on.) Test builds are newer and sometimes broken. Switch it off and the copy goes back to being offered released builds only; it keeps the build it has until a newer one is released.
+- **Releasing a build** is done by the repository's owner, once the test build has been tried. In the app: **Settings → Updates → Release Build N to Everyone…**, which opens the page on GitHub. Or go there yourself: the repository's **Actions** tab, **Release to everyone**, **Run workflow**, type the build's number, **Run workflow**. Within a couple of minutes every copy is offered that build. Builds in between that were never released are skipped.
+- With test builds on, Settings says which build everyone is offered and whether this Mac is ahead of it.
+
+How the app finds a test build: GitHub's "latest release" link never points at one, so with test builds on the app also asks github.com whether the next few builds after its own have a page yet (stopping after three in a row that don't), and asks GitHub's API for its list of builds at most every half hour as a safety net.
 
 ## Settings
 
@@ -86,7 +96,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history, the shelf, and volume and brightness at the notch (with **Keep them beside the notch** and **Hide macOS's own pop-up**).
 - **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
-- **Updates:** your build, checking and installing.
+- **Updates:** your build, checking and installing, whether this Mac gets test builds, and releasing a build to everyone.
 - **Quit Notch Inbox**, at the bottom.
 
 **Themes:** **Settings → General** has eight to pick from: **Midnight** (black and grey with white buttons, the one it starts with), **Graphite** (softer greys), **Ocean**, **Forest**, **Sunset**, **Grape** and **Rose** (each washes the tiles and panels with its colour and uses it for buttons, whatever's selected, today and unread dots), and **High contrast** (brighter text, yellow buttons). The notch itself stays black in all of them, like the camera housing it hangs from. Every theme's text is checked to read clearly on its backgrounds.

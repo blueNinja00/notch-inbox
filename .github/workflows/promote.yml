@@ -1,0 +1,51 @@
+name: Release to everyone
+
+# Builds pushed to main are published as test builds: only copies of Notch Inbox with
+# "Get test builds" switched on are offered them. Running this by hand, with a build's
+# number, releases that build to everyone: it becomes GitHub's "latest release", which every
+# copy looks for, and which the install command in the README downloads.
+#
+# On GitHub: Actions, "Release to everyone", Run workflow, type the number, Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: "Build number to release to everyone, like 44"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release it to everyone
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ inputs.build }}
+        run: |
+          set -euo pipefail
+          number="$(printf '%s' "$BUILD" | tr -cd '0-9')"
+          if [ -z "$number" ]; then
+            echo "::error::Type a build number, like 44."
+            exit 1
+          fi
+          # Builds before 43 don't know about test builds: a copy of one is offered every
+          # build as it's pushed, so they can't be what everyone installs.
+          if [ "$number" -lt 43 ]; then
+            echo "::error::Build $number is from before test builds. Release build 43 or later."
+            exit 1
+          fi
+          tag="build-$number"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::There is no $tag. The Releases page lists the builds there are."
+            exit 1
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+          echo "Build $number is released to everyone. Every copy is offered it within a couple of minutes." >> "$GITHUB_STEP_SUMMARY"

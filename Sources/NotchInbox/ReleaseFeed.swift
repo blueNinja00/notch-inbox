@@ -9,6 +9,9 @@ struct ReleaseInfo: Equatable {
     /// It goes straight to GitHub's file servers, and kept working when the usual link
     /// answered 504.
     var apiURL: URL? = nil
+    /// A test build: published, but not released to everyone yet. Only copies with
+    /// "Get test builds" switched on are offered it.
+    var isTest = false
 
     /// Where to download from, in order.
     var downloadURLs: [URL] {
@@ -59,9 +62,99 @@ enum ReleaseFeed {
     }
 
     /// A build named on github.com, with its usual download link (no notes).
-    static func release(build: Int, site: URL, repository: String, assetName: String) -> ReleaseInfo {
+    static func release(build: Int, site: URL, repository: String, assetName: String, isTest: Bool = false) -> ReleaseInfo {
         let link = site.appendingPathComponent("\(repository)/releases/download/build-\(build)/\(assetName)")
-        return ReleaseInfo(build: build, notes: "", downloadURL: link)
+        return ReleaseInfo(build: build, notes: "", downloadURL: link, isTest: isTest)
+    }
+
+    // MARK: Test builds
+
+    /// The first build that knows about test builds. Builds before it can't be released
+    /// to everyone again: a copy of one would be offered every build as it's pushed.
+    static let firstWithTestBuilds = 43
+
+    /// A build's own page on github.com. Every published build has one, whether or not
+    /// it has been released to everyone, so it says whether a build exists.
+    static func page(build: Int, site: URL, repository: String) -> URL {
+        site.appendingPathComponent("\(repository)/releases/tag/build-\(build)")
+    }
+
+    /// Where a build is released to everyone: the "Release to everyone" page of the
+    /// repository's Actions, which only its owner can run.
+    static func releasePage(site: URL, repository: String) -> URL {
+        site.appendingPathComponent("\(repository)/actions/workflows/promote.yml")
+    }
+
+    private struct Listed: Decodable {
+        struct Asset: Decodable {
+            let name: String
+        }
+
+        let tagName: String
+        let draft: Bool?
+        let assets: [Asset]?
+    }
+
+    /// The newest build in GitHub's list of releases (from its API), test builds included:
+    /// the highest-numbered one that's published and has the app attached.
+    static func newestListed(_ data: Data, assetName: String) -> Int? {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let list = try? decoder.decode([Listed].self, from: data) else { return nil }
+        let builds = list.compactMap { entry -> Int? in
+            guard entry.draft != true, entry.tagName.hasPrefix("build-"),
+                  (entry.assets ?? []).contains(where: { $0.name == assetName }) else { return nil }
+            return buildNumber(from: entry.tagName)
+        }
+        return builds.max()
+    }
+
+    /// A build to offer, and whether it's a test build.
+    struct Offer: Equatable {
+        let build: Int
+        let isTest: Bool
+    }
+
+    /// What a copy on build `current` is offered: the newest build released to everyone,
+    /// or, with test builds wanted, the newest build there is. Nothing if it has that already.
+    static func offer(current: Int, released: Int?, test: Int?, wantsTest: Bool) -> Offer? {
+        let everyone = released ?? 0
+        let newest = wantsTest ? max(everyone, test ?? 0) : everyone
+        guard newest > current, newest > 0 else { return nil }
+        return Offer(build: newest, isTest: newest > everyone)
+    }
+
+    /// How Settings puts it: "Build 44 is ready to install" or, for a test build, that
+    /// it hasn't been released to everyone yet.
+    static func readyText(build: Int, isTest: Bool) -> String {
+        isTest ? "Build \(build) is ready to install: a test build, not released to everyone yet"
+               : "Build \(build) is ready to install"
+    }
+
+    /// Under "Get test builds", for whoever releases the builds: where things stand.
+    static func releaseStanding(current: Int, released: Int?) -> String {
+        guard let released = released else {
+            return "Checking which build everyone has…"
+        }
+        if current > released {
+            return "This Mac is on Build \(current), a test build. Everyone else is offered Build \(released)."
+        }
+        if current == released {
+            return "Build \(current) is released: every copy is offered it."
+        }
+        return "Everyone is offered Build \(released)."
+    }
+
+    /// What to do on the page that "Release Build 44 to Everyone…" opens.
+    static func releaseSteps(build: Int) -> String {
+        "GitHub opens in your browser. Click Run workflow, type \(build), then click the green Run workflow button. Only the repository's owner can, signed in to GitHub. Every copy is offered the build within a couple of minutes."
+    }
+
+    /// Whether this Mac's build is one that could be released now: it's newer than the
+    /// one everyone has.
+    static func canRelease(current: Int, released: Int?) -> Bool {
+        guard let released = released else { return false }
+        return current > released && current >= firstWithTestBuilds
     }
 
     /// Why GitHub's API didn't say which build is newest, in words.
@@ -84,5 +177,62 @@ enum ReleaseFeed {
             return "GitHub had a problem (HTTP \(status)). Try again in a minute."
         }
         return status == 0 ? "GitHub didn't answer." : "GitHub answered HTTP \(status)."
+    }
+}
+
+/// Looks for test builds. They aren't GitHub's "latest release", so github.com is asked
+/// whether each build after the newest one known has a page yet, stopping after a few in a
+/// row that don't. (A build that failed to publish leaves a gap in the numbers.)
+struct BuildSearch: Equatable {
+    /// The newest build known to exist.
+    private(set) var newest: Int
+    /// Builds in a row, after the newest, that turned out not to exist.
+    private(set) var misses = 0
+    /// How many pages have been asked for.
+    private(set) var looked = 0
+    /// GitHub didn't answer properly: the search stops, keeping what it found.
+    private(set) var stopped = false
+    /// Whether anything newer than where it started was found.
+    private(set) var foundNewer = false
+
+    /// How many builds in a row may be missing before the search gives up.
+    static let gap = 3
+    /// The most pages asked for in one check.
+    static let most = 24
+
+    init(after base: Int) {
+        newest = max(0, base)
+    }
+
+    /// The build to ask about next; nil when the search is over.
+    var next: Int? {
+        guard !stopped, misses < BuildSearch.gap, looked < BuildSearch.most else { return nil }
+        return newest + misses + 1
+    }
+
+    /// github.com answered for a build's page: 200 means it's there, 404 that it isn't.
+    /// Anything else (no connection, a server error) ends the search for now.
+    mutating func saw(_ build: Int, status: Int) {
+        guard build == next else { return }
+        looked += 1
+        switch status {
+        case 200:
+            newest = build
+            misses = 0
+            foundNewer = true
+        case 404:
+            misses += 1
+        default:
+            stopped = true
+        }
+    }
+
+    /// For Copy Debug Info: "looked at 3 builds, none newer than build 44".
+    var summary: String {
+        let pages = looked == 1 ? "1 build" : "\(looked) builds"
+        if stopped {
+            return "looked at \(pages), then github.com stopped answering"
+        }
+        return foundNewer ? "looked at \(pages), newest is build \(newest)" : "looked at \(pages), none newer than build \(newest)"
     }
 }

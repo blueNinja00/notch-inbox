@@ -147,6 +147,43 @@ final class AppSettings: ObservableObject {
     @Published var build = 0
     @Published var update: UpdateStatus = .idle
     @Published var lastUpdateCheck: Date?
+
+    // MARK: Test builds
+
+    /// Whether this copy is offered test builds: every build as it's pushed, before it's
+    /// released to everyone. Off, it's only offered the builds that have been released.
+    @Published var testBuilds: Bool = AppSettings.startsWithTestBuilds() {
+        didSet {
+            guard testBuilds != oldValue else { return }
+            UserDefaults.standard.set(testBuilds, forKey: AppSettings.testBuildsKey)
+            onTestBuildsChanged?()
+        }
+    }
+    /// The build on offer is a test build.
+    @Published var updateIsTest = false
+    /// The newest build released to everyone, as github.com last said.
+    @Published var releasedBuild: Int?
+    var onTestBuildsChanged: (() -> Void)?
+    /// Opens the page on GitHub where a build is released to everyone.
+    var onOpenReleasePage: (() -> Void)?
+
+    func openReleasePage() { onOpenReleasePage?() }
+
+    static let testBuildsKey = "updates.testBuilds"
+
+    /// Whether test builds start switched on. The first time a build with the switch runs:
+    /// a copy that was already in use keeps getting every build, as it always has (before
+    /// this, only whoever makes the app had one); a copy installed fresh gets only the
+    /// builds released to everyone. After that, it's whatever the switch was left at.
+    static func startsWithTestBuilds(in defaults: UserDefaults = .standard) -> Bool {
+        if let saved = defaults.object(forKey: testBuildsKey) as? Bool {
+            return saved
+        }
+        // The tour marks a copy the first time it runs, so a mark means it ran before.
+        let usedBefore = defaults.integer(forKey: Tour.offeredKey) > 0 || defaults.integer(forKey: Tour.seenKey) > 0
+        defaults.set(usedBefore, forKey: testBuildsKey)
+        return usedBefore
+    }
     @Published var accounts: [Account] = []
     @Published var link = LinkStatus()
     @Published var storage = Storage()

@@ -22,6 +22,7 @@ struct AgentsView: View {
                     if let busy = team.busyLine {
                         AgentsBusyTag(text: busy)
                     }
+                    AgentsUsageTag(usage: assistant.usage, cap: settings.agentDailyCap, open: { model.openSettings(.assistant) })
                 }
             } trailing: {
                 HStack(spacing: 2) {
@@ -114,6 +115,36 @@ struct AgentsBusyTag: View {
         .frame(height: 20)
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
         .padding(.leading, 2)
+    }
+}
+
+/// What the notch has used today, beside the room's name. It turns amber once the day's
+/// cap is reached and new agents are being held. Click for the full count in Settings.
+struct AgentsUsageTag: View {
+    @ObservedObject var usage: UsageStore
+    let cap: Int
+    let open: () -> Void
+
+    var body: some View {
+        let today = usage.log.today()
+        let over = usage.log.isOver(cap: cap)
+
+        if today.runs > 0 || cap > 0 {
+            Button(action: open) {
+                Text(UsageText.todayTag(today, cap: cap))
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(over ? Theme.warning : Theme.tertiary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .overlay(Capsule().strokeBorder(over ? Theme.warning.opacity(0.6) : Color.white.opacity(0.14), lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 2)
+            .help(over ? "Today's usage cap is reached, so new agents are held until tomorrow. Click to change it."
+                       : "Tokens the notch has used today: \(UsageText.line(today)). Click for more.")
+        }
     }
 }
 

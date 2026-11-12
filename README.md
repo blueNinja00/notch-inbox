@@ -81,7 +81,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 
 - **General:** the theme (below), which tools are on the primary menu and in what order, Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
 - **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox; how much mail is kept on this Mac, and how many emails to keep in full.
-- **Assistant:** who answers (below), which Claude model, and a switch for each thing it may see and do: look things up on the web, your timetable, your planner, your assignments and marks, your bookmarks, handing jobs to agents, and your newest emails and notes. Then your saved [chats](#your-chats), [typing into your documents](#typing-into-your-documents) and the permission macOS wants for it, and the [agents](#agents): how many work at once, whether they use the web, the chime, and the folders they may read.
+- **Assistant:** who answers (below), which Claude model, and a switch for each thing it may see and do: look things up on the web, your timetable, your planner, your assignments and marks, your bookmarks, handing jobs to agents, and your newest emails and notes. Then your saved [chats](#your-chats), the [usage](#usage) count and the daily cap for agents, [typing into your documents](#typing-into-your-documents) and the permission macOS wants for it, and the [agents](#agents): how many work at once, whether they use the web, the chime, and the folders they may read.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history, the shelf, and volume and brightness at the notch (with **Keep them beside the notch** and **Hide macOS's own pop-up**).
 - **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
@@ -123,6 +123,17 @@ The assistant can put its answer straight into what you're writing, and work on 
 - **The permission:** typing and reading a selection mean pressing keys in another app (⌘V and ⌘C), which macOS only lets an app do if you allow it under **System Settings → Privacy & Security → Accessibility**. **Settings → Assistant → Allow…** asks for it. Without it, the keyboard button copies the answer and the chat tells you to paste it with ⌘V. Because Notch Inbox isn't signed by a registered developer, macOS treats each update as a new app and asks again after every one; **Allow…** clears the old entry and asks afresh.
 - **How it's done:** to type, the answer is put on the clipboard (marked as momentary, so clipboard histories skip it), ⌘V is pressed in the app you were in, and your clipboard is put back as it was. To read a selection, the app is asked directly; if it can't say (Google Docs and most web pages can't), ⌘C is pressed, the clipboard is read, and your clipboard is put back. ⌘V and ⌘C are pressed by their place on a standard keyboard, so on a Dvorak layout use Use Copied and paste by hand.
 - **What's read, and where it goes:** nothing in your documents is read unless you click Use Selection, and the clipboard only when you click Use Copied (a copy a password manager marked private is left alone). What you attach goes with that one question: to Anthropic with Claude, nowhere with Qwen. Up to 12,000 characters are attached.
+
+### Usage
+
+Everything the notch asks of Claude counts toward your Claude plan like any other use, so it keeps its own count.
+
+- **Settings → Assistant → Usage** shows today, the last 7 days and the last 30, in tokens (a token is about three-quarters of a word), with where the week's went: questions, agents, the team chat, and planning and reading. Re-reading what's already been read, which is most of what an agent does, counts at a tenth, as it does for cost.
+- The dollar figure beside it is Claude Code's own estimate of what the same use would cost at API prices. On a plan you aren't charged it; it's a yardstick for how big a run was.
+- **Each agent's floor** shows what it has used so far while it works, and what the job came to when it's done. The agent room's top row shows today's total; click it for the rest.
+- **Daily cap for agents** (off to start with): once the notch has used that many tokens in a day, new agents are held, saying so on their floor, until tomorrow or until you raise the cap. Agents already working carry on, and you can still ask questions.
+- It's the notch's count, not Anthropic's: it doesn't see your other use of Claude and can't know your plan's limits. Your plan's real meter is in Claude's own **Settings → Usage**. An agent you stop part-way is counted by what it had read, without the cost. With an API key, tokens are counted without a cost; Qwen runs on your Mac and isn't counted.
+- The count is kept in `~/Library/Application Support/Notch Inbox/Usage.json`, readable only by you: totals for each of the last 120 days, and the last 60 runs.
 
 ## Agents
 
@@ -211,6 +222,7 @@ Click the Assignments tile on the primary menu. It has two halves, switched at t
 **To Do** is for the bigger pieces of work: an essay, a project, a prac report.
 
 - The **+** at the top adds one. In the side panel, say what it is, its subject, when it's due and what it's **worth** (as a percentage of the subject's mark, if you know).
+- **Or give it the task sheet.** Drag the sheet onto Assignments (or onto its tile on the primary menu), or click the page-with-a-plus button and choose it: a PDF, a Word or text file, or a photo or screenshot of the sheet. The words are got out on your Mac (photos and scanned PDFs with macOS's own text recognition), the assistant picks out the title, subject, due date, weighting, total marks and a first set of steps, and the new assignment opens for you to check. The brief holds a short version of what's asked, then the sheet's own words. Check the due date: a sheet that leaves out the year, or says "Week 6", is a guess. With Claude, the sheet's words are sent to Anthropic to be read; with Qwen they stay on your Mac. If the assistant can't be asked, the assignment is still made, named after the file, with the sheet's words in its brief. macOS may ask whether Notch Inbox can read your Downloads or Documents folder the first time.
 - **Break into Steps** plans it. Paste the task sheet into **What the task asks** first and the assistant reads it and writes four to eight steps for this assignment, each with a time. It only plans: it doesn't write any of the work. With Claude, the assignment's name, subject, due date, task sheet and notes are sent to Anthropic when you click the button, and at no other time; with Qwen it stays on this Mac. If the assistant isn't set up, or can't answer, the usual steps for that kind of work go in (an essay, a talk, a prac, or anything else) and a note says so.
 - The steps are yours to change: rename one by typing over it, click its time to change how long it takes, point at it for arrows to move it and a cross to remove it, and add your own underneath. **Plan Again** replaces the steps still to do and keeps the ones you've ticked off.
 - **The planner fits the steps into your week.** Every step still to do shows in the Planner's plan and in the timetable's free slots, before the assignment is due, in order. An assignment with no steps yet gets an hour to make a start. Click a planned step to come back to its assignment.
@@ -279,6 +291,8 @@ open "build/Notch Inbox.app"
 | `Shelf.swift`, `Views/ExtrasView.swift` | The shelf for parked files; the extras row and panel |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `Chats.swift` | Your chats with the assistant: several of them, kept between launches |
+| `Usage.swift` | The count of what the notch has used: reading it from Claude Code, totals by day, and the daily cap |
+| `AssignmentSheet.swift`, `SheetReader.swift` | Reading a task sheet into an assignment: getting the words out of the file, and turning the assistant's reading into its details |
 | `TeamChat.swift` | The team chat: its messages, the file agents read, and what agents and the chief are told about it |
 | `StaffAgent.swift` | What the assistant is told about its agents, your assignments and your bookmarks, and making the changes it asks for |
 | `Typing.swift`, `DocumentTyper.swift` | Typing an answer into the app you were in, reading what's selected there, and turning an answer into plain text |

@@ -69,10 +69,29 @@ final class AgentRunner {
         store.saveNow()
     }
 
-    /// Starts waiting jobs while there's room for them.
+    /// Starts waiting jobs while there's room for them, unless the day's usage cap has
+    /// been reached: then they're held, and looked at again every ten minutes.
     func pump() {
+        if assistant.usage.log.isOver(cap: settings.agentDailyCap) {
+            guard !store.team.queued.isEmpty else { return }
+            store.change { $0.hold(UsageText.held) }
+            lookAgainLater()
+            return
+        }
+        store.change { $0.unhold() }
         for job in store.team.ready(limit: settings.agentsAtOnce) where running[job.id] == nil {
             begin(job)
+        }
+    }
+
+    private var lookingAgain = false
+
+    private func lookAgainLater() {
+        guard !lookingAgain else { return }
+        lookingAgain = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 600) { [weak self] in
+            self?.lookingAgain = false
+            self?.pump()
         }
     }
 
@@ -146,6 +165,7 @@ final class AgentRunner {
         }
         let feed = AgentFeed(id: id, store: store, folder: folder.path)
         feed.desk = desk
+        var problem: String?
         do {
             var errors = ""
             // Claude Code's restricted mode first: there Claude Code itself keeps the agent
@@ -161,17 +181,28 @@ final class AgentRunner {
                 if Task.isCancelled || outcome.answered || outcome.exitStatus == 0 { break }
             }
             await feed.flush()
-            if Task.isCancelled || feed.ended { return }
-            // It stopped without a report: say why, as best Claude Code tells us.
-            if ClaudeStream.isUnknownOption(errors) {
-                await fail(id, "This Claude Code is too old for agents. In Terminal, run: claude update")
-            } else {
-                await fail(id, ClaudeStream.codeProblem(errors))
+            if !Task.isCancelled && !feed.ended {
+                // It stopped without a report: say why, as best Claude Code tells us.
+                problem = ClaudeStream.isUnknownOption(errors) ? "This Claude Code is too old for agents. In Terminal, run: claude update"
+                    : ClaudeStream.codeProblem(errors)
             }
         } catch {
             if !Task.isCancelled {
-                await fail(id, "Couldn't start Claude Code: \(error.localizedDescription)")
+                problem = "Couldn't start Claude Code: \(error.localizedDescription)"
             }
+        }
+        // However it ended (finished, stopped part-way, out of time), what it used counts.
+        let used = feed.tally.use
+        let title = model.title
+        let store = self.store
+        let usage = assistant.usage
+        await MainActor.run {
+            guard !used.isEmpty else { return }
+            store.change { $0.setUsage(id, tokens: used.tokens, cost: used.cost) }
+            usage.record(used, kind: .agent, label: store.team.job(id)?.name ?? "", model: title)
+        }
+        if let problem = problem {
+            await fail(id, problem)
         }
     }
 
@@ -182,7 +213,8 @@ final class AgentRunner {
         await MainActor.run {
             self.store.change { $0.note(id, kind: .note, text: "Thinking it through") }
         }
-        let result = await assistant.complete(system: system, prompt: prompt, model: model, json: false, maxTokens: 4000)
+        let result = await assistant.complete(system: system, prompt: prompt, model: model, json: false, maxTokens: 4000,
+                                              purpose: .agent)
         if Task.isCancelled { return }
         switch result {
         case .success(let report):
@@ -215,6 +247,9 @@ final class AgentFeed {
     /// Whether Claude Code said how the job ended.
     private(set) var ended = false
     var desk: TeamDesk?
+    /// What the agent has used so far.
+    private(set) var tally = TokenTally()
+    private var shownTokens = 0
 
     init(id: UUID, store: AgentsStore, folder: String) {
         self.id = id
@@ -223,6 +258,7 @@ final class AgentFeed {
     }
 
     func take(_ line: String) async {
+        tally.take(line: line)
         for event in AgentStream.events(fromLine: line, folder: folder) {
             switch event {
             case .text(let text):
@@ -257,16 +293,26 @@ final class AgentFeed {
 
     /// Passes on what has arrived since the last time.
     func flush() async {
-        guard !buffer.isEmpty || fresh else { return }
+        let tokens = tally.use.tokens
+        let counted = tokens != shownTokens
+        guard !buffer.isEmpty || fresh || counted else { return }
         let text = buffer
         let afresh = fresh
         buffer = ""
         fresh = false
+        shownTokens = tokens
         lastFlush = Date()
         let id = self.id
         let store = self.store
         await MainActor.run {
-            store.change { $0.write(id, text, fresh: afresh) }
+            store.change { team in
+                if !text.isEmpty || afresh {
+                    team.write(id, text, fresh: afresh)
+                }
+                if counted {
+                    team.setUsage(id, tokens: tokens, cost: nil)
+                }
+            }
         }
     }
 
@@ -392,7 +438,8 @@ final class TeamDesk {
         let model = assistant.claudeModel
         Task { [weak self] in
             guard let self = self else { return }
-            let result = await self.assistant.complete(system: system, prompt: prompt, model: model, json: false, maxTokens: 900)
+            let result = await self.assistant.complete(system: system, prompt: prompt, model: model, json: false, maxTokens: 900,
+                                                       purpose: .team)
             await MainActor.run {
                 self.answering = false
                 switch result {

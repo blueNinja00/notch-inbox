@@ -762,6 +762,9 @@ struct AssistantSettings: View {
         TypingSettings(assistant: assistant, settings: settings)
 
         SettingsDivider()
+        UsageSettings(usage: assistant.usage, settings: settings, engine: assistant.engine)
+
+        SettingsDivider()
         AgentSettings(assistant: assistant, settings: settings)
     }
 
@@ -811,6 +814,66 @@ struct AssistantReach: View {
                            ? "The last 30 days of email the notch holds (sender, subject and time of up to 120, and how the newest 25 start), and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac. Agents never see your mail; the assistant writes what matters into their jobs."
                            : "Qwen sees the last 30 days of email the notch holds (sender, subject and time, and how the newest start), and your latest notes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
+    }
+}
+
+/// How much Claude the notch has used, and the daily cap that holds new agents back.
+struct UsageSettings: View {
+    @ObservedObject var usage: UsageStore
+    @ObservedObject var settings: AppSettings
+    let engine: AssistantEngine
+
+    var body: some View {
+        let log = usage.log
+        let where7 = UsageText.breakdown(log.byKind(days: 7))
+
+        SettingsHeading(title: "Usage",
+                        detail: "The notch's own count of the Claude it has used, in tokens (about three-quarters of a word each; re-reading what it already has counts at a tenth). The dollar figure is Claude Code's estimate of the same use at API prices: on a plan you aren't charged it, it's a yardstick. This counts only what the notch does. Your plan's real meter is in Claude's own Settings → Usage.")
+        VStack(spacing: 6) {
+            UsageRow(title: "Today", totals: log.today())
+            UsageRow(title: "Last 7 days", totals: log.total(days: 7))
+            UsageRow(title: "Last 30 days", totals: log.total(days: 30))
+        }
+        if !where7.isEmpty {
+            SettingsDetail(text: "Where the last 7 days went: " + where7 + ".")
+        }
+        if engine == .qwen {
+            SettingsDetail(text: "Qwen runs on this Mac, so nothing it does is counted here.")
+        }
+        SettingsRow(title: "Daily cap for agents",
+                    detail: "Once the notch has used this many tokens in a day, new agents wait until tomorrow, or until you raise the cap. Agents already working carry on, and you can still ask questions.") {
+            ChoiceSegments(options: UsageSettings.caps, selected: settings.agentDailyCap, choose: { settings.agentDailyCap = $0 })
+        }
+    }
+}
+
+extension UsageSettings {
+    static let caps: [ChoiceSegments<Int>.Option] = UsageText.caps.map { cap in
+        ChoiceSegments<Int>.Option(value: cap, title: UsageText.cap(cap),
+                                   help: cap == 0 ? "No cap" : "Hold new agents after \(UsageText.tokens(cap)) tokens in a day")
+    }
+}
+
+/// One line of the usage count: a period and what was used in it.
+struct UsageRow: View {
+    let title: String
+    let totals: UsageLog.Totals
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 96, alignment: .leading)
+            Text(UsageText.line(totals))
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(totals.runs > 0 ? Theme.body : Theme.tertiary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.lane))
     }
 }
 

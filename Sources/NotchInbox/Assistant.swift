@@ -13,6 +13,8 @@ final class Assistant: ObservableObject {
 
     /// Every chat, kept on this Mac between launches. The open one's messages are `messages`.
     let chats: ChatsStore
+    /// The notch's count of the Claude it has used.
+    let usage: UsageStore
     /// The answer being written right now: only it is added to as the answer streams in.
     private var answeringID: UUID?
 
@@ -165,8 +167,9 @@ final class Assistant: ObservableObject {
     private var qwenModel: String?
     private var answering: Task<Void, Never>?
 
-    init(chats: ChatsStore = ChatsStore()) {
+    init(chats: ChatsStore = ChatsStore(), usage: UsageStore = UsageStore()) {
         self.chats = chats
+        self.usage = usage
         let defaults = UserDefaults.standard
         let engine = defaults.string(forKey: Assistant.engineKey).flatMap(AssistantEngine.init(rawValue:)) ?? .standard
         self.engine = engine
@@ -461,6 +464,7 @@ final class Assistant: ObservableObject {
                         break
                     }
                 }
+                await count(outcome.usage, for: .chat, model: model.title)
                 if Task.isCancelled { break }
                 if index < attempts.count - 1 && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
                     continue
@@ -494,6 +498,7 @@ final class Assistant: ObservableObject {
         request.httpBody = ClaudeStream.apiBody(model: model, system: system, turns: turns)
 
         var problem: String?
+        var used = TokenUse()
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: request)
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -507,6 +512,7 @@ final class Assistant: ObservableObject {
             } else {
                 reading: for try await line in bytes.lines {
                     if Task.isCancelled { break }
+                    used.takeAPI(line: line)
                     switch ClaudeStream.apiPiece(fromLine: line) {
                     case .text(let text)?:
                         await MainActor.run { self.appendToAnswer(text) }
@@ -525,7 +531,16 @@ final class Assistant: ObservableObject {
                 problem = "Couldn't reach Anthropic. Check your internet connection."
             }
         }
+        await count(used, for: .chat, model: model.title)
         await finish(problem: problem)
+    }
+
+    /// Adds a run to the usage count.
+    private func count(_ use: TokenUse?, for kind: UsageKind, label: String = "", model: String) async {
+        guard let use = use, !use.isEmpty else { return }
+        await MainActor.run {
+            self.usage.record(use, kind: kind, label: label, model: model)
+        }
     }
 
     // MARK: Qwen with Ollama
@@ -671,18 +686,19 @@ final class Assistant: ObservableObject {
     /// `json` asks for an answer in JSON (Qwen is held to it); `maxTokens` is how long an
     /// answer through the API may be.
     func complete(system: String, prompt: String, model: ClaudeModel = .haiku, json: Bool = true,
-                  maxTokens: Int = 1500) async -> Result<String, Problem> {
+                  maxTokens: Int = 1500, purpose: UsageKind = .other, label: String = "") async -> Result<String, Problem> {
         switch engine {
         case .claudeCode:
-            return await completeWithClaudeCode(system: system, prompt: prompt, model: model)
+            return await completeWithClaudeCode(system: system, prompt: prompt, model: model, purpose: purpose, label: label)
         case .claudeAPI:
-            return await completeWithAnthropic(system: system, prompt: prompt, model: model, maxTokens: maxTokens)
+            return await completeWithAnthropic(system: system, prompt: prompt, model: model, maxTokens: maxTokens, purpose: purpose, label: label)
         case .qwen:
             return await completeWithQwen(system: system, prompt: prompt, json: json)
         }
     }
 
-    private func completeWithClaudeCode(system: String, prompt: String, model: ClaudeModel) async -> Result<String, Problem> {
+    private func completeWithClaudeCode(system: String, prompt: String, model: ClaudeModel, purpose: UsageKind,
+                                        label: String) async -> Result<String, Problem> {
         guard let path = claudePath ?? ClaudeCode.find() else {
             return .failure(Problem(message: "Couldn't find Claude Code on this Mac."))
         }
@@ -706,6 +722,7 @@ final class Assistant: ObservableObject {
                     case .done, .activity, .newMessage: break
                     }
                 }
+                await count(outcome.usage, for: purpose, label: label, model: model.title)
                 if !compatible && !outcome.answered && ClaudeStream.isUnknownOption(outcome.errorOutput) {
                     continue
                 }
@@ -723,7 +740,8 @@ final class Assistant: ObservableObject {
         return .success(whole.isEmpty ? streamed : whole)
     }
 
-    private func completeWithAnthropic(system: String, prompt: String, model: ClaudeModel, maxTokens: Int) async -> Result<String, Problem> {
+    private func completeWithAnthropic(system: String, prompt: String, model: ClaudeModel, maxTokens: Int, purpose: UsageKind,
+                                       label: String) async -> Result<String, Problem> {
         guard let key = APIKeyFile.read() else {
             return .failure(Problem(message: "Add your Anthropic API key in Settings → Assistant."))
         }
@@ -741,6 +759,7 @@ final class Assistant: ObservableObject {
             guard code == 200 else {
                 return .failure(Problem(message: ClaudeStream.apiProblem(status: code, body: String(decoding: data.prefix(8000), as: UTF8.self))))
             }
+            await count(TokenUse.fromAPI(body: data), for: purpose, label: label, model: model.title)
             guard let text = ClaudeStream.apiText(from: data) else {
                 return .failure(Problem(message: "Claude's answer couldn't be read."))
             }

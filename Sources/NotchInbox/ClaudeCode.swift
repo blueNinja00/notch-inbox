@@ -74,6 +74,9 @@ enum ClaudeCode {
         let errorOutput: String
         /// Whether any line of the answer came back.
         let answered: Bool
+        /// What the run used, as Claude Code counted it at the end. Nil if it never said
+        /// (it was stopped, or couldn't start).
+        var usage: TokenUse? = nil
     }
 
     /// Runs `claude` once, handing each piece of the answer to `onPiece` as it arrives.
@@ -86,7 +89,7 @@ enum ClaudeCode {
             answered = true
             await onPiece(piece)
         }
-        return Outcome(exitStatus: ended.exitStatus, errorOutput: ended.errorOutput, answered: answered)
+        return Outcome(exitStatus: ended.exitStatus, errorOutput: ended.errorOutput, answered: answered, usage: ended.usage)
     }
 
     /// Runs `claude` once, handing each line of what it prints to `onLine` as it arrives.
@@ -129,9 +132,13 @@ enum ClaudeCode {
         }
 
         var any = false
+        var usage: TokenUse?
         try await withTaskCancellationHandler {
             for try await line in output.fileHandleForReading.bytes.lines {
                 any = true
+                if let counted = TokenUse.fromResult(line: line) {
+                    usage = counted
+                }
                 await onLine(line)
             }
         } onCancel: {
@@ -140,6 +147,6 @@ enum ClaudeCode {
             }
         }
         process.waitUntilExit()
-        return Outcome(exitStatus: process.terminationStatus, errorOutput: await errorText.value, answered: any)
+        return Outcome(exitStatus: process.terminationStatus, errorOutput: await errorText.value, answered: any, usage: usage)
     }
 }

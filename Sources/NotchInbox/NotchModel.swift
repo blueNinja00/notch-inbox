@@ -607,6 +607,45 @@ final class NotchModel: ObservableObject {
         level = .lanes
     }
 
+    // MARK: A task sheet
+
+    /// The file being read as a task sheet ("Macbeth task.pdf"), while it's being read.
+    @Published var sheetReading: String?
+    /// How reading the last sheet went, if there's something to say.
+    @Published var sheetNote: String?
+    /// Set by the app: reads a file as a task sheet, or lets you pick one first.
+    var onReadAssignmentSheet: ((URL) -> Void)?
+    var onPickAssignmentSheet: (() -> Void)?
+
+    /// A file dropped on Assignments (or picked): the app reads it and the assistant
+    /// fills in a new assignment from it. False if it isn't a kind that can be read.
+    @discardableResult
+    func readAssignmentSheet(_ url: URL) -> Bool {
+        tool = .assignments
+        assignmentsTab = .work
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+        guard AssignmentSheet.canRead(url.lastPathComponent) else {
+            sheetNote = AssignmentSheet.cantRead
+            return false
+        }
+        guard sheetReading == nil, let read = onReadAssignmentSheet else { return false }
+        sheetNote = nil
+        sheetReading = url.lastPathComponent
+        read(url)
+        return true
+    }
+
+    /// The sheet has been read: the new assignment opens to be checked.
+    func finishSheet(_ item: UUID?, note: String?) {
+        sheetReading = nil
+        sheetNote = note
+        if let item = item, tool == .assignments {
+            showAssignment(item)
+        }
+    }
+
     func expandAssignments() {
         tool = .assignments
         level = .detail

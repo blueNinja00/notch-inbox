@@ -216,6 +216,48 @@ struct LiveMailbox {
         }
     }
 
+    /// When a Gmail conversation started, read from its ID: the top of the number is the
+    /// time in milliseconds. Nil if the ID isn't one, or the date makes no sense.
+    static func date(fromGmailID hex: String, now: Date = Date()) -> Date? {
+        guard hex.count >= 10, hex.count <= 16, let number = UInt64(hex, radix: 16) else { return nil }
+        let date = Date(timeIntervalSince1970: Double(number >> 20) / 1000)
+        guard date > Date(timeIntervalSince1970: 1_080_000_000), date < now.addingTimeInterval(86_400) else { return nil }
+        return date
+    }
+
+    /// Adds earlier mail that the add-on listed from Gmail's own inbox: emails the notch
+    /// never saw arrive. They come in as read, with their preview; ones already here are
+    /// left alone. Returns how many were added.
+    @discardableResult
+    mutating func addHistory(_ items: [HistoryUpload.Item], account: String, slot: Int, now: Date = Date()) -> Int {
+        guard order.contains(account) else { return 0 }
+        var added = 0
+        for item in items.prefix(1000) {
+            let hex = item.id.lowercased()
+            guard let date = LiveMailbox.date(fromGmailID: hex, now: now), let number = UInt64(hex, radix: 16) else { continue }
+            let id = "tag:gmail.google.com,2004:\(number)"
+            guard store[id] == nil else { continue }
+            let sender = (item.sender ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = (item.snippet ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            store[id] = MailMessage(id: id,
+                                    accountID: account,
+                                    sender: sender.isEmpty ? (item.email ?? "Unknown sender") : String(sender.prefix(200)),
+                                    subject: String((item.subject ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(500)),
+                                    body: preview.isEmpty ? [] : [String(preview.prefix(1000))],
+                                    date: date,
+                                    isUnread: false,
+                                    link: URL(string: "https://mail.google.com/mail/u/\(max(0, slot))/?message_id=\(hex)&view=conv"),
+                                    senderEmail: item.email ?? "")
+            added += 1
+        }
+        if added > 0 {
+            _ = prune(account)
+            sortMessages()
+            revision += 1
+        }
+        return added
+    }
+
     /// Keeps the newest `keep` emails of an account. Returns whether any went.
     private mutating func prune(_ account: String) -> Bool {
         let mine = store.values.filter { $0.accountID == account }

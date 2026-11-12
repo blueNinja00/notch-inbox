@@ -195,6 +195,11 @@ async function syncOnce() {
     return status;
   }
 
+  // The app asked, once, for a list of the last few weeks of mail (Settings → Mail).
+  if (reply && Number.isInteger(reply.history) && reply.history > 0) {
+    await fetchHistory(Math.min(reply.history, 90), feeds);
+  }
+
   if (reply && Array.isArray(reply.want) && reply.want.length > 0) {
     await readWholeEmails(reply.want, feeds, status);
   }
@@ -356,4 +361,101 @@ async function sendEmail(email) {
   } catch (error) {
     // Notch Inbox quit in the meantime; it asks again next time.
   }
+}
+
+// ---- Earlier mail, once, when the app asks -------------------------------------------------
+//
+// Gmail's feeds only list the newest unread mail. For a look further back, the inbox itself is
+// opened in a background tab, searched for the last N days, and its list is read off the
+// page, a screenful at a time: sender, subject, the preview and each conversation's ID. The
+// tab is closed afterwards. Nothing is clicked or changed, and the list goes only to the app.
+
+async function fetchHistory(days, feeds) {
+  const saved = await chrome.storage.local.get('historyAt');
+  if (Date.now() - (saved.historyAt || 0) < 5 * 60 * 1000) return; // one run at a time
+  await chrome.storage.local.set({ historyAt: Date.now() });
+  for (const feed of feeds) {
+    if (!feed.account) continue;
+    let result;
+    try {
+      result = await listMail(feed.index, days);
+    } catch (error) {
+      result = { items: [], error: String((error && error.message) || error) };
+    }
+    console.info('[Notch Inbox Link] earlier mail', feed.account, result.items.length, result.error || 'ok');
+    try {
+      await fetch(`${APP}/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account: feed.account, index: feed.index, items: result.items, error: result.error || null }),
+      });
+    } catch (error) {
+      // The app went away; it will ask again.
+    }
+  }
+}
+
+async function listMail(index, days) {
+  const query = `in:inbox newer_than:${days}d`;
+  const tab = await chrome.tabs.create({ url: `${GMAIL}${index}/#search/${encodeURIComponent(query)}`, active: false });
+  try {
+    await tabLoaded(tab.id);
+    const items = [];
+    const seen = new Set();
+    for (let page = 1; page <= 10; page += 1) {
+      const answers = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readMailList, args: [query, page] });
+      const rows = (answers && answers[0] && answers[0].result && answers[0].result.rows) || [];
+      let fresh = 0;
+      for (const row of rows) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        items.push(row);
+        fresh += 1;
+      }
+      if (fresh === 0 || rows.length < 15) break; // the last screenful
+    }
+    return items.length > 0 ? { items } : { items, error: 'no rows found in Gmail’s list.' };
+  } finally {
+    try { await chrome.tabs.remove(tab.id); } catch (error) { /* already closed */ }
+  }
+}
+
+async function tabLoaded(tabId) {
+  for (let tries = 0; tries < 60; tries += 1) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+// Runs inside the Gmail tab: goes to a screenful of the search and reads its rows.
+async function readMailList(query, page) {
+  const read = () => Array.from(document.querySelectorAll('tr.zA'))
+    .filter((row) => row.offsetParent !== null)
+    .map((row) => {
+      const holder = row.querySelector('[data-legacy-thread-id]');
+      const id = holder ? holder.getAttribute('data-legacy-thread-id') : null;
+      if (!id) return null;
+      const who = row.querySelector('.yW span[email], .yX span[email]');
+      const subject = row.querySelector('.bog');
+      const preview = row.querySelector('.y2');
+      return {
+        id,
+        sender: who ? (who.getAttribute('name') || who.textContent || '') : '',
+        email: who ? who.getAttribute('email') : null,
+        subject: subject ? subject.textContent : '',
+        snippet: preview ? preview.textContent.replace(/^[\s ]*[-–—][\s ]*/, '') : '',
+        unread: row.classList.contains('zE'),
+      };
+    })
+    .filter(Boolean);
+  const before = read().map((row) => row.id).join(',');
+  if (page > 1) location.hash = `#search/${encodeURIComponent(query)}/p${page}`;
+  const started = Date.now();
+  while (Date.now() - started < 15000) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const rows = read();
+    if (rows.length > 0 && (page === 1 || rows.map((row) => row.id).join(',') !== before)) return { rows };
+  }
+  return { rows: page === 1 ? read() : [] };
 }

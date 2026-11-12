@@ -10,6 +10,8 @@ final class BrowserLink {
     var onFeeds: (([AccountFeeds], FeedUpload) -> LinkReply)?
     /// One whole email (or why it couldn't be fetched), on the main thread.
     var onEmail: ((EmailUpload) -> Void)?
+    /// A list of earlier mail arrived (asked for once, from Settings → Mail).
+    var onHistory: ((HistoryUpload) -> Void)?
 
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "NotchInbox.BrowserLink")
@@ -116,12 +118,24 @@ final class BrowserLink {
             BrowserLink.reply(connection, status: 204)
             return
         }
-        guard request.method == "POST", request.path == "/feeds" || request.path == "/message" else {
+        guard request.method == "POST", request.path == "/feeds" || request.path == "/message" || request.path == "/history" else {
             BrowserLink.reply(connection, status: 404)
             return
         }
         guard LinkAddOn.accepts(request) else {
             BrowserLink.reply(connection, status: 403)
+            return
+        }
+
+        if request.path == "/history" {
+            guard let history = try? JSONDecoder().decode(HistoryUpload.self, from: request.body) else {
+                BrowserLink.reply(connection, status: 400)
+                return
+            }
+            BrowserLink.reply(connection, status: 200)
+            DispatchQueue.main.async { [weak self] in
+                self?.onHistory?(history)
+            }
             return
         }
 

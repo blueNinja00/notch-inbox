@@ -82,6 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let documentTyper = DocumentTyper()
     /// The volume and brightness keys, when the notch has taken them over.
     private let mediaKeys = MediaKeyTap()
+    private var historyAskedAt: Date?
+    private var historyAdded = 0
+    private var historyHeardFrom: Set<String> = []
     private var levelHide: DispatchWorkItem?
     private var accessibilityCheck: DispatchWorkItem?
     private var accessibilityChecksLeft = 0
@@ -202,6 +205,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BrowserExtensionInstaller.refreshIfInstalled()
         browserLink.onFeeds = { [weak self] feeds, upload in
             self?.received(feeds, upload: upload) ?? LinkReply()
+        }
+        browserLink.onHistory = { [weak self] history in
+            self?.receivedHistory(history)
+        }
+        settings.onFetchHistory = { [weak self] in
+            self?.fetchHistory()
         }
         browserLink.onEmail = { [weak self] email in
             self?.received(email)
@@ -444,7 +453,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveMailboxSoon()
         tidyEmailFiles()
         readMailForPlannerSoon()
-        return LinkReply(want: mailbox.wanted(), addon: addOn)
+        return LinkReply(want: mailbox.wanted(), addon: addOn, history: historyDays())
+    }
+
+    // MARK: Earlier mail, once
+
+    /// Settings → Mail → "Fetch the Last 30 Days": the add-on is asked at its next visit.
+    private func fetchHistory() {
+        historyAskedAt = Date()
+        historyAdded = 0
+        historyHeardFrom = []
+        settings.historyRunning = true
+        settings.historyNote = "Asking your browser. A Gmail tab opens in the background for a moment for each inbox; this can take a couple of minutes."
+        BrowserLink.wantsSync = true
+    }
+
+    /// How many days back to ask the add-on for, while a fetch is wanted. It's asked for
+    /// up to ten minutes (an older add-on has to reload itself first), then given up on.
+    private func historyDays() -> Int? {
+        guard let asked = historyAskedAt else { return nil }
+        if Date().timeIntervalSince(asked) > 600 {
+            historyAskedAt = nil
+            settings.historyRunning = false
+            settings.historyNote = "Your browser didn't send anything back. Check Chrome is open and signed in to Gmail, then try again."
+            return nil
+        }
+        return AssistantPrompt.mailDays
+    }
+
+    /// The add-on's list of earlier mail for one inbox.
+    private func receivedHistory(_ upload: HistoryUpload) {
+        guard settings.historyRunning else { return }
+        let added = mailbox.addHistory(upload.items, account: upload.account, slot: upload.index ?? 0)
+        historyAdded += added
+        historyHeardFrom.insert(upload.account)
+        if added > 0 {
+            showMailEverywhere()
+            saveMailboxSoon()
+        }
+        // Every inbox has answered: that's the one go done.
+        if historyHeardFrom.isSuperset(of: mailbox.order) {
+            historyAskedAt = nil
+            settings.historyRunning = false
+        }
+        if let problem = upload.error, historyAdded == 0 {
+            settings.historyNote = "Couldn't read Gmail's list: \(problem)"
+        } else if historyAdded == 0 {
+            settings.historyNote = "Nothing new: the notch already had the last \(AssistantPrompt.mailDays) days."
+        } else {
+            settings.historyNote = "Added \(historyAdded) earlier email\(historyAdded == 1 ? "" : "s") from the last \(AssistantPrompt.mailDays) days."
+        }
     }
 
     /// An account is to show a different part of its inbox. Going from the Primary tab to the

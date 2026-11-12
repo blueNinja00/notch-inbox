@@ -198,6 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in self?.updaterChanged(state) }
             .store(in: &subscriptions)
+        // Which build everyone is offered, for Settings → Updates.
+        updater.$releasedBuild
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] build in
+                guard let self = self, self.settings.releasedBuild != build else { return }
+                self.settings.releasedBuild = build
+            }
+            .store(in: &subscriptions)
+        updater.testBuilds = settings.testBuilds
         if updater.canInstall {
             updater.startChecking()
         }
@@ -1381,6 +1390,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onInstallUpdate = { [weak self] in
             self?.installUpdate()
         }
+        // "Get test builds" was switched: look again straight away, the new way.
+        settings.onTestBuildsChanged = { [weak self] in
+            guard let self = self else { return }
+            self.updater.testBuilds = self.settings.testBuilds
+            self.updater.check()
+        }
+        settings.onOpenReleasePage = { [weak self] in
+            guard let self = self else { return }
+            NSWorkspace.shared.open(self.updater.releasePage)
+        }
         settings.onSetUpBrowserLink = { [weak self] in
             self?.setUpBrowserLink()
         }
@@ -1535,7 +1554,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func debugReport() -> String {
         var lines: [String] = []
         lines.append("Notch Inbox build \(updater.currentBuild) · macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
-        var update = "Updates: \(AppDelegate.describe(updater.state))"
+        var update = "Updates: \(AppDelegate.describe(updater.state)) · test builds \(settings.testBuilds ? "on" : "off")"
+        update += " · released to everyone: \(updater.releasedBuild.map { "build \($0)" } ?? "not known")"
         if let check = updater.lastCheck {
             update += " · last check \(MailTime.label(for: check.at)) (\(check.result))"
         }
@@ -1631,7 +1651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .idle: return "not checked yet"
         case .checking: return "checking"
         case .upToDate: return "up to date"
-        case .available(let release): return "build \(release.build) ready to install"
+        case .available(let release): return "build \(release.build) ready to install" + (release.isTest ? " (a test build)" : "")
         case .installing: return "installing"
         case .failed(let message): return "failed (\(message))"
         }
@@ -1818,8 +1838,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         var pending: Int? = nil
+        var isTest = false
         if case .available(let release) = state {
             pending = release.build
+            isTest = release.isTest
+        }
+        if settings.updateIsTest != isTest {
+            settings.updateIsTest = isTest
         }
         for model in models {
             model.pendingUpdate = pending

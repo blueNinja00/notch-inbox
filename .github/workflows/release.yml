@@ -1,7 +1,9 @@
 name: Build and release
 
-# Every push to main builds the app on a GitHub Mac and publishes it as
-# "build-N". Installed copies of Notch Inbox see the new build and offer to update.
+# Every push to main builds the app on a GitHub Mac and publishes it as "build-N", as a
+# test build (a pre-release). Only copies of Notch Inbox with "Get test builds" switched on
+# are offered it. Running "Release to everyone" (promote.yml) for a build releases it to
+# every copy.
 on:
   push:
     branches: [main]
@@ -34,14 +36,32 @@ jobs:
       - name: Zip it
         run: ditto -c -k --sequesterRsrc --keepParent "build/Notch Inbox.app" build/NotchInbox.zip
 
-      - name: Publish release
+      - name: Publish it as a test build
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD: ${{ github.run_number }}
           NOTES: ${{ github.event.head_commit.message }}
         run: |
+          # A new build is a test build: a pre-release, which GitHub never counts as the
+          # "latest release" that every copy looks for.
+          #
+          # One exception gets things started. Until a build that knows about test builds
+          # (43 or later) has been released to everyone, new builds are released to everyone
+          # as they always were, so that copies made before then can reach one.
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)"
+          released="${latest#build-}"
+          case "$released" in
+            ''|*[!0-9]*) released=0 ;;
+          esac
+          if [ "$released" -ge 43 ]; then
+            kind="--prerelease"
+            echo "Build $BUILD is a test build. Everyone is still offered build $released." >> "$GITHUB_STEP_SUMMARY"
+          else
+            kind="--latest"
+            echo "Build $BUILD is released to everyone (no build with test builds had been yet)." >> "$GITHUB_STEP_SUMMARY"
+          fi
           gh release create "build-$BUILD" build/NotchInbox.zip \
             --repo "$GITHUB_REPOSITORY" \
             --title "Build $BUILD" \
             --notes "${NOTES:-Manual build}" \
-            --latest
+            $kind

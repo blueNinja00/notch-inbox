@@ -1495,6 +1495,13 @@ struct UpdateSettings: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.lane))
         }
+        SettingsDivider()
+        SettingsToggle(title: "Get test builds",
+                       detail: "Every new build as soon as it's made, before it has been released to everyone. Newer, and sometimes broken. Off, this Mac is only offered builds that have been released.",
+                       isOn: $settings.testBuilds)
+        if settings.testBuilds && settings.build > 0 {
+            ReleaseToEveryone(settings: settings)
+        }
     }
 
     private var statusText: String {
@@ -1502,11 +1509,33 @@ struct UpdateSettings: View {
         case .idle: return "Not checked yet"
         case .checking: return "Checking for updates…"
         case .upToDate: return "Up to date"
-        case .available(let build, _): return "Build \(build) is ready to install"
+        case .available(let build, _): return ReleaseFeed.readyText(build: build, isTest: settings.updateIsTest)
         case .installing: return "Installing… Notch Inbox restarts by itself"
         case .failed(let message): return message
         case .unavailable: return "Updates work in the installed app"
         }
+    }
+}
+
+/// For whoever releases the builds (it shows with test builds on): which build everyone
+/// is offered, and the way to release the one this Mac is running once it has been tried.
+struct ReleaseToEveryone: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(ReleaseFeed.releaseStanding(current: settings.build, released: settings.releasedBuild))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if ReleaseFeed.canRelease(current: settings.build, released: settings.releasedBuild) {
+                PillButton(title: "Release Build \(settings.build) to Everyone…", action: { settings.openReleasePage() })
+                SettingsDetail(text: ReleaseFeed.releaseSteps(build: settings.build))
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.lane))
     }
 }
 

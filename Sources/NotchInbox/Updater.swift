@@ -2,7 +2,9 @@ import AppKit
 import Combine
 
 /// Checks GitHub for a newer build every couple of minutes and, when you say so, installs
-/// it and relaunches. Every push to the repository's main branch publishes a numbered build.
+/// it and relaunches. Every push to the repository's main branch publishes a numbered build
+/// as a test build; its owner then releases the ones that are ready to everyone. A copy is
+/// offered the released builds, or every build if "Get test builds" is on.
 final class Updater: ObservableObject {
     enum State: Equatable {
         case idle
@@ -24,6 +26,26 @@ final class Updater: ObservableObject {
     /// github.com, and GitHub's API (other addresses in tests).
     private let site: URL
     private let api: URL
+
+    /// Whether this copy is offered test builds too: published, but not yet released to
+    /// everyone. Set from Settings.
+    var testBuilds = false {
+        didSet {
+            guard testBuilds != oldValue else { return }
+            testSeen = nil
+            lastListed = .distantPast
+        }
+    }
+    /// The newest build released to everyone, as github.com last said.
+    @Published private(set) var releasedBuild: Int?
+    /// The newest test build found (newer than the one released to everyone).
+    private var testSeen: Int?
+    /// When GitHub's API was last asked to list the builds: a safety net for test builds.
+    private var lastListed = Date.distantPast
+    private static let listInterval: TimeInterval = 30 * 60
+
+    /// The page on GitHub where a build is released to everyone.
+    var releasePage: URL { ReleaseFeed.releasePage(site: site, repository: Updater.repository) }
 
     private var timer: Timer?
     private var isChecking = false
@@ -91,34 +113,111 @@ final class Updater: ObservableObject {
             let said = "github.com: " + (error?.localizedDescription
                 ?? "HTTP \(status)" + (build.map { ", newest is build \($0)" } ?? ""))
             DispatchQueue.main.async {
-                if let build = build {
-                    self.newest(build, said: said)
-                } else {
+                guard let build = build else {
                     self.askAPI(after: said, userInitiated: userInitiated)
+                    return
+                }
+                if self.releasedBuild != build {
+                    self.releasedBuild = build
+                }
+                if self.testBuilds {
+                    let known = max(self.currentBuild, build, self.testSeen ?? 0)
+                    self.look(BuildSearch(after: known), released: build, said: said, userInitiated: userInitiated)
+                } else {
+                    self.newest(build, isTest: false, said: said)
                 }
             }
         }.resume()
     }
 
+    // MARK: Test builds
+
+    /// With test builds wanted. They aren't GitHub's "latest release", so github.com is
+    /// asked whether each build after the newest one known has a page yet, one at a time,
+    /// until a few in a row don't. (Still not the API: see `check`.)
+    private func look(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool) {
+        guard let build = search.next else {
+            finishLooking(search, released: released, said: said, userInitiated: userInitiated)
+            return
+        }
+        var request = URLRequest(url: ReleaseFeed.page(build: build, site: site, repository: Updater.repository))
+        request.httpMethod = "HEAD"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 20
+        request.setValue("NotchInbox/\(currentBuild)", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: request) { [self] _, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            DispatchQueue.main.async {
+                var after = search
+                after.saw(build, status: status)
+                self.look(after, released: released, said: said, userInitiated: userInitiated)
+            }
+        }.resume()
+    }
+
+    private func finishLooking(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool) {
+        testSeen = search.newest > released ? search.newest : nil
+        let told = said + "; test builds: " + search.summary
+        // A safety net: now and then (and whenever you ask), GitHub's API lists the builds,
+        // in case more of them in a row failed to publish than the search steps over.
+        let due = userInitiated || Date().timeIntervalSince(lastListed) > Updater.listInterval
+        guard !search.foundNewer, due else {
+            offerNewest(released: released, said: told)
+            return
+        }
+        lastListed = Date()
+        var address = URLComponents(url: api.appendingPathComponent("repos/\(Updater.repository)/releases"), resolvingAgainstBaseURL: false)
+        address?.queryItems = [URLQueryItem(name: "per_page", value: "10")]
+        guard let url = address?.url else {
+            offerNewest(released: released, said: told)
+            return
+        }
+        URLSession.shared.dataTask(with: apiRequest(url)) { [self] data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let listed = data.flatMap { ReleaseFeed.newestListed($0, assetName: Updater.assetName) }
+            DispatchQueue.main.async {
+                if let listed = listed, listed > max(released, self.testSeen ?? 0) {
+                    self.testSeen = listed
+                }
+                let list = listed.map { "newest is build \($0)" } ?? "HTTP \(status)"
+                self.offerNewest(released: released, said: told + "; GitHub's list: " + list)
+            }
+        }.resume()
+    }
+
+    /// The newest build there is, if it's newer than this one: released to everyone, or a test build.
+    private func offerNewest(released: Int, said: String) {
+        guard let offer = ReleaseFeed.offer(current: currentBuild, released: released, test: testSeen, wantsTest: true) else {
+            finishCheck(.upToDate, said: said)
+            return
+        }
+        newest(offer.build, isTest: offer.isTest, said: said)
+    }
+
     /// github.com named the newest build. If it's newer than this one, GitHub's API is asked
     /// for its notes and API download link: one question per new build. If the API doesn't
     /// answer, the usual download link will do.
-    private func newest(_ build: Int, said: String) {
+    private func newest(_ build: Int, isTest: Bool, said: String) {
         guard build > currentBuild else {
             finishCheck(.upToDate, said: said)
             return
         }
         if let seen = latestSeen, seen.build == build {
-            finishCheck(.available(seen), said: said)
+            // (A test build that has since been released to everyone stops being one.)
+            var same = seen
+            same.isTest = isTest
+            latestSeen = same
+            finishCheck(.available(same), said: said)
             return
         }
-        let plain = ReleaseFeed.release(build: build, site: site, repository: Updater.repository, assetName: Updater.assetName)
+        let plain = ReleaseFeed.release(build: build, site: site, repository: Updater.repository, assetName: Updater.assetName, isTest: isTest)
         let url = api.appendingPathComponent("repos/\(Updater.repository)/releases/tags/build-\(build)")
         URLSession.shared.dataTask(with: apiRequest(url)) { [self] data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let found = data.flatMap { ReleaseFeed.parse($0, assetName: Updater.assetName) }
             DispatchQueue.main.async {
-                let release = found.flatMap { $0.build == build ? $0 : nil } ?? plain
+                var release = found.flatMap { $0.build == build ? $0 : nil } ?? plain
+                release.isTest = isTest
                 self.latestSeen = release
                 self.finishCheck(.available(release), said: said + "; its notes from the API: " + (found == nil ? "HTTP \(status), none" : "found"))
             }
@@ -140,6 +239,9 @@ final class Updater: ObservableObject {
             DispatchQueue.main.async {
                 if let release = release {
                     self.latestSeen = release
+                    if self.releasedBuild != release.build {
+                        self.releasedBuild = release.build
+                    }
                     self.finishCheck(release.build > self.currentBuild ? .available(release) : .upToDate, said: both)
                 } else if status == 404 {
                     self.finishCheck(.upToDate, said: both) // nothing published yet

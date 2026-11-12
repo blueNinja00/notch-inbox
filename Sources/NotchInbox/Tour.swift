@@ -207,7 +207,7 @@ enum Tour {
                 summary: "Your chief of staff. Ask \(assistant) anything, and have it keep your planner, timetable, assignments and bookmarks in order.",
                 points: [
                     .init(symbol: "text.bubble", text: "Try \"what's due this week?\", \"add a Maths test on Friday at 9\" or \"I got 17 out of 20 on the Chemistry prac\"."),
-                    .init(symbol: "globe", text: "On your Claude plan, Claude can also look things up on the web and read pages before it answers."),
+                    .init(symbol: "keyboard", text: "On your Claude plan it can look things up on the web. The keyboard button beside an answer types it into the document you were in."),
                     .init(symbol: "cpu", text: "It runs on Claude, with your Claude plan or an API key, or on Qwen, which works entirely on this Mac."),
                     .init(symbol: "hand.raised", text: setup.assistantIsClaude
                               ? "Claude only sees what you allow in Settings → Assistant. Sharing your emails and notes with it is off to start with."
@@ -234,8 +234,8 @@ enum Tour {
                 points: [
                     .init(symbol: "music.note", text: "Now playing: the song in Spotify or Music, with previous, play or pause, and next."),
                     .init(symbol: "timer", text: "Focus timer: a round of focus, then a break. The minutes left show beside the closed notch."),
-                    .init(symbol: "doc.on.clipboard", text: "Clipboard: the last 30 things you copied, to copy again. Kept in memory only."),
-                    .init(symbol: "tray.and.arrow.down", text: "Shelf: drag files to the notch to park them, then drag them out where they're going."),
+                    .init(symbol: "doc.on.clipboard", text: "Clipboard: the last 30 things you copied, kept in memory only. Shelf: drag files to the notch to park them, then drag them out again."),
+                    .init(symbol: "speaker.wave.2", text: "Volume and brightness: change either and the closed notch shows it for a moment. The Extras panel has a slider for each."),
                 ],
                 action: setup.extrasOn ? .init(title: "Open Extras", target: .extras) : .init(title: "Open Extras Settings", target: .settings(.extras)))
         case .looks:

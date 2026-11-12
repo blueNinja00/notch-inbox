@@ -81,7 +81,8 @@ struct AssistantView: View {
                         }
                         ForEach(assistant.messages) { message in
                             ChatBubble(message: message, thinking: assistant.isAnswering && message.id == assistant.messages.last?.id,
-                                       doing: assistant.activity)
+                                       doing: assistant.activity, target: model.typingTarget,
+                                       typeIt: { model.typeIntoDocument(message.text) })
                                 .id(message.id)
                         }
                     }
@@ -96,6 +97,12 @@ struct AssistantView: View {
                 }
             }
 
+            if let note = model.typingNote {
+                TypingNote(text: note, settings: { model.openSettings(.assistant) }, dismiss: { model.typingNote = nil })
+            }
+            if let attachment = assistant.attachment {
+                AttachmentChip(attachment: attachment, claude: assistant.engine.isClaude, remove: { assistant.attachment = nil })
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Ask \(assistant.engine.name) anything…", text: $assistant.draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -115,19 +122,92 @@ struct AssistantView: View {
                 }
             }
 
-            Toggle(isOn: $assistant.sharesContext) {
-                Text(assistant.engine.isClaude
-                     ? "Let Claude see my newest email subjects and notes (sent to Anthropic with your question)"
-                     : "Let Qwen see my newest emails and notes (they stay on this Mac)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
-                    .lineLimit(1)
+            HStack(spacing: 6) {
+                Toggle(isOn: $assistant.sharesContext) {
+                    Text(assistant.engine.isClaude
+                         ? "Let Claude see my newest email subjects and notes (sent to Anthropic with your question)"
+                         : "Let Qwen see my newest emails and notes (they stay on this Mac)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
+                }
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Text from the document you're working in, to ask about or have rewritten.
+                SmallPill(title: "Use Selection", symbol: "text.cursor", action: { model.useSelection() })
+                    .help(AssistantView.selectionHelp(app: model.typingTarget, claude: assistant.engine.isClaude))
+                SmallPill(title: "Use Copied", symbol: "doc.on.clipboard", action: { model.useClipboard() })
+                    .help("Attach the text on your clipboard to your next question")
             }
-            .toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.top, 6)
         .onAppear { typing = true }
+    }
+
+    static func selectionHelp(app: String?, claude: Bool) -> String {
+        let place = app.map { "in \($0)" } ?? "in the app you were in"
+        return "Attach what you've selected \(place) to your next question" + (claude ? ". It's sent to Anthropic with the question." : ". It stays on this Mac.")
+    }
+}
+
+/// Text from a document, waiting to go with your next question.
+struct AttachmentChip: View {
+    let attachment: DocumentSelection
+    let claude: Bool
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "paperclip")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+            Text(attachment.summary)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .fixedSize()
+            Text(DocumentText.preview(attachment.text))
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.tertiary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            IconButton(symbol: "xmark", label: "Don't attach it", size: 22, action: remove)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 3)
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.raised))
+        .help(claude ? "This goes to Anthropic with your next question. Ask about it, or ask for it to be rewritten."
+                     : "This goes with your next question, and stays on this Mac.")
+    }
+}
+
+/// How the last go at typing into a document, or reading a selection, went.
+struct TypingNote: View {
+    let text: String
+    let settings: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
+            Text(text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if text.contains("Accessibility") {
+                SmallPill(title: "Settings", symbol: "gearshape", action: settings)
+            }
+            IconButton(symbol: "xmark", label: "Dismiss", size: 22, action: dismiss)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 3)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.raised))
     }
 }
 
@@ -137,13 +217,17 @@ struct ChatBubble: View {
     let thinking: Bool
     /// What it's doing before it answers ("Searching the web for …"), for the answer being written.
     var doing: String? = nil
+    /// The app a finished answer can be typed into ("Pages"), and what types it.
+    var target: String? = nil
+    var typeIt: (() -> Void)? = nil
 
     var body: some View {
         let mine = message.role == .user
         let text = message.text
         let busy = thinking ? doing : nil
+        let finished = !mine && !thinking && !message.failed && !text.isEmpty
 
-        HStack {
+        HStack(alignment: .bottom, spacing: 4) {
             if mine { Spacer(minLength: 60) }
             VStack(alignment: .leading, spacing: 6) {
                 if text.isEmpty && thinking {
@@ -159,6 +243,12 @@ struct ChatBubble: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.tertiary)
                     }
+                    if let attachment = message.attachment {
+                        // What went with this question.
+                        Label(attachment.summary, systemImage: "paperclip")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.tertiary)
+                    }
                 }
             }
             .font(.system(size: 13))
@@ -167,7 +257,10 @@ struct ChatBubble: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(mine ? Theme.raised : Theme.surface))
-            if !mine { Spacer(minLength: 60) }
+            if finished {
+                BubbleActions(text: text, target: target, typeIt: typeIt)
+            }
+            if !mine { Spacer(minLength: finished ? 8 : 60) }
         }
     }
 
@@ -179,6 +272,34 @@ struct ChatBubble: View {
             return AttributedString(text)
         }
         return RichText.webLinksOnly(parsed)
+    }
+}
+
+/// Beside a finished answer: copy it, or have it typed into the document you were in.
+struct BubbleActions: View {
+    let text: String
+    let target: String?
+    let typeIt: (() -> Void)?
+    @State var copied = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            IconButton(symbol: copied ? "checkmark" : "doc.on.doc", label: "Copy this answer", size: 24, tint: Theme.tertiary, action: copy)
+            if let typeIt = typeIt {
+                IconButton(symbol: "keyboard", label: BubbleActions.typeHelp(target), size: 24, tint: Theme.tertiary, action: typeIt)
+            }
+        }
+    }
+
+    static func typeHelp(_ target: String?) -> String {
+        guard let target = target else { return "Type this into the document you were in, where your cursor is" }
+        return "Type this into \(target), where your cursor is (it replaces anything selected)"
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
     }
 }
 

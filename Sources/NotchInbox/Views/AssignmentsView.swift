@@ -427,6 +427,9 @@ struct AssignmentEditor: View {
                         if !isResult {
                             AssignmentSteps(model: model, store: store, assistant: assistant, item: item)
                             AssignmentBrief(text: binding(\.brief))
+                            if let agents = model.agentsStore {
+                                AssignmentResearch(model: model, agents: agents, assistant: assistant, settings: AppSettings.shared, item: item)
+                            }
                         }
                         if isResult || item.handedIn || item.isMarked {
                             MarkField(mark: item.mark, outOf: item.outOf, change: { mark, outOf in
@@ -582,6 +585,71 @@ struct AssignmentBrief: View {
             .frame(height: 84)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
         }
+    }
+}
+
+/// Agents researching an assignment: start them, and see how they're getting on. A
+/// researcher finds sources, a planner turns them into a plan to write from, and a checker
+/// goes back over it. The writing stays yours.
+struct AssignmentResearch: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var agents: AgentsStore
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var settings: AppSettings
+    let item: Assignment
+
+    var body: some View {
+        let newest = agents.team.research(for: item.id)
+        let named = AgentChain.canResearch(item)
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Research")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Theme.tertiary)
+                if let job = newest, job.status == .working {
+                    AgentPulse()
+                }
+                Spacer(minLength: 0)
+                if let job = newest {
+                    SmallPill(title: "See It", symbol: "arrow.up.right", action: { model.showAgent(job.id) })
+                        .help("Open the agent room at this assignment's research")
+                    if !job.isActive {
+                        SmallPill(title: "Again", symbol: "arrow.clockwise", action: start)
+                            .help(startHelp)
+                    }
+                } else if named {
+                    SmallPill(title: "Research This", symbol: HomeTile.agents.symbol, action: start)
+                        .help(startHelp)
+                }
+            }
+            Text(AssignmentResearch.line(newest: newest, named: named))
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    static func line(newest: AgentJob?, named: Bool) -> String {
+        if let job = newest {
+            return AgentChain.progress(of: job) + "."
+        }
+        return named ? AgentChain.aboutResearch : AgentChain.nameFirst
+    }
+
+    private var startHelp: String {
+        let tools = assistant.engine == .claudeCode
+        return AgentChain.researchHelp(ready: assistant.status.isReady, engine: assistant.engine.name, claude: assistant.engine.isClaude,
+                                       tools: tools, web: tools && settings.agentsUseWeb)
+    }
+
+    private func start() {
+        // Nothing can do it yet: the assistant's page says what to set up.
+        if !assistant.status.isReady && assistant.status != .checking {
+            model.openAssistant()
+            return
+        }
+        model.researchAssignment(item.id)
     }
 }
 

@@ -14,14 +14,31 @@ enum StaffAgent {
         struct Job: Decodable, Equatable {
             var name: String
             var task: String
+            /// Whether three agents do it in turn, and which three: a researcher, a writer
+            /// and a checker, or (to get a school assignment ready) a researcher, a planner
+            /// and a checker.
+            var chain: AgentChain.Kind?
+            /// The assignment a plan is for, by its name in the user's list.
+            var assignment = ""
 
             enum CodingKeys: String, CodingKey {
-                case name, task, job, brief
+                case name, task, job, brief, chain, assignment
             }
 
-            init(name: String, task: String) {
+            init(name: String, task: String, chain: AgentChain.Kind? = nil, assignment: String = "") {
                 self.name = name
                 self.task = task
+                self.chain = chain
+                self.assignment = assignment
+            }
+
+            /// "chain" as a model may write it: true, "yes", "write"; or "plan" for an assignment.
+            static func kind(_ word: String) -> AgentChain.Kind? {
+                switch word.trimmingCharacters(in: .whitespaces).lowercased() {
+                case "true", "yes", "write", "writing": return .write
+                case "plan", "assignment", "planning": return .assignment
+                default: return nil
+                }
             }
 
             init(from decoder: Decoder) throws {
@@ -40,7 +57,14 @@ enum StaffAgent {
                     }
                 }
                 let name = try? values.decodeIfPresent(String.self, forKey: .name)
-                self.init(name: name ?? "", task: task)
+                var chain: AgentChain.Kind?
+                if (try? values.decodeIfPresent(Bool.self, forKey: .chain)) == true {
+                    chain = .write
+                } else if let word = try? values.decodeIfPresent(String.self, forKey: .chain) {
+                    chain = Job.kind(word)
+                }
+                let assignment = try? values.decodeIfPresent(String.self, forKey: .assignment)
+                self.init(name: name ?? "", task: task, chain: chain, assignment: assignment ?? "")
             }
         }
 
@@ -65,6 +89,16 @@ enum StaffAgent {
         since the agent can't see the mail. Don't put the user's private details in a task unless the job needs them.
         - "name" is a short name for the agent, like "Researcher" or "Essay planner".
         - One clear job per agent. A big job can be split between up to \(mostAtOnce) agents working at the same time.
+        - For a piece of writing that has to be right (a report, an explainer, an article with sources), add "chain":true to the job: \
+        {"name":"Reef report","task":"…","chain":true}. Three agents then do it in turn: a researcher finds the sources, a writer works \
+        from them, and a checker opens the links and marks what it can't confirm.
+        - To get one of the user's school assignments ready, use "chain":"plan" and give the assignment's name as it is in their list: \
+        {"name":"Macbeth essay","task":"…","chain":"plan","assignment":"Essay on Macbeth"}. A researcher finds sources, a planner turns \
+        them into a plan to write from, and a checker checks the plan. They are given the assignment's task sheet by the app, and they \
+        don't write the assignment: the writing is the student's own.
+        - Each stage of a chain starts by itself when the one before finishes, so start a chain once and never start its later stages \
+        yourself. A chain uses about three agents' worth of the user's plan: keep it for work that needs it, not for quick lookups. \
+        Write the whole job in "task", and give "name" as a short name for the work itself.
         - {"stop":["Researcher"]} stops an agent that's working.
         - Say in a sentence what you've set going. When an agent has finished, its report is in the list below: use it to answer \
         questions about what it found.
@@ -82,6 +116,9 @@ enum StaffAgent {
         var reports = 0
         for job in jobs {
             var line = "- \(job.name): \(job.statusWord.lowercased())"
+            if let chain = job.chain {
+                line += " (\(chain.place.lowercased()) of a chain: \(chain.line)\(job.isHandingOn ? "; the next stage follows by itself" : ""))"
+            }
             if job.status == .working {
                 line += " for \(max(1, Int(job.elapsed(now: now) / 60))) min"
                 if !job.activity.isEmpty { line += " (\(job.activity))" }
@@ -95,7 +132,8 @@ enum StaffAgent {
             }
             lines.append(line)
             // The newest few reports in full enough to answer from; older ones are just listed.
-            if !job.isActive, !job.report.isEmpty, reports < StaffAgent.mostReports {
+            // (Not a stage of a chain that has been handed on: the last stage's report is the one that counts.)
+            if !job.isActive, !job.report.isEmpty, !job.isHandingOn, reports < StaffAgent.mostReports {
                 reports += 1
                 lines.append("  Its report:\n<report>\n\(String(job.report.prefix(2500)))\n</report>")
             }
@@ -113,9 +151,22 @@ enum StaffAgent {
             let task = job.task.trimmingCharacters(in: .whitespacesAndNewlines)
             guard task.count >= 8 else { return nil }
             let name = job.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return Plan.Job(name: name.isEmpty ? AgentBrief.name(for: task) : String(name.prefix(40)), task: String(task.prefix(6000)))
+            return Plan.Job(name: name.isEmpty ? AgentBrief.name(for: task) : String(name.prefix(40)), task: String(task.prefix(6000)),
+                            chain: job.chain, assignment: String(job.assignment.trimmingCharacters(in: .whitespacesAndNewlines).prefix(140)))
         }
         return Array(wanted.prefix(mostAtOnce))
+    }
+
+    /// The assignment a plan is for: one still to hand in, found by the name the assistant gave.
+    static func assignment(for job: Plan.Job, in all: Assignments) -> Assignment? {
+        guard job.chain == .assignment, !job.assignment.isEmpty else { return nil }
+        return PlannerAgent.find(job.assignment, in: all.open, title: { $0.title })
+    }
+
+    /// What a chain planning an assignment is told: the assignment as the app has it (its
+    /// due date, its task sheet), then what the assistant asked for.
+    static func planGoal(for job: Plan.Job, item: Assignment, now: Date, calendar: Calendar = .current) -> String {
+        AgentChain.goal(for: item, now: now, calendar: calendar) + "\nWhat the student's assistant asked for: " + job.task
     }
 
     /// The agents to stop: the ones still going whose names were given.

@@ -171,11 +171,11 @@ enum Tour {
                 kind: kind, symbol: "list.bullet.clipboard", title: "Assignments and Marks",
                 summary: "Bigger pieces of work, broken into steps, and the marks that come back.",
                 points: [
-                    .init(symbol: "plus", text: "The + at the top adds an assignment: what it is, when it's due and what it's worth."),
+                    .init(symbol: "plus", text: "The + adds an assignment. Or drop its task sheet on Assignments (a PDF, a Word file, a photo) and it's read and filled in for you."),
                     .init(symbol: "sparkles", text: setup.assistantReady
-                              ? "Paste in the task sheet and click Break into Steps: \(assistant) plans it. Tick the steps off as you go."
-                              : "Paste in the task sheet and click Break into Steps. Until \(assistant) is set up, the usual steps for that kind of work go in."),
-                    .init(symbol: "clock", text: "The planner fits the steps still to do into your free time before it's due."),
+                              ? "Break into Steps has \(assistant) plan it from the task sheet. Research This sets three agents on it: sources, a plan to write from, then a check."
+                              : "Break into Steps puts in the usual steps until \(assistant) is set up. Then Research This can set three agents finding sources and planning it."),
+                    .init(symbol: "clock", text: "Tick the steps off as you go. The planner fits the ones still to do into your free time before it's due."),
                     .init(symbol: "chart.bar", text: "Marks keeps every result, your average in each subject, and what you need on the rest to reach the mark you're after."),
                 ],
                 action: .init(title: "Open Assignments", target: .assignments))
@@ -221,7 +221,7 @@ enum Tour {
                 points: [
                     .init(symbol: "arrow.up.circle", text: "Type a job in the agent room, like \"find five reliable sources on the Cold War and summarise each\", and an agent starts on it."),
                     .init(symbol: "building.2", text: "Each agent gets a floor. Watch what it's searching and reading, then read its report. A few work at once; the rest wait their turn."),
-                    .init(symbol: "sparkles", text: "Or just ask the assistant, and it hands the big jobs out for you."),
+                    .init(symbol: "link", text: "Switch on Chain and three agents do the job in turn: one researches, one writes, one checks the links. Or ask the assistant, and it hands the big jobs out."),
                     .init(symbol: "hand.raised", text: "On your Claude plan, an agent can use the web and save files in a folder of its own. It can't run commands, and it can't see your mail, notes or other files."),
                 ],
                 action: .init(title: setup.assistantReady ? "Open the Agent Room" : "Set Up the Assistant", target: setup.assistantReady ? .agents : .assistant))

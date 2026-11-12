@@ -101,7 +101,7 @@ struct AssistantView: View {
                 TypingNote(text: note, settings: { model.openSettings(.assistant) }, dismiss: { model.typingNote = nil })
             }
             if let attachment = assistant.attachment {
-                AttachmentChip(attachment: attachment, claude: assistant.engine.isClaude, remove: { assistant.attachment = nil })
+                SelectionChip(attachment: attachment, claude: assistant.engine.isClaude, remove: { assistant.attachment = nil })
             }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Ask \(assistant.engine.name) anything…", text: $assistant.draft, axis: .vertical)
@@ -151,7 +151,7 @@ struct AssistantView: View {
 }
 
 /// Text from a document, waiting to go with your next question.
-struct AttachmentChip: View {
+struct SelectionChip: View {
     let attachment: DocumentSelection
     let claude: Bool
     let remove: () -> Void

@@ -750,6 +750,9 @@ struct AssistantSettings: View {
         AssistantReach(assistant: assistant)
 
         SettingsDivider()
+        TypingSettings(assistant: assistant, settings: settings)
+
+        SettingsDivider()
         AgentSettings(assistant: assistant, settings: settings)
     }
 
@@ -799,6 +802,50 @@ struct AssistantReach: View {
                            ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
                            : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
+    }
+}
+
+/// Typing into your documents: what it does, and the permission macOS wants for it.
+struct TypingSettings: View {
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsHeading(title: "Typing into your documents",
+                        detail: "Beside each answer, the keyboard button types it where your cursor is in the app you were in (Pages, Word, Google Docs…), as plain text, replacing anything selected. Use Selection, under the chat, attaches what you've selected there to your next question, so you can ask about it or have it rewritten.")
+        AccessibilityStatus(settings: settings,
+                            allowed: "macOS lets Notch Inbox type for you",
+                            missing: "macOS hasn't allowed Notch Inbox to type for you yet",
+                            without: "Until it does, an answer is copied instead, for you to paste with ⌘V, and Use Copied attaches what you've copied yourself.")
+        SettingsDetail(text: assistant.engine.isClaude
+                       ? "What you attach is sent to Anthropic with your question. Nothing in your documents is read unless you click Use Selection, and your clipboard is put back as it was after typing."
+                       : "What you attach stays on this Mac. Nothing in your documents is read unless you click Use Selection, and your clipboard is put back as it was after typing.")
+    }
+}
+
+/// Whether macOS lets Notch Inbox press keys in other apps (Accessibility, in System
+/// Settings), with the buttons that ask for it.
+struct AccessibilityStatus: View {
+    @ObservedObject var settings: AppSettings
+    let allowed: String
+    let missing: String
+    /// What happens in the meantime.
+    let without: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if settings.accessibilityAllowed {
+                StatusLine(state: .good, text: allowed)
+            } else {
+                StatusLine(state: .waiting, text: missing)
+                SettingsDetail(text: without + " Click Allow and macOS asks; switch Notch Inbox on under Privacy & Security → Accessibility. macOS treats every update as a new app, so it asks again after each one.")
+                HStack(spacing: 8) {
+                    PillButton(title: "Allow…", prominent: true, action: { settings.onAskForAccessibility?() })
+                    PillButton(title: "Check Again", action: { settings.onCheckAccessibility?() })
+                }
+            }
+        }
+        .onAppear { settings.onCheckAccessibility?() }
     }
 }
 
@@ -1209,7 +1256,31 @@ struct ExtrasSettings: View {
         SettingsToggle(title: "Shelf",
                        detail: "Drag files to the notch to park them, then drag them out where they're going. The shelf remembers where the files are; it doesn't copy or move them.",
                        isOn: $settings.showsShelf)
+        SettingsDivider()
+        LevelsSettings(settings: settings)
         PillButton(title: "Open Extras", prominent: true, action: { model.openExtras() })
+    }
+}
+
+/// Volume and brightness at the notch, and whether the notch takes their keys over.
+struct LevelsSettings: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        SettingsToggle(title: "Volume and brightness",
+                       detail: "When you change the volume or the brightness, the closed notch shows it for a moment, and the Extras panel has a slider for each. This needs no permission. Brightness is for this Mac's own screen.",
+                       isOn: $settings.showsLevels)
+        if settings.showsLevels {
+            SettingsToggle(title: "Hide macOS's own pop-up",
+                           detail: "The notch takes over the volume and brightness keys and changes them itself, so macOS's pop-up doesn't show as well. Only those keys are looked at. With a second screen plugged in, the brightness keys are left to macOS.",
+                           isOn: $settings.replacesSystemLevels)
+            if settings.replacesSystemLevels {
+                AccessibilityStatus(settings: settings,
+                                    allowed: "The notch has the volume and brightness keys",
+                                    missing: "macOS hasn't allowed Notch Inbox to take the keys over yet",
+                                    without: "Until it does, the keys work as usual and macOS's pop-up shows too.")
+            }
+        }
     }
 }
 

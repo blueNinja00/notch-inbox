@@ -1010,7 +1010,45 @@ final class NotchModel: ObservableObject {
             // The timer's minutes, and the phone's dot beside them if there is one.
             width = max(width, NotchMetrics.focusEarWidth + (phoneConnected == nil ? 0 : 14))
         }
+        if levelHUD != nil {
+            width = max(width, NotchMetrics.levelEarWidth)
+        }
         return width
+    }
+
+    // MARK: Volume and brightness
+
+    /// The volume or brightness, shown beside the closed notch for a moment after it changes.
+    @Published var levelHUD: LevelReading?
+
+    // MARK: Typing into your documents
+
+    /// The app your cursor was in when the notch opened ("Pages"), where "Type into Pages" types.
+    @Published var typingTarget: String?
+    /// How the last go at typing, or at reading a selection, went: shown in the chat.
+    @Published var typingNote: String?
+    /// Set by the app: types text where your cursor is, reads what's selected there, or
+    /// takes what you've copied.
+    var onTypeIntoDocument: ((String) -> Void)?
+    var onUseSelection: (() -> Void)?
+    var onUseClipboard: (() -> Void)?
+
+    /// Types an answer into the document you were in, as plain text.
+    func typeIntoDocument(_ answer: String) {
+        let text = DocumentText.forTyping(answer)
+        guard !text.isEmpty else { return }
+        typingNote = nil
+        onTypeIntoDocument?(text)
+    }
+
+    func useSelection() {
+        typingNote = nil
+        onUseSelection?()
+    }
+
+    func useClipboard() {
+        typingNote = nil
+        onUseClipboard?()
     }
 
     func account(_ id: String) -> MailAccount? {

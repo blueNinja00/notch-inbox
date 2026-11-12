@@ -49,6 +49,8 @@ struct NotchMetrics: Equatable {
     static let tallTiles: CGFloat = 180
     /// Ears wide enough for the focus timer's minutes, when nothing is unread.
     static let focusEarWidth: CGFloat = 44
+    /// Ears wide enough for the volume or brightness: its symbol on one side, its bar on the other.
+    static let levelEarWidth: CGFloat = 64
 
     /// `ears` is the width of each ear when closed (0 for none); other levels ignore it.
     /// `extras` adds room for the row of extras on the primary menu, and `tiles` is how

@@ -75,6 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Your agents and their jobs, shared by every screen's notch.
     private let agents = AgentsStore()
     private lazy var agentRunner = AgentRunner(store: agents, assistant: Assistant.shared, settings: settings)
+    /// Types into the document you're in, and reads what's selected there.
+    private let documentTyper = DocumentTyper()
+    /// The volume and brightness keys, when the notch has taken them over.
+    private let mediaKeys = MediaKeyTap()
+    private var levelHide: DispatchWorkItem?
+    private var accessibilityCheck: DispatchWorkItem?
+    private var accessibilityChecksLeft = 0
     /// Homework and exams, shared by every screen's notch.
     private let planner = PlannerStore()
     /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
@@ -135,6 +142,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.readMailForPlannerSoon()
         }
         connectAgents()
+        connectLevels()
+        connectTyping()
         planner.change { $0.tidy() }
         Assistant.shared.checkSetup()
         readMailForPlannerSoon()
@@ -231,6 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         assignments.saveNow()
         // Agents still working are stopped: what they'd written so far is kept.
         agentRunner.stopAll()
+        mediaKeys.stop()
+        LevelsWatcher.shared.stop()
     }
 
     // MARK: Screens
@@ -330,6 +341,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onOpenAgentFile = { [weak self] id, file in
             self?.openAgentFile(file, of: id)
         }
+        model.typingTarget = documentTyper.targetName
+        model.onTypeIntoDocument = { [weak self, weak model] text in
+            self?.typeIntoDocument(text, from: model)
+        }
+        model.onUseSelection = { [weak self, weak model] in
+            self?.useSelection(for: model)
+        }
+        model.onUseClipboard = { [weak model] in
+            AppDelegate.useClipboard(for: model)
+        }
         model.homeMenu = settings.homeMenu
         model.onArrangeHome = { [weak self] menu in
             self?.settings.homeMenu = menu
@@ -365,6 +386,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard level == .lanes || level == .detail else { return }
         for (other, controller) in screens where other != id && controller.model.level != .rest {
             controller.model.close()
+        }
+        // A good moment to notice that macOS's permission to press keys was given, or taken away.
+        if DocumentTyper.isTrusted != settings.accessibilityAllowed {
+            DispatchQueue.main.async { [weak self] in
+                self?.checkAccessibility()
+            }
         }
     }
 
@@ -724,6 +751,184 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Back to Settings, to see it in the list (or why it wasn't taken).
             (asking ?? self.notchNearPointer())?.openSettings(.assistant)
+        }
+    }
+
+    // MARK: Volume and brightness
+
+    private func connectLevels() {
+        LevelsWatcher.shared.onShow = { [weak self] reading in
+            self?.showLevel(reading)
+        }
+        mediaKeys.handle = { [weak self] press, fine in
+            self?.mediaKey(press, fine: fine) ?? false
+        }
+        settings.onLevelsChanged = { [weak self] in
+            self?.applyLevels()
+        }
+        settings.onAskForAccessibility = { [weak self] in
+            self?.askForAccessibility()
+        }
+        settings.onCheckAccessibility = { [weak self] in
+            self?.checkAccessibility()
+        }
+        applyLevels()
+    }
+
+    /// Starts or stops watching the volume and brightness, as Settings → Extras says.
+    private func applyLevels() {
+        if settings.showsLevels {
+            LevelsWatcher.shared.start()
+        } else {
+            LevelsWatcher.shared.stop()
+            hideLevel()
+        }
+        checkAccessibility()
+    }
+
+    /// Shows a level beside the closed notch for a moment.
+    private func showLevel(_ reading: LevelReading) {
+        guard settings.showsLevels else { return }
+        LevelsWatcher.shared.showing = reading.kind
+        for model in models where model.levelHUD != reading {
+            model.levelHUD = reading
+        }
+        levelHide?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.hideLevel()
+        }
+        levelHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: work)
+    }
+
+    private func hideLevel() {
+        levelHide?.cancel()
+        levelHide = nil
+        LevelsWatcher.shared.showing = nil
+        for model in models where model.levelHUD != nil {
+            model.levelHUD = nil
+        }
+    }
+
+    /// A volume or brightness key, with the keys taken over. True if the notch dealt with
+    /// it; false sends it on to macOS as usual.
+    private func mediaKey(_ press: MediaKey.Press, fine: Bool) -> Bool {
+        let watcher = LevelsWatcher.shared
+        guard settings.showsLevels, settings.replacesSystemLevels, watcher.isRunning, watcher.canChange(press.key.kind) else { return false }
+        // Letting go, or the mute key held down: nothing more to do, and macOS needn't see it.
+        if !press.down || (press.key == .mute && press.repeated) {
+            return true
+        }
+        return watcher.press(press.key, fine: fine)
+    }
+
+    // MARK: Accessibility permission
+
+    /// Looks at whether macOS lets the app press keys in other apps, and starts or stops
+    /// the taking-over of the volume keys to match. While the permission is being waited
+    /// for, it looks again every couple of seconds.
+    private func checkAccessibility() {
+        let allowed = DocumentTyper.isTrusted
+        if settings.accessibilityAllowed != allowed {
+            settings.accessibilityAllowed = allowed
+        }
+        let wanted = settings.showsLevels && settings.replacesSystemLevels
+        if wanted && allowed {
+            if !mediaKeys.isRunning {
+                mediaKeys.start()
+            }
+        } else if mediaKeys.isRunning {
+            mediaKeys.stop()
+        }
+        accessibilityCheck?.cancel()
+        accessibilityCheck = nil
+        guard !allowed, accessibilityChecksLeft > 0 else {
+            accessibilityChecksLeft = 0
+            return
+        }
+        accessibilityChecksLeft -= 1
+        let work = DispatchWorkItem { [weak self] in
+            self?.checkAccessibility()
+        }
+        accessibilityCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+    }
+
+    /// Asks macOS for the permission. An entry left by an earlier build no longer matches
+    /// this one (each update is a new build to macOS), so it's cleared first; then macOS
+    /// shows its own prompt, with a button that opens the right page of System Settings.
+    private func askForAccessibility() {
+        if !DocumentTyper.isTrusted, let id = Bundle.main.bundleIdentifier {
+            let reset = Process()
+            reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            reset.arguments = ["reset", "Accessibility", id]
+            reset.standardOutput = FileHandle.nullDevice
+            reset.standardError = FileHandle.nullDevice
+            if (try? reset.run()) != nil {
+                reset.waitUntilExit()
+            }
+        }
+        // The notch sits above other windows: close it so macOS's prompt isn't under it.
+        for model in models where model.level != .rest {
+            model.close()
+        }
+        DocumentTyper.askForAccess()
+        // Look for the answer for the next five minutes.
+        accessibilityChecksLeft = 150
+        checkAccessibility()
+    }
+
+    // MARK: Typing into your documents
+
+    private func connectTyping() {
+        documentTyper.onTargetChanged = { [weak self] name in
+            for model in self?.models ?? [] where model.typingTarget != name {
+                model.typingTarget = name
+            }
+        }
+        documentTyper.start()
+        for model in models {
+            model.typingTarget = documentTyper.targetName
+        }
+    }
+
+    /// Types an answer where your cursor is. If macOS doesn't let the app press keys, the
+    /// answer is left on the clipboard and the chat says to paste it.
+    private func typeIntoDocument(_ text: String, from model: NotchModel?) {
+        documentTyper.typeText(text, closeNotch: { model?.close() }) { [weak self] outcome in
+            self?.checkAccessibility()
+            if case .typed = outcome { return }
+            model?.typingNote = outcome.note
+        }
+    }
+
+    /// Attaches what's selected in the app you were in to your next question.
+    private func useSelection(for model: NotchModel?) {
+        checkAccessibility()
+        guard DocumentTyper.isTrusted else {
+            model?.typingNote = DocumentText.needsAccess
+            return
+        }
+        let app = documentTyper.targetName ?? ""
+        documentTyper.selection { text in
+            if let found = DocumentText.selection(text, app: app, source: .selection) {
+                Assistant.shared.attachment = found
+            } else {
+                model?.typingNote = DocumentText.nothingSelected(in: app)
+            }
+        }
+    }
+
+    /// Attaches what you've copied to your next question. The clipboard is only read when
+    /// you click the button, and a copy marked private (a password) is left alone.
+    private static func useClipboard(for model: NotchModel?) {
+        let pasteboard = NSPasteboard.general
+        if ClipList.isPrivate(types: (pasteboard.types ?? []).map { $0.rawValue }) {
+            model?.typingNote = DocumentText.privateCopy
+        } else if let found = DocumentText.selection(pasteboard.string(forType: .string), app: "", source: .clipboard) {
+            Assistant.shared.attachment = found
+        } else {
+            model?.typingNote = DocumentText.nothingCopied
         }
     }
 
@@ -1129,6 +1334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let team = agents.team
         let agentsDone = team.jobs.count - team.active.count
         lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once")
+        let levels = settings.showsLevels ? "on" : "off"
+        let ownKeys = settings.replacesSystemLevels ? (mediaKeys.isRunning ? "yes" : "wanted, not running") : "no"
+        let trusted = DocumentTyper.isTrusted ? "allowed" : "not allowed"
+        lines.append("Volume and brightness at the notch: \(levels) · keys taken over: \(ownKeys) · Accessibility: \(trusted)")
         let agentsWeb = settings.agentsUseWeb ? "on" : "off"
         let assistantWeb = assistant.usesWeb ? "on" : "off"
         lines.append("Agents' web: \(agentsWeb) · folders shared with agents: \(settings.agentReadFolders.count) · assistant's web: \(assistantWeb)")

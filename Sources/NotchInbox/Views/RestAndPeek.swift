@@ -14,16 +14,13 @@ struct RestView: View {
         HStack(spacing: 0) {
             if ears > 0 {
                 HStack(spacing: 6) {
-                    if model.phoneConnected != nil {
-                        PhoneDot()
-                    }
-                    if model.focusRunning {
-                        // The focus timer's minutes take the envelope's place while it runs.
-                        FocusEar(timer: FocusTimer.shared)
-                    } else if anyUnread {
-                        Image(systemName: "envelope")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Theme.text2)
+                    if let level = model.levelHUD {
+                        // The volume or brightness just changed: its symbol here, its bar opposite.
+                        Image(systemName: level.symbol)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                    } else {
+                        RestLeftEar(model: model, anyUnread: anyUnread)
                     }
                 }
                 .frame(width: ears)
@@ -32,8 +29,13 @@ struct RestView: View {
                 .frame(width: metrics.notchWidth)
             if ears > 0 {
                 HStack(spacing: 8) {
-                    ForEach(model.accounts.filter { model.unreadCount($0.id) > 0 }) { account in
-                        UnreadNumber(count: model.unreadCount(account.id), color: account.color)
+                    if let level = model.levelHUD {
+                        LevelBar(value: level.shown)
+                            .frame(width: 40, height: 5)
+                    } else {
+                        ForEach(model.accounts.filter { model.unreadCount($0.id) > 0 }) { account in
+                            UnreadNumber(count: model.unreadCount(account.id), color: account.color)
+                        }
                     }
                 }
                 .fixedSize()
@@ -45,8 +47,55 @@ struct RestView: View {
         .onTapGesture { model.goHome() }
         .help(model.phoneConnected.map { "\($0) connected by cable" } ?? "")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Mail, \(model.totalUnread) unread" + (model.phoneConnected.map { ". \($0) connected by cable" } ?? "")))
+        .accessibilityLabel(Text(model.levelHUD?.label ?? RestView.spoken(unread: model.totalUnread, phone: model.phoneConnected)))
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// What VoiceOver says for the closed notch.
+    static func spoken(unread: Int, phone: String?) -> String {
+        let mail = "Mail, \(unread) unread"
+        guard let phone = phone else { return mail }
+        return mail + ". \(phone) connected by cable"
+    }
+}
+
+/// The left of the closed notch as it usually is: the phone's dot, then the focus timer's
+/// minutes or an envelope.
+private struct RestLeftEar: View {
+    @ObservedObject var model: NotchModel
+    let anyUnread: Bool
+
+    var body: some View {
+        if model.phoneConnected != nil {
+            PhoneDot()
+        }
+        if model.focusRunning {
+            // The focus timer's minutes take the envelope's place while it runs.
+            FocusEar(timer: FocusTimer.shared)
+        } else if anyUnread {
+            Image(systemName: "envelope")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+        }
+    }
+}
+
+/// How loud or how bright, as a bar that fills from the left.
+struct LevelBar: View {
+    let value: Double
+
+    var body: some View {
+        GeometryReader { area in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.2))
+                Capsule()
+                    .fill(Theme.text)
+                    .frame(width: area.size.width * CGFloat(min(max(value, 0), 1)))
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: value)
+        .accessibilityHidden(true)
     }
 }
 

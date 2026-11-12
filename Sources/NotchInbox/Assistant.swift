@@ -16,12 +16,23 @@ final class Assistant: ObservableObject {
         /// As streamed; shown without any <think> reasoning.
         var raw: String
         var failed = false
+        /// Text from one of your documents that went with this question.
+        var attachment: DocumentSelection?
 
         /// Without reasoning or a block asking for a change (the app makes those).
         var text: String {
             role == .assistant ? AgentBlock.hidden(AssistantPrompt.withoutThinking(raw)) : raw
         }
+
+        /// What the assistant is sent: your question, with any text you attached.
+        var sent: String {
+            attachment.map { DocumentText.attached(text, $0) } ?? text
+        }
     }
+
+    /// Text from one of your documents (what you'd selected, or copied), to go with your
+    /// next question.
+    @Published var attachment: DocumentSelection?
 
     enum Status: Equatable {
         case checking
@@ -300,18 +311,24 @@ final class Assistant: ObservableObject {
 
         let timetable = editsTimetable ? (timetableDescription?() ?? "") : ""
         let planner = editsPlanner ? (plannerDescription?() ?? "") : ""
+        let attached = attachment
+        attachment = nil
         let able = abilities.filter { allows($0.tag) }
         let known = able.map { $0.describe() }
         let shared = ([sharesContext ? (context?() ?? "") : "", timetable, planner] + known).filter { !$0.isEmpty }.joined(separator: "\n\n")
         let canEdit = !timetable.isEmpty
         let canPlan = !planner.isEmpty
-        let how = able.map { $0.instructions() }
+        var how = able.map { $0.instructions() }
+        // Text from a document is in the conversation: say how to write for one.
+        if attached != nil || messages.contains(where: { $0.attachment != nil }) {
+            how.append(DocumentText.instructions)
+        }
         let web = searchesWeb
-        var history = messages.map { (role: $0.role, text: $0.text, failed: $0.failed) }
-        history.append((role: .user, text: question, failed: false))
+        var history = messages.map { (role: $0.role, text: $0.sent, failed: $0.failed) }
+        history.append((role: .user, text: attached.map { DocumentText.attached(question, $0) } ?? question, failed: false))
         let turns = ClaudeStream.turns(from: history)
 
-        messages.append(Message(role: .user, raw: question))
+        messages.append(Message(role: .user, raw: question, attachment: attached))
         messages.append(Message(role: .assistant, raw: ""))
         isAnswering = true
 
@@ -341,6 +358,7 @@ final class Assistant: ObservableObject {
         stop()
         messages = []
         draft = ""
+        attachment = nil
     }
 
     // MARK: Claude Code

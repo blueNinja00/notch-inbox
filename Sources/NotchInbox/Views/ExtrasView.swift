@@ -670,6 +670,9 @@ struct ExtrasSide: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(spacing: 10) {
+                if settings.showsLevels {
+                    LevelsCard(watcher: LevelsWatcher.shared)
+                }
                 if settings.showsNowPlaying {
                     NowPlayingCard(watcher: NowPlayingWatcher.shared)
                 }
@@ -682,6 +685,66 @@ struct ExtrasSide: View {
             }
         }
         .scrollIndicators(.never)
+    }
+}
+
+/// The volume and the brightness, each with a slider.
+struct LevelsCard: View {
+    @ObservedObject var watcher: LevelsWatcher
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            PanelHeading(symbol: "slider.horizontal.3", title: "Sound and display") {
+                EmptyView()
+            }
+            if let volume = watcher.volume {
+                LevelSliderRow(reading: volume, iconHelp: volume.muted ? "Unmute" : "Mute",
+                               set: { watcher.setVolume($0) }, tapIcon: { watcher.toggleMute() })
+            } else {
+                Text("This sound output has no volume of its own to change.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let brightness = watcher.brightness {
+                LevelSliderRow(reading: brightness, iconHelp: "Brightness of this Mac's own screen",
+                               set: { watcher.setBrightness($0) }, tapIcon: nil)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
+    }
+}
+
+/// One level: its symbol (click the speaker to mute), a slider and the percentage.
+struct LevelSliderRow: View {
+    let reading: LevelReading
+    let iconHelp: String
+    let set: (Double) -> Void
+    let tapIcon: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: { tapIcon?() }) {
+                Image(systemName: reading.symbol)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.text2)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(tapIcon != nil)
+            .help(iconHelp)
+            Slider(value: Binding(get: { reading.shown }, set: { set($0) }), in: 0...1)
+                .controlSize(.small)
+                .tint(Theme.accent)
+                .accessibilityLabel(Text(reading.kind.title))
+            Text("\(reading.percent)%")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.tertiary)
+                .frame(width: 34, alignment: .trailing)
+        }
     }
 }
 

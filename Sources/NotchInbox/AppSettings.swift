@@ -263,6 +263,38 @@ final class AppSettings: ObservableObject {
         didSet { extraChanged(.shelf, showsShelf, oldValue) }
     }
 
+    // Volume and brightness at the notch.
+    private static let levelsKey = "extra.levels"
+    private static let ownLevelsKey = "extra.levels.replaceSystem"
+
+    /// Whether the closed notch shows the volume and brightness for a moment when they change.
+    @Published var showsLevels: Bool = AppSettings.saved(AppSettings.levelsKey, otherwise: true) {
+        didSet {
+            guard showsLevels != oldValue else { return }
+            UserDefaults.standard.set(showsLevels, forKey: AppSettings.levelsKey)
+            onLevelsChanged?()
+        }
+    }
+
+    /// Whether the notch takes over the volume and brightness keys, so macOS's own pop-up
+    /// doesn't show as well. Needs Accessibility permission.
+    @Published var replacesSystemLevels: Bool = AppSettings.saved(AppSettings.ownLevelsKey, otherwise: false) {
+        didSet {
+            guard replacesSystemLevels != oldValue else { return }
+            UserDefaults.standard.set(replacesSystemLevels, forKey: AppSettings.ownLevelsKey)
+            onLevelsChanged?()
+        }
+    }
+
+    var onLevelsChanged: (() -> Void)?
+
+    /// Whether macOS lets Notch Inbox press keys in other apps and take over the volume
+    /// keys (Accessibility, in System Settings). Kept up to date by the app.
+    @Published var accessibilityAllowed = false
+    /// Asks macOS for that permission, or opens the page in System Settings where it's given (set by the app).
+    var onAskForAccessibility: (() -> Void)?
+    var onCheckAccessibility: (() -> Void)?
+
     /// Whether any extra is on (the row under the primary menu's tiles shows if so).
     var showsExtras: Bool { showsNowPlaying || showsFocus || keepsClipboard || showsShelf }
 

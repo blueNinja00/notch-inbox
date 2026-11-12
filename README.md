@@ -4,7 +4,7 @@ A menu-bar app that turns the MacBook notch into an inbox for up to three email 
 
 It shows sample mail until you link your Gmail through the browser (below). **Settings** open inside the notch from the gear at its top right.
 
-**New here?** The first time the app runs, the notch opens by itself with a **tour**: what the notch is, then a page each for Mail, the Planner, the Timetable, Notes, the Assistant, the Extras, the themes, and what does and doesn't leave your Mac. It takes about a minute. See [The tour](#the-tour).
+**New here?** The first time the app runs, the notch opens by itself with a **tour**: what the notch is, then a page each for Mail, the Planner, Assignments, the Timetable, Notes, the Assistant, the Extras, the themes, and what does and doesn't leave your Mac. It takes about a minute. See [The tour](#the-tour).
 
 ## Install
 
@@ -122,7 +122,7 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes. Click its name for its maker and how fast the cable is. An iPhone's battery level shows too if you've installed [libimobiledevice](https://libimobiledevice.org) (`brew install libimobiledevice`) and the phone trusts this Mac; macOS doesn't tell apps that by itself. Otherwise nothing is read from the phone.
-- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest), **Assistant** and **Bookmarks** (your first few links, each a click away). Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Assignments** (what's due next and how many steps are done, or your average), **Notes** (how many, and the latest), **Assistant** and **Bookmarks** (your first few links, each a click away). With all seven showing they sit in two rows, Mail down the left with your newest emails. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
 - **Arrange the primary menu:** right-click a tile for **Move Left**, **Move Right** and **Hide from the Primary Menu**, or open **Settings → General → Primary menu** for the whole list, with a switch and arrows for each tool. The last tile always stays. Up to five tiles sit in a row at the usual width, six in a slightly wider one, and more than six in two rows. If you'd dragged the menu to a size of your own, it goes back to standard when the number of tiles changes, so they aren't squashed.
 - **Planner:** homework, exam countdowns and a study plan. See [Planner](#planner).
 - **Extras:** a row under the tiles with what's playing, a focus timer, clipboard history and a shelf for files. See [Extras](#extras).
@@ -167,6 +167,26 @@ Click the Planner tile on the primary menu. Homework to do is on the left, group
 - **Esc** closes the side panel. The expand button makes the planner bigger.
 
 The planner is kept in `~/Library/Application Support/Notch Inbox/Planner.json`, readable only by you.
+
+## Assignments and marks
+
+Click the Assignments tile on the primary menu. It has two halves, switched at the top: **To Do** and **Marks**.
+
+**To Do** is for the bigger pieces of work: an essay, a project, a prac report.
+
+- The **+** at the top adds one. In the side panel, say what it is, its subject, when it's due and what it's **worth** (as a percentage of the subject's mark, if you know).
+- **Break into Steps** plans it. Paste the task sheet into **What the task asks** first and the assistant reads it and writes four to eight steps for this assignment, each with a time. It only plans: it doesn't write any of the work. With Claude, the assignment's name, subject, due date, task sheet and notes are sent to Anthropic when you click the button, and at no other time; with Qwen it stays on this Mac. If the assistant isn't set up, or can't answer, the usual steps for that kind of work go in (an essay, a talk, a prac, or anything else) and a note says so.
+- The steps are yours to change: rename one by typing over it, click its time to change how long it takes, point at it for arrows to move it and a cross to remove it, and add your own underneath. **Plan Again** replaces the steps still to do and keeps the ones you've ticked off.
+- **The planner fits the steps into your week.** Every step still to do shows in the Planner's plan and in the timetable's free slots, before the assignment is due, in order. An assignment with no steps yet gets an hour to make a start. Click a planned step to come back to its assignment.
+- **Handed In** moves it to "waiting for a mark". When the mark comes back, type it in the same panel.
+
+**Marks** is the marks tracker.
+
+- Each subject shows its **average**. If you've said what results are worth, it's weighted by that; if not, it's a plain average. **Overall** at the top is the average of your subjects, each counting the same.
+- The **+** adds a result that didn't come from an assignment: a test or an exam. Type the mark the way it's written: `17/20`, `85%` or `17 out of 20`. Exams in the planner that are over appear at the bottom of the list with **Sat it? Add your mark**.
+- Set a **goal** for a subject with the − and + (in fives). Marks at or above it are green, a little under amber, well under red, and a sentence says what it takes: "You need an average of 82.7% on the remaining 55% to finish on 80%", or that you're already there, or that it's out of reach and where full marks would get you. That sum needs the weights: what's still to come is taken as 100% less what's been marked.
+
+Assignments and marks are kept on this Mac, in a file only you can read.
 
 ## Bookmarks
 
@@ -235,9 +255,10 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, bookmarks, assistant, settings, tour |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, assignments, timetable, notes, bookmarks, assistant, settings, tour |
 | `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, the one you make yourself, and the sums that keep text reading clearly |
 | `HomeMenu.swift` | Which tools have a tile on the primary menu, in what order, and how they're laid out |
+| `Assignments.swift`, `Views/AssignmentsView.swift` | Assignments and their steps, planning one with the assistant, the marks tracker's sums, and their screens |
 | `Bookmarks.swift`, `Views/BookmarksView.swift` | Bookmarks: reading a typed or dropped link, the saved list, the page and the tile |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
 | `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

@@ -299,6 +299,7 @@ final class NotchModel: ObservableObject {
         case timetable
         case extras
         case bookmarks
+        case assignments
         case settings
         /// The tour of what everything does.
         case tour
@@ -408,10 +409,142 @@ final class NotchModel: ObservableObject {
         switch tile {
         case .mail: openLanes()
         case .planner: openPlanner()
+        case .assignments: openAssignments()
         case .timetable: openTimetable()
         case .notes: openNotes()
         case .assistant: openAssistant()
         case .bookmarks: openBookmarks()
+        }
+    }
+
+    // MARK: Assignments and marks
+
+    /// Your assignments and results, shared by every screen (set by the app).
+    var assignmentsStore: AssignmentsStore?
+
+    /// The two halves of Assignments.
+    enum AssignmentsTab: Equatable {
+        case work
+        case marks
+    }
+
+    @Published var assignmentsTab = AssignmentsTab.work
+
+    /// The assignment (or result) open at the side.
+    @Published var assignmentOpen: UUID? {
+        didSet {
+            // Finished with one: tidy what was typed, and drop it if it never got a name.
+            guard let before = oldValue, before != assignmentOpen else { return }
+            assignmentsStore?.change { all in
+                if all.item(before)?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                    all.remove(before)
+                }
+                all.tidy()
+            }
+            // Closing a result leaves Marks on its subject.
+            if assignmentOpen == nil, assignmentsTab == .marks, let item = assignmentsStore?.assignments.item(before) {
+                marksSubject = item.subject
+            }
+        }
+    }
+
+    /// The subject showing in Marks, as you wrote it; nil for the first one.
+    @Published var marksSubject: String?
+
+    /// The assignment the assistant is breaking into steps right now.
+    @Published var planningAssignment: UUID?
+    /// What went wrong the last time it tried, or what it used instead.
+    @Published var planningNote: String?
+    /// Asks the app to have the assistant break an assignment into steps (set by the app).
+    var onPlanAssignment: ((UUID) -> Void)?
+
+    func openAssignments() {
+        tool = .assignments
+        level = .lanes
+    }
+
+    func expandAssignments() {
+        tool = .assignments
+        level = .detail
+    }
+
+    /// Opens an assignment at the side; click it again to close it.
+    func showAssignment(_ id: UUID, toggle: Bool = false) {
+        tool = .assignments
+        if assignmentsStore?.assignments.item(id)?.kind == .result {
+            assignmentsTab = .marks
+        } else {
+            assignmentsTab = .work
+        }
+        assignmentOpen = toggle && assignmentOpen == id ? nil : id
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// A new assignment due a week from today, opened for you to fill in.
+    func newAssignment(now: Date = Date(), calendar: Calendar = .current) {
+        guard let store = assignmentsStore else { return }
+        let due = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: now)) ?? now
+        let item = Assignment(title: "", due: due)
+        store.change { $0.add(item) }
+        showAssignment(item.id)
+    }
+
+    /// A result to record: a test or exam you've sat. Given an exam from the planner, it
+    /// takes the exam's name, subject and date.
+    func newResult(subject: String = "", exam: Exam? = nil, now: Date = Date(), calendar: Calendar = .current) {
+        guard let store = assignmentsStore else { return }
+        var item = Assignment(title: exam?.title ?? "", subject: exam?.subject ?? subject,
+                              due: exam?.date ?? calendar.startOfDay(for: now), kind: .result)
+        item.examID = exam?.id
+        item.handedIn = true
+        store.change { $0.add(item) }
+        marksSubject = item.subject
+        showAssignment(item.id)
+    }
+
+    /// Breaks an assignment into steps: the assistant plans it if it's set up, and the
+    /// usual steps for that kind of work go in if not.
+    func planAssignment(_ id: UUID) {
+        guard planningAssignment == nil, let item = assignmentsStore?.assignments.item(id) else { return }
+        planningNote = nil
+        if let ask = onPlanAssignment {
+            planningAssignment = id
+            ask(id)
+        } else {
+            assignmentsStore?.change { $0.plan(id, with: AssignmentBreakdown.standard(for: item.title)) }
+        }
+    }
+
+    /// The assistant's plan came back (or didn't): the steps go in, or the usual ones do,
+    /// with a note saying why.
+    func finishPlanning(_ id: UUID, steps: [AssignmentStep]?, problem: String?) {
+        // Only the screen that asked puts the plan in (the assignments are shared).
+        guard planningAssignment == id else { return }
+        planningAssignment = nil
+        guard let item = assignmentsStore?.assignments.item(id) else { return }
+        if let steps = steps, !steps.isEmpty {
+            assignmentsStore?.change { $0.plan(id, with: steps) }
+            planningNote = nil
+        } else {
+            assignmentsStore?.change { $0.plan(id, with: AssignmentBreakdown.standard(for: item.title)) }
+            planningNote = (problem ?? "The assistant couldn't plan this one.") + " These are the usual steps for this kind of work: change them to suit."
+        }
+    }
+
+    /// Homework and the steps of assignments still to do: everything the study plan fits in.
+    var studyTasks: [PlannerTask] {
+        (plannerStore?.planner.tasks ?? []) + (assignmentsStore?.assignments.planTasks() ?? [])
+    }
+
+    /// Opens what a planned study session is for: homework in the planner, or the assignment
+    /// a step belongs to.
+    func openPlanned(_ id: UUID) {
+        if plannerStore?.planner.task(id) != nil {
+            editTask(id)
+        } else if let owner = assignmentsStore?.assignments.owner(of: id) {
+            showAssignment(owner.id)
         }
     }
 
@@ -609,6 +742,7 @@ final class NotchModel: ObservableObject {
         case .assistant: openAssistant()
         case .extras: openExtras()
         case .bookmarks: openBookmarks()
+        case .assignments: openAssignments()
         case .settings(let section): openSettings(section)
         }
         tourPaused = true
@@ -837,6 +971,7 @@ final class NotchModel: ObservableObject {
         timetableEdit = nil
         closePlannerEdit()
         bookmarkEdit = nil
+        assignmentOpen = nil
         // A tour left open, or left to try something, waits on the primary menu.
         tourPaused = false
         if tool == .tour {

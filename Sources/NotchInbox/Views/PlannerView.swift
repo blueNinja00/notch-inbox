@@ -56,7 +56,8 @@ struct PlannerView: View {
         let planner = store.planner
         let table = timetable.timetable
         let sessions = settings.plansStudy
-            ? StudyPlanner.plan(tasks: planner.tasks, exams: planner.exams, timetable: table, now: now, daily: settings.studyMinutesADay)
+            ? StudyPlanner.plan(tasks: planner.tasks + (model.assignmentsStore?.assignments.planTasks() ?? []), exams: planner.exams,
+                                timetable: table, now: now, daily: settings.studyMinutesADay)
             : []
 
         return HStack(spacing: 10) {
@@ -482,7 +483,7 @@ struct PlannerPlan: View {
 
     private func open(_ session: StudySession) {
         if let id = session.taskID {
-            model.editTask(id)
+            model.openPlanned(id)
         } else if let id = session.examID {
             model.editExam(id)
         }

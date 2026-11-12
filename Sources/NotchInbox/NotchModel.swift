@@ -429,6 +429,38 @@ final class NotchModel: ObservableObject {
     /// The job being typed for a new agent.
     @Published var agentDraft = ""
 
+    /// The team chat agents share with the chief of staff and you (set by the app).
+    var teamStore: TeamStore?
+    /// Whether the team chat is showing in the agent room, in place of one agent.
+    @Published var teamChatOpen = false
+    var onPostToTeam: ((String) -> Void)?
+    var onClearTeamChat: (() -> Void)?
+
+    func openTeamChat() {
+        tool = .agents
+        teamChatOpen = true
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Return in the agent room's box: a message to the team while the chat is showing,
+    /// otherwise a job for a new agent.
+    func sendAgentDraft() {
+        guard teamChatOpen else {
+            startDraftedAgent()
+            return
+        }
+        let said = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !said.isEmpty else { return }
+        agentDraft = ""
+        if let post = onPostToTeam {
+            post(said)
+        } else {
+            teamStore?.change { $0.post(said, from: .you) }
+        }
+    }
+
     /// Hands the job in the box to a new agent.
     func startDraftedAgent() {
         if startAgent(task: agentDraft) {
@@ -462,6 +494,7 @@ final class NotchModel: ObservableObject {
 
     func showAgent(_ id: UUID) {
         tool = .agents
+        teamChatOpen = false
         agentOpen = id
         if level == .rest || level == .peek {
             level = .lanes

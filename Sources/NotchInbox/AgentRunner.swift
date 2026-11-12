@@ -13,6 +13,8 @@ final class AgentRunner {
 
     /// An agent finished, one way or another (for the chime).
     var onFinished: ((AgentJob) -> Void)?
+    /// The team chat's desk, when agents share one.
+    var desk: TeamDesk?
 
     /// The longest an agent may work.
     static let timeLimit: TimeInterval = 25 * 60
@@ -86,8 +88,14 @@ final class AgentRunner {
         store.change { $0.begin(id, folder: tools ? folder.path : "", model: assistant.modelName) }
 
         let web = tools && settings.agentsUseWeb
-        let readFolders = tools ? settings.agentReadFolders.filter { AgentRunner.isFolder($0) } : []
-        let system = AgentBrief.system(now: Date(), tools: tools, web: web, readFolders: readFolders)
+        var readFolders = tools ? settings.agentReadFolders.filter { AgentRunner.isFolder($0) } : []
+        // The team chat: a file every agent may read (and none may change).
+        var teamChat: String?
+        if tools, settings.agentsTeamChat, let desk = desk, desk.writeChat() {
+            readFolders.append(TeamChat.room.path)
+            teamChat = TeamChat.file.path
+        }
+        let system = AgentBrief.system(now: Date(), tools: tools, web: web, readFolders: readFolders, teamChat: teamChat)
         let prompt = AgentBrief.prompt(for: job)
         let path = assistant.claudePath
 
@@ -103,6 +111,7 @@ final class AgentRunner {
             let saved = tools ? AgentFiles.list(in: folder.path) : []
             await MainActor.run {
                 self.running[id] = nil
+                self.desk?.writeChat()
                 if tools {
                     self.store.change { $0.setFiles(id, saved) }
                 }
@@ -136,6 +145,7 @@ final class AgentRunner {
             return
         }
         let feed = AgentFeed(id: id, store: store, folder: folder.path)
+        feed.desk = desk
         do {
             var errors = ""
             // Claude Code's restricted mode first: there Claude Code itself keeps the agent
@@ -204,6 +214,7 @@ final class AgentFeed {
     private var lastFlush = Date.distantPast
     /// Whether Claude Code said how the job ended.
     private(set) var ended = false
+    var desk: TeamDesk?
 
     init(id: UUID, store: AgentsStore, folder: String) {
         self.id = id
@@ -226,6 +237,12 @@ final class AgentFeed {
             case .step(let kind, let text, let file):
                 await flush()
                 await note(kind, text, file)
+            case .said(let message):
+                await flush()
+                let id = self.id
+                let desk = self.desk
+                let posted = await MainActor.run { desk?.post(message, fromAgent: id) ?? false }
+                await note(.note, posted ? "Posted in the team chat" : "Tried to post in the team chat (it has said enough, or the chat is off)", nil)
             case .finished(let report, let turns):
                 await flush()
                 ended = true
@@ -274,6 +291,126 @@ final class AgentFeed {
         let store = self.store
         await MainActor.run {
             store.change { $0.fail(id, problem: problem) }
+        }
+    }
+}
+
+/// Runs the team chat: takes messages from you and from agents, keeps the file agents read
+/// up to date, and has the chief of staff answer. The chief answers everything you say and
+/// anything an agent addresses to @chief, one at a time, and only so often.
+final class TeamDesk {
+    let store: TeamStore
+    private let agents: AgentsStore
+    private let assistant: Assistant
+    private let settings: AppSettings
+    /// What the chief may know when it answers (set by the app): assignments, say.
+    var extra: (() -> String)?
+    /// Makes the changes in an <agents> block from the chief (set by the app).
+    var applyStaff: ((String) -> [String]?)?
+
+    private var answering = false
+    private var waiting: [TeamMessage] = []
+    private var answered: [Date] = []
+    /// The most answers the chief gives in an hour, so a chat can't run away with your plan.
+    static let mostAnswers = 30
+
+    init(store: TeamStore, agents: AgentsStore, assistant: Assistant, settings: AppSettings) {
+        self.store = store
+        self.agents = agents
+        self.assistant = assistant
+        self.settings = settings
+    }
+
+    /// Writes the chat where agents read it. False if it couldn't be written.
+    @discardableResult
+    func writeChat() -> Bool {
+        let text = store.room.transcript(team: agents.team, now: Date())
+        do {
+            try FileManager.default.createDirectory(at: TeamChat.room, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: TeamChat.file, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Something you typed in the team chat.
+    func postFromYou(_ text: String) {
+        var posted: TeamMessage?
+        store.change { posted = $0.post(text, from: .you) }
+        guard let message = posted else { return }
+        writeChat()
+        ask(message)
+    }
+
+    /// Something an agent wrote for the team. False if it wasn't posted.
+    func post(_ text: String, fromAgent id: UUID) -> Bool {
+        guard settings.agentsTeamChat, let job = agents.team.job(id) else { return false }
+        var posted: TeamMessage?
+        store.change { posted = $0.post(text, from: .agent(name: job.name, floor: agents.team.floor(of: id)), agent: id) }
+        guard let message = posted else { return false }
+        writeChat()
+        if TeamRoom.wantsChief(message) {
+            ask(message)
+        }
+        return true
+    }
+
+    func clear() {
+        waiting = []
+        store.change { $0.clear() }
+        writeChat()
+    }
+
+    private func ask(_ message: TeamMessage) {
+        waiting.append(message)
+        next()
+    }
+
+    private func next() {
+        guard !answering, !waiting.isEmpty else { return }
+        let message = waiting.removeFirst()
+        let hourAgo = Date().addingTimeInterval(-3600)
+        answered.removeAll { $0 < hourAgo }
+        guard answered.count < TeamDesk.mostAnswers, assistant.status.isReady else {
+            if message.from == .you {
+                let why = assistant.status.isReady ? "I've answered a lot in the last hour, so I'm pausing. Your message is still here for the agents to read."
+                    : "I can't answer until the assistant is set up, but agents can still read your message."
+                store.change { $0.post(why, from: .chief) }
+                writeChat()
+            }
+            next()
+            return
+        }
+        answering = true
+        answered.append(Date())
+        let fromYou = message.from == .you
+        // Only you can have agents started or stopped: never a message from an agent.
+        let canStart = fromYou && assistant.allows(StaffAgent.tag)
+        let system = TeamChat.chiefSystem(claude: assistant.engine.isClaude, canStart: canStart)
+        let prompt = TeamChat.chiefPrompt(room: store.room, team: agents.team, extra: extra?() ?? "", now: Date())
+        let model = assistant.claudeModel
+        Task { [weak self] in
+            guard let self = self else { return }
+            let result = await self.assistant.complete(system: system, prompt: prompt, model: model, json: false, maxTokens: 900)
+            await MainActor.run {
+                self.answering = false
+                switch result {
+                case .success(let raw):
+                    let whole = AssistantPrompt.withoutThinking(raw)
+                    var said = AgentBlock.hidden(whole)
+                    if canStart, let json = AgentBlock.json(in: whole, tag: StaffAgent.tag), let changes = self.applyStaff?(json), !changes.isEmpty {
+                        said += (said.isEmpty ? "" : "\n") + "✓ " + changes.joined(separator: "; ")
+                    }
+                    self.store.change { $0.post(said, from: .chief) }
+                case .failure(let problem):
+                    if fromYou {
+                        self.store.change { $0.post("(I couldn't answer: \(problem.message))", from: .chief) }
+                    }
+                }
+                self.writeChat()
+                self.next()
+            }
         }
     }
 }

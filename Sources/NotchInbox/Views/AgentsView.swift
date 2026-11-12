@@ -38,7 +38,9 @@ struct AgentsView: View {
                 AgentTower(model: model, team: team)
                     .frame(width: expanded ? 320 : 290)
                 Group {
-                    if let job = open {
+                    if model.teamChatOpen, let room = model.teamStore {
+                        TeamChatView(model: model, store: room, on: settings.agentsTeamChat)
+                    } else if let job = open {
                         AgentDetail(model: model, job: job, floor: team.floor(of: job.id))
                             .id(job.id)
                     } else {
@@ -159,13 +161,17 @@ struct AgentTower: View {
         let finished = jobs.filter { !$0.isActive }.count
 
         VStack(spacing: 0) {
+            if let room = model.teamStore {
+                TeamChatRow(store: room, selected: model.teamChatOpen, open: { model.openTeamChat() })
+                    .padding(EdgeInsets(top: 6, leading: 6, bottom: 0, trailing: 6))
+            }
             if jobs.isEmpty {
                 AgentTowerEmpty()
             } else {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         ForEach(jobs) { job in
-                            AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen,
+                            AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen && !model.teamChatOpen,
                                           open: { model.showAgent(job.id) })
                                 .contextMenu { AgentMenu(model: model, job: job) }
                         }
@@ -353,6 +359,136 @@ struct AgentMenu: View {
             Divider()
             Button("Remove from the Room") { model.removeAgent(job.id) }
         }
+    }
+}
+
+// MARK: The team chat
+
+/// The team chat's place at the top of the tower: its latest message.
+struct TeamChatRow: View {
+    @ObservedObject var store: TeamStore
+    let selected: Bool
+    let open: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        let last = store.room.messages.last
+
+        HStack(spacing: 10) {
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .frame(width: 28, height: 28)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.avatar))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Team chat")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Text(last.map { "\($0.name): \(AgentStream.shorten($0.text, to: 60))" } ?? "Agents, the chief of staff and you")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 46)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(selected ? Theme.raised : (hovering ? Theme.hover.opacity(0.55) : Theme.surface.opacity(0.6))))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture(perform: open)
+        .onHover { hovering = $0 }
+        .help("The chat your agents share with the chief of staff and you")
+    }
+}
+
+/// The team chat: what agents, the chief of staff and you have said, newest at the bottom.
+struct TeamChatView: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var store: TeamStore
+    let on: Bool
+
+    var body: some View {
+        let messages = store.room.messages
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Team chat")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                Spacer(minLength: 4)
+                if !messages.isEmpty {
+                    SmallPill(title: "Clear", symbol: "xmark", action: { model.onClearTeamChat?() })
+                        .help("Empty the team chat")
+                }
+            }
+            if messages.isEmpty {
+                Text(on ? "Working agents post what they find and what they need here, and read each other's posts so they don't double up. Type below to say something to everyone: the chief of staff answers you, and every working agent can read it."
+                        : "The team chat is switched off in Settings → Assistant, so agents work without it.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.tertiary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            } else {
+                ScrollViewReader { scroller in
+                    ScrollView(.vertical) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(messages) { message in
+                                TeamBubble(message: message)
+                                    .id(message.id)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .scrollIndicators(.hidden)
+                    .onChange(of: messages.last?.id) { last in
+                        if let last = last {
+                            scroller.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                    .onAppear {
+                        guard let last = messages.last?.id else { return }
+                        DispatchQueue.main.async {
+                            scroller.scrollTo(last, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// One message in the team chat, with who said it.
+struct TeamBubble: View {
+    let message: TeamMessage
+
+    var body: some View {
+        let mine = message.from == .you
+
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
+                Text(TeamBubble.who(message))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(message.from == .chief ? Theme.accent : Theme.text2)
+                Text(AgentLook.time(message.at))
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Theme.tertiary)
+            }
+            AgentWords(text: message.text, colour: mine ? Theme.text : Theme.body)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(mine ? Theme.raised : Theme.lane))
+    }
+
+    static func who(_ message: TeamMessage) -> String {
+        if case .agent(let name, let floor) = message.from {
+            return "\(name) · floor \(floor)"
+        }
+        return message.name
     }
 }
 
@@ -738,7 +874,8 @@ struct AgentJobField: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Give an agent a job: what to find out, write or compare…", text: $model.agentDraft, axis: .vertical)
+            TextField(model.teamChatOpen ? "Say something to the team: the chief and every working agent can read it…"
+                      : "Give an agent a job: what to find out, write or compare…", text: $model.agentDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
@@ -748,7 +885,8 @@ struct AgentJobField: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
-            IconButton(symbol: "arrow.up", label: "Start an agent on it (Return)", size: 32, tint: Theme.text, action: start)
+            IconButton(symbol: "arrow.up", label: model.teamChatOpen ? "Post it (Return)" : "Start an agent on it (Return)", size: 32,
+                       tint: Theme.text, action: start)
         }
         .onAppear { typing = true }
     }
@@ -759,7 +897,7 @@ struct AgentJobField: View {
             model.openAssistant()
             return
         }
-        model.startDraftedAgent()
+        model.sendAgentDraft()
         typing = true
     }
 }

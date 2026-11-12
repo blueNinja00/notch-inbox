@@ -75,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Your agents and their jobs, shared by every screen's notch.
     private let agents = AgentsStore()
     private lazy var agentRunner = AgentRunner(store: agents, assistant: Assistant.shared, settings: settings)
+    /// The team chat agents share with the chief of staff and you.
+    private let team = TeamStore()
+    private lazy var teamDesk = TeamDesk(store: team, agents: agents, assistant: Assistant.shared, settings: settings)
     /// Types into the document you're in, and reads what's selected there.
     private let documentTyper = DocumentTyper()
     /// The volume and brightness keys, when the notch has taken them over.
@@ -241,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Assistant.shared.saveChats()
         // Agents still working are stopped: what they'd written so far is kept.
         agentRunner.stopAll()
+        team.saveNow()
         mediaKeys.stop()
         LevelsWatcher.shared.stop()
     }
@@ -341,6 +345,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.onOpenAgentFile = { [weak self] id, file in
             self?.openAgentFile(file, of: id)
+        }
+        model.teamStore = team
+        model.onPostToTeam = { [weak self] text in
+            self?.teamDesk.postFromYou(text)
+        }
+        model.onClearTeamChat = { [weak self] in
+            self?.teamDesk.clear()
         }
         model.typingTarget = documentTyper.targetName
         if settings.showsLevels && settings.levelsAlways {
@@ -682,6 +693,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             heading: "Bookmarks updated",
             nothing: "(Your bookmarks already had that.)")
         assistant.abilities = [staff, work, links]
+
+        // The team chat: the chief answers there with the jobs and your assignments to hand
+        // (not your mail or notes), and may start agents only when it's you who asked.
+        teamDesk.extra = { [weak self] in
+            guard let self = self, Assistant.shared.allows(AssignmentAgent.tag) else { return "" }
+            return AssignmentAgent.describe(self.assignments.assignments, now: Date())
+        }
+        teamDesk.applyStaff = staff.apply
+        agentRunner.desk = teamDesk
 
         agentRunner.onFinished = { [weak self] job in
             self?.agentFinished(job)

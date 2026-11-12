@@ -349,7 +349,7 @@ enum AgentBrief {
 
     /// An agent's instructions. `tools` says whether it can use the web and its folder
     /// (Claude Code) or can only think and write (the other engines).
-    static func system(now: Date, timeZone: TimeZone = .current, tools: Bool, web: Bool, readFolders: [String] = []) -> String {
+    static func system(now: Date, timeZone: TimeZone = .current, tools: Bool, web: Bool, readFolders: [String] = [], teamChat: String? = nil) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = timeZone
         formatter.locale = Locale(identifier: "en_AU")
@@ -386,6 +386,9 @@ enum AgentBrief {
                 text += " You may also read, but not change, these folders: " + readFolders.joined(separator: "; ") + "."
             }
             text += " You can't run commands, and you can't see or change anything else on this Mac."
+            if let chat = teamChat {
+                text += "\n\n" + TeamChat.agentInstructions(chat: chat)
+            }
         } else {
             text += "\n\nYou can't use the web or save files for this job: work from what you know, say so where it matters, and put everything in your report."
         }
@@ -808,6 +811,8 @@ enum AgentStream {
         case text(String)
         /// A new message began: what it writes from here replaces what it wrote before.
         case newMessage
+        /// It wrote a message for the team chat.
+        case said(String)
         /// It finished, with its report.
         case finished(report: String, turns: Int)
         case failed(String)
@@ -881,6 +886,10 @@ enum AgentStream {
             return .step(.read, host.isEmpty ? "Read a web page" : "Read \(host.hasPrefix("www.") ? String(host.dropFirst(4)) : host)", file: nil)
         case "Write":
             let file = name("file_path")
+            // Its note to the team: posted in the team chat, not kept as one of its files.
+            if TeamChat.isOutbox(file), let message = input["content"] as? String {
+                return .said(message)
+            }
             return .step(.write, "Wrote \(file)", file: file == "a file" ? nil : file)
         case "Edit", "MultiEdit", "NotebookEdit":
             let file = name(tool == "NotebookEdit" ? "notebook_path" : "file_path")

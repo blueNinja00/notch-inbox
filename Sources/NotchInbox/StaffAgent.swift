@@ -61,7 +61,8 @@ enum StaffAgent {
         To start agents, end your reply with one block in exactly this form (the app starts them and hides the block):
         <agents>{"start":[{"name":"Researcher","task":"Find three reliable sources on the causes of the First World War and summarise each in a paragraph, with links."}]}</agents>
         - An agent knows nothing about this conversation or about the user. Put everything it needs in "task": the goal, the details \
-        that matter, and what to hand back. Don't put the user's private details in a task unless the job needs them.
+        that matter, and what to hand back. If the job is about something in the user's emails, write the relevant facts from them into the task, \
+        since the agent can't see the mail. Don't put the user's private details in a task unless the job needs them.
         - "name" is a short name for the agent, like "Researcher" or "Essay planner".
         - One clear job per agent. A big job can be split between up to \(mostAtOnce) agents working at the same time.
         - {"stop":["Researcher"]} stops an agent that's working.

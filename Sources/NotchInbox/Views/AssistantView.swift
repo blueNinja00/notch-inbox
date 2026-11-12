@@ -136,8 +136,8 @@ struct AssistantView: View {
             HStack(spacing: 6) {
                 Toggle(isOn: $assistant.sharesContext) {
                     Text(assistant.engine.isClaude
-                         ? "Let Claude see my newest email subjects and notes (sent to Anthropic with your question)"
-                         : "Let Qwen see my newest emails and notes (they stay on this Mac)")
+                         ? "Let Claude see my last month of email and my notes (sent to Anthropic with your question)"
+                         : "Let Qwen see my last month of email and my notes (they stay on this Mac)")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.tertiary)
                         .lineLimit(1)

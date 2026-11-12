@@ -79,7 +79,7 @@ Click either one to download the new build, swap it in and restart. Nothing inst
 
 Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
 
-- **General:** the theme (below), Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
+- **General:** the theme (below), which tools are on the primary menu and in what order, Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
 - **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox; how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, whether it may see and change your timetable and your planner, and whether it may see your newest emails and notes.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
@@ -90,6 +90,8 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **Quit Notch Inbox**, at the bottom.
 
 **Themes:** **Settings → General** has eight to pick from: **Midnight** (black and grey with white buttons, the one it starts with), **Graphite** (softer greys), **Ocean**, **Forest**, **Sunset**, **Grape** and **Rose** (each washes the tiles and panels with its colour and uses it for buttons, whatever's selected, today and unread dots), and **High contrast** (brighter text, yellow buttons). The notch itself stays black in all of them, like the camera housing it hangs from. Every theme's text is checked to read clearly on its backgrounds.
+
+**Your own theme:** the ninth swatch, **Your own**, is one you make. Pick the **colour** that washes the tiles and panels (sixteen to click, or type any hex code such as `#5E9EFF` and press Return), **how much** of it (subtle, medium or strong), whether the **tiles** are darker or lighter than standard, and the **accent** for buttons, today and whatever's selected (the colour itself, or another). Whatever you choose, the app keeps the text readable and the tiles dark enough to sit on the black notch: a colour too dark to see is brightened for buttons, and very bright choices are toned down. That's also why there's no light theme: the notch is black, so what's written on it has to be light.
 
 An envelope in the menu bar has a short menu too (Open, Settings…, Quit), as does right-clicking the mail tab. On a MacBook, macOS hides menu-bar icons that don't fit beside the notch, so the gear is the reliable way in.
 
@@ -120,7 +122,8 @@ It shows on every screen: in the MacBook's notch, and as a notch-shaped tab at t
 
 - **Glance:** unread counts for each account sit beside the notch, in full (3992, not 4k; only 10,000 and up are shortened). Accounts with nothing unread are left out.
 - **Phone plugged in:** a red dot appears on the left of the notch while your phone (an iPhone, or an Android phone) is connected to the Mac by USB cable, and the primary menu names it. In Mail tab mode the dot sits on the tab. Wireless connections don't count. The app hears about it from macOS the moment a USB device comes or goes. Click its name for its maker and how fast the cable is. An iPhone's battery level shows too if you've installed [libimobiledevice](https://libimobiledevice.org) (`brew install libimobiledevice`) and the phone trusts this Mac; macOS doesn't tell apps that by itself. Otherwise nothing is read from the phone.
-- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest) and **Assistant**. Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
+- **Hover the notch:** the primary menu drops down, with one tile per tool: **Mail** (total unread, the newest email, each inbox's count), **Planner** (what's due next and your next exam), **Timetable** (the class you're in now and the next one), **Notes** (how many, and the latest), **Assistant** and **Bookmarks** (your first few links, each a click away). Your next exam counts down beside the date once it's within three weeks. Click anywhere on it to keep it open.
+- **Arrange the primary menu:** right-click a tile for **Move Left**, **Move Right** and **Hide from the Primary Menu**, or open **Settings → General → Primary menu** for the whole list, with a switch and arrows for each tool. The last tile always stays. Up to five tiles sit in a row at the usual width, six in a slightly wider one, and more than six in two rows. If you'd dragged the menu to a size of your own, it goes back to standard when the number of tiles changes, so they aren't squashed.
 - **Planner:** homework, exam countdowns and a study plan. See [Planner](#planner).
 - **Extras:** a row under the tiles with what's playing, a focus timer, clipboard history and a shelf for files. See [Extras](#extras).
 - **Assistant:** chat with Claude (or Qwen, on your Mac) for everyday help: planning your day, summarising email, what's due, writing replies. See [The assistant](#the-assistant).
@@ -164,6 +167,18 @@ Click the Planner tile on the primary menu. Homework to do is on the left, group
 - **Esc** closes the side panel. The expand button makes the planner bigger.
 
 The planner is kept in `~/Library/Application Support/Notch Inbox/Planner.json`, readable only by you.
+
+## Bookmarks
+
+Click the Bookmarks tile on the primary menu (anywhere but on a bookmark) for the links you use every day: the school portal, Classroom, a textbook, a past-papers page.
+
+- **Add one:** type or paste it in the box at the top and press Return. A link by itself is named after its site; put a name before or after it ("Maths textbook https://…") to name it yourself. **Paste** adds the link on your clipboard. You can also **drag a link** from your browser onto the page, or onto the Bookmarks tile.
+- **Open one:** click it, here or on the tile. It opens in your browser.
+- **Edit one:** point at it and click the pencil, or right-click it. The side panel changes its name, its link and its **group** (Maths, say). Groups appear as chips above the bookmarks; click one to see only that group.
+- **Reorder:** right-click → **Move Earlier** or **Move Later**. The tile shows the first few, so put the ones you use most first.
+- Only web pages (http and https) can be bookmarked, and a link you already have isn't added twice.
+
+Bookmarks are kept on this Mac, in a file only you can read. No page is fetched when you add one, which is why each gets a letter on its site's colour, not the site's icon.
 
 ## Extras
 
@@ -220,7 +235,9 @@ open "build/Notch Inbox.app"
 | `MailboxFile.swift` | The notch's mail lists, kept between launches |
 | `BrowserExtension/mime.js` | Decodes whole emails in the add-on (MIME, base64, quoted-printable, charsets) |
 | `BrowserExtensionInstaller.swift` | Puts the add-on where the browser can load it |
-| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, assistant, settings, tour |
-| `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, and the sums that check its text reads clearly |
+| `Views/` | The SwiftUI screens: resting notch, primary menu, lanes, expanded inbox, planner, timetable, notes, bookmarks, assistant, settings, tour |
+| `Theme.swift`, `ThemePalette.swift` | The themes: each one's colours, the one you make yourself, and the sums that keep text reading clearly |
+| `HomeMenu.swift` | Which tools have a tile on the primary menu, in what order, and how they're laid out |
+| `Bookmarks.swift`, `Views/BookmarksView.swift` | Bookmarks: reading a typed or dropped link, the saved list, the page and the tile |
 | `.github/workflows/release.yml` | Builds and publishes a release for every push to `main` |
 | `.github/workflows/check.yml` | Builds a `check/…` branch without publishing, to try a change first |

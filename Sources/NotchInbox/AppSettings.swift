@@ -173,13 +173,59 @@ final class AppSettings: ObservableObject {
     @Published var theme: ThemeChoice = ThemeChoice.saved() {
         didSet {
             guard theme != oldValue else { return }
-            palette = theme.palette
+            palette = theme == .custom ? customTheme.palette : theme.palette
             UserDefaults.standard.set(theme.rawValue, forKey: ThemeChoice.key)
+        }
+    }
+
+    /// The theme you make yourself: its colours apply while "Your own" is the theme.
+    @Published var customTheme: CustomTheme = CustomTheme.load() {
+        didSet {
+            guard customTheme != oldValue else { return }
+            customTheme.save()
+            if theme == .custom {
+                palette = customTheme.palette
+            }
         }
     }
 
     /// The chosen theme's colours, worked out once when it's chosen.
     private(set) var palette: ThemePalette = ThemeChoice.saved().palette
+
+    /// Changes whenever the colours do, so the notch draws itself again.
+    var lookID: String {
+        theme == .custom ? "custom-" + customTheme.stamp : theme.rawValue
+    }
+
+    // MARK: The primary menu
+
+    /// Which tools have a tile on the primary menu, and in what order.
+    @Published var homeMenu: HomeMenu = HomeMenu(defaults: .standard) {
+        didSet {
+            guard homeMenu != oldValue else { return }
+            homeMenu.save(in: .standard)
+            onHomeMenuChanged?()
+        }
+    }
+
+    var onHomeMenuChanged: (() -> Void)?
+
+    func moveTile(_ tile: HomeTile, by offset: Int) {
+        var menu = homeMenu
+        if menu.move(tile, by: offset, amongShown: false) {
+            homeMenu = menu
+        }
+    }
+
+    func setTile(_ tile: HomeTile, shown: Bool) {
+        var menu = homeMenu
+        if menu.setShown(tile, shown) {
+            homeMenu = menu
+        } else {
+            // The last tile can't go: put its switch back.
+            objectWillChange.send()
+        }
+    }
 
     // MARK: Extras
 

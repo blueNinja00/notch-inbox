@@ -237,6 +237,11 @@ final class NotchWindowController {
                 model.closePlannerEdit()
                 return nil
             }
+            // And in Bookmarks.
+            if model.tool == .bookmarks && model.bookmarkEdit != nil {
+                model.bookmarkEdit = nil
+                return nil
+            }
             // In Mail, Esc first closes the search box.
             if model.tool == .mail && model.searching {
                 model.endSearch()

@@ -178,6 +178,11 @@ struct GeneralSettings: View {
         SettingsHeading(title: "Theme",
                         detail: "The colours of everything on the notch. The notch itself stays black, like the camera housing it hangs from.")
         ThemePicker(settings: settings)
+        if settings.theme == .custom {
+            CustomThemeEditor(settings: settings)
+        }
+        SettingsDivider()
+        HomeMenuSettings(settings: settings)
         SettingsDivider()
         SettingsHeading(title: "Show Notch Inbox as")
         HStack(spacing: 10) {
@@ -190,20 +195,20 @@ struct GeneralSettings: View {
         }
 
         SettingsDivider()
+        GeneralHelp(model: model)
+    }
+}
+
+/// Panel sizes, the keyboard shortcuts, and the tour to watch again.
+struct GeneralHelp: View {
+    @ObservedObject var model: NotchModel
+
+    var body: some View {
         SettingsRow(title: "Panel sizes",
                     detail: "Drag the bottom edge or corner of an open panel to resize it. Double-click the corner for its standard size.") {
             PillButton(title: "Reset All Sizes", action: { model.resetAllSizes() })
         }
         SettingsDivider()
-        GeneralHelp(model: model)
-    }
-}
-
-/// The keyboard shortcuts, and the tour to watch again.
-struct GeneralHelp: View {
-    @ObservedObject var model: NotchModel
-
-    var body: some View {
         SettingsRow(title: "Keyboard",
                     detail: "Esc goes back a step. In Mail, 1, 2 and 3 open your inboxes, / searches, U marks the open email unread (or read) and O opens it in Gmail.") {
             EmptyView()
@@ -216,28 +221,269 @@ struct GeneralHelp: View {
     }
 }
 
-/// The themes, as swatches to click.
+/// The themes, as swatches to click: eight ready-made, and one you make yourself.
 struct ThemePicker: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], alignment: .leading, spacing: 8) {
             ForEach(ThemeChoice.allCases) { theme in
-                ThemeSwatch(theme: theme, selected: settings.theme == theme, choose: { settings.theme = theme })
+                ThemeSwatch(theme: theme,
+                            palette: theme == .custom ? settings.customTheme.palette : theme.palette,
+                            selected: settings.theme == theme, choose: { settings.theme = theme })
             }
         }
+    }
+}
+
+/// Making your own theme: the colour that washes the tiles, how much of it, how bright
+/// the tiles are, and the accent. Text stays readable whatever you pick.
+struct CustomThemeEditor: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        let theme = settings.customTheme
+
+        VStack(alignment: .leading, spacing: 12) {
+            ColourRow(title: "Colour", detail: "Washes the tiles and panels.",
+                      colours: CustomTheme.swatches, chosen: theme.tint,
+                      pick: { colour in settings.customTheme.tint = colour })
+            HStack(spacing: 14) {
+                HexField(title: "Or a hex code", colour: theme.tint, pick: { colour in settings.customTheme.tint = colour })
+                VStack(alignment: .leading, spacing: 4) {
+                    CustomThemeLabel(text: "How much colour")
+                    ChoiceSegments(options: CustomTheme.Strength.allCases.map {
+                        ChoiceSegments<CustomTheme.Strength>.Option(value: $0, title: $0.title, help: "\($0.title) colour in the tiles")
+                    }, selected: theme.strength, choose: { settings.customTheme.strength = $0 })
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    CustomThemeLabel(text: "Tiles")
+                    ChoiceSegments(options: CustomTheme.Tiles.allCases.map {
+                        ChoiceSegments<CustomTheme.Tiles>.Option(value: $0, title: $0.title, help: "\($0.title) tiles")
+                    }, selected: theme.tiles, choose: { settings.customTheme.tiles = $0 })
+                }
+                Spacer(minLength: 0)
+            }
+            AccentRow(settings: settings)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.lane))
+    }
+}
+
+struct CustomThemeLabel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(Theme.tertiary)
+    }
+}
+
+/// A row of colours to click.
+struct ColourRow: View {
+    let title: String
+    let detail: String
+    let colours: [UInt32]
+    let chosen: UInt32?
+    let pick: (UInt32) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                CustomThemeLabel(text: title)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.tertiary)
+            }
+            HStack(spacing: 6) {
+                ForEach(colours, id: \.self) { colour in
+                    ColourDot(colour: colour, selected: colour == chosen, choose: { pick(colour) })
+                }
+            }
+        }
+    }
+}
+
+/// One colour, as a dot to click.
+struct ColourDot: View {
+    let colour: UInt32
+    let selected: Bool
+    let choose: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        Button(action: choose) {
+            Circle()
+                .fill(Color(hex: colour))
+                .frame(width: 20, height: 20)
+                .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 0.95 : (hovering ? 0.5 : 0.12)), lineWidth: selected ? 2 : 1))
+                .padding(2)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(CustomTheme.hex(colour))
+        .accessibilityLabel(Text("Colour \(CustomTheme.hex(colour))"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Typing an exact colour, like #5E9EFF. It's used when you press Return.
+struct HexField: View {
+    let title: String
+    let colour: UInt32
+    let pick: (UInt32) -> Void
+    @State private var typed: String
+    @State private var refused = false
+
+    init(title: String, colour: UInt32, pick: @escaping (UInt32) -> Void) {
+        self.title = title
+        self.colour = colour
+        self.pick = pick
+        _typed = State(initialValue: CustomTheme.hex(colour))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            CustomThemeLabel(text: refused ? "Not a colour: try #5E9EFF" : title)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color(hex: CustomTheme.colour(fromHex: typed) ?? colour))
+                    .frame(width: 12, height: 12)
+                TextField("#5E9EFF", text: $typed)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 74)
+                    .onSubmit(use)
+                    .onChange(of: typed) { _ in refused = false }
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 27)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
+        }
+    }
+
+    private func use() {
+        if let found = CustomTheme.colour(fromHex: typed) {
+            pick(found)
+        } else {
+            refused = true
+        }
+    }
+}
+
+/// The accent: the colour itself, or another for buttons and whatever's selected.
+struct AccentRow: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        let theme = settings.customTheme
+
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                CustomThemeLabel(text: "Accent")
+                Text("Buttons, today, and whatever's selected.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.tertiary)
+            }
+            HStack(spacing: 8) {
+                SmallPill(title: theme.accent == nil ? "Same as the colour ✓" : "Same as the colour", symbol: "link",
+                          action: { settings.customTheme.accent = nil })
+                ForEach(CustomTheme.accents, id: \.self) { colour in
+                    ColourDot(colour: colour, selected: theme.accent == colour, choose: { settings.customTheme.accent = colour })
+                }
+            }
+        }
+    }
+}
+
+/// Which tools have a tile on the primary menu, and in what order.
+struct HomeMenuSettings: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        let menu = settings.homeMenu
+
+        SettingsHeading(title: "Primary menu",
+                        detail: "Choose which tools have a tile on the menu the notch opens to, and their order (the arrows). You can also right-click a tile there to move or hide it. Six fit in a row; more go in two rows.")
+        VStack(spacing: 0) {
+            ForEach(Array(menu.order.enumerated()), id: \.element) { index, tile in
+                if index > 0 {
+                    SettingsDivider()
+                }
+                HomeTileSettingRow(settings: settings, tile: tile,
+                                   isFirst: index == 0, isLast: index == menu.order.count - 1)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.lane))
+        if menu != HomeMenu.standard {
+            HStack {
+                Spacer(minLength: 0)
+                PillButton(title: "Back to the Standard Menu", action: { settings.homeMenu = HomeMenu.standard })
+            }
+        }
+    }
+}
+
+/// One tool in Settings: its place on the primary menu, and whether it has a tile there.
+struct HomeTileSettingRow: View {
+    @ObservedObject var settings: AppSettings
+    let tile: HomeTile
+    let isFirst: Bool
+    let isLast: Bool
+
+    var body: some View {
+        let shown = settings.homeMenu.isShown(tile)
+        let onlyOne = shown && !settings.homeMenu.canHide(tile)
+
+        HStack(spacing: 10) {
+            Image(systemName: tile.symbol)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(shown ? Theme.text : Theme.tertiary)
+                .frame(width: 22)
+            Text(tile.title)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(shown ? Theme.text2 : Theme.tertiary)
+            if !shown {
+                Text("Not on the menu")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.tertiary)
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                IconButton(symbol: "chevron.up", label: "Move \(tile.title) earlier", size: 22,
+                           action: { settings.moveTile(tile, by: -1) })
+                    .disabled(isFirst)
+                    .opacity(isFirst ? 0.3 : 1)
+                IconButton(symbol: "chevron.down", label: "Move \(tile.title) later", size: 22,
+                           action: { settings.moveTile(tile, by: 1) })
+                    .disabled(isLast)
+                    .opacity(isLast ? 0.3 : 1)
+            }
+            Toggle("", isOn: Binding(get: { settings.homeMenu.isShown(tile) }, set: { settings.setTile(tile, shown: $0) }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .disabled(onlyOne)
+                .help(onlyOne ? "The primary menu always keeps one tile." : (shown ? "Take \(tile.title) off the primary menu" : "Put \(tile.title) on the primary menu"))
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
     }
 }
 
 /// One theme: a little picture of it (a tile, two lines of text and a button), and its name.
 struct ThemeSwatch: View {
     let theme: ThemeChoice
+    let palette: ThemePalette
     let selected: Bool
     let choose: () -> Void
     @State var hovering = false
 
     var body: some View {
-        let palette = theme.palette
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
 
         Button(action: choose) {

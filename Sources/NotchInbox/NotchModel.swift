@@ -298,6 +298,7 @@ final class NotchModel: ObservableObject {
         case assistant
         case timetable
         case extras
+        case bookmarks
         case settings
         /// The tour of what everything does.
         case tour
@@ -367,9 +368,111 @@ final class NotchModel: ObservableObject {
     /// The panel's size at a level: as dragged, else standard.
     func size(_ level: NotchLevel) -> CGSize {
         guard level != .rest, let custom = customSizes[level] else {
-            return metrics.bodySize(level, ears: restEars, extras: showsExtras)
+            return metrics.bodySize(level, ears: restEars, extras: showsExtras, tiles: homeMenu.shown.count)
         }
         return metrics.clamp(custom, for: level)
+    }
+
+    // MARK: The primary menu's tiles
+
+    /// Which tools have a tile on the primary menu, and in what order. The app keeps it,
+    /// for every screen.
+    @Published var homeMenu = HomeMenu.standard
+    /// Asks the app to rearrange the primary menu.
+    var onArrangeHome: ((HomeMenu) -> Void)?
+
+    /// Moves a tile one place left (-1) or right (1) among the tiles showing.
+    func moveTile(_ tile: HomeTile, by offset: Int) {
+        var menu = homeMenu
+        guard menu.move(tile, by: offset, amongShown: true) else { return }
+        arrangeHome(menu)
+    }
+
+    /// Takes a tile off the primary menu (Settings → General puts it back). The last one stays.
+    func hideTile(_ tile: HomeTile) {
+        var menu = homeMenu
+        guard menu.setShown(tile, false) else { return }
+        arrangeHome(menu)
+    }
+
+    private func arrangeHome(_ menu: HomeMenu) {
+        if let ask = onArrangeHome {
+            ask(menu)
+        } else {
+            homeMenu = menu
+        }
+    }
+
+    /// Opens the tool a tile stands for.
+    func open(_ tile: HomeTile) {
+        switch tile {
+        case .mail: openLanes()
+        case .planner: openPlanner()
+        case .timetable: openTimetable()
+        case .notes: openNotes()
+        case .assistant: openAssistant()
+        case .bookmarks: openBookmarks()
+        }
+    }
+
+    // MARK: Bookmarks
+
+    /// Your bookmarks, shared by every screen (set by the app).
+    var bookmarksStore: BookmarksStore?
+
+    /// The bookmark being edited in the side panel.
+    @Published var bookmarkEdit: UUID? {
+        didSet {
+            // Finished with one: a name left blank becomes its site.
+            if let before = oldValue, before != bookmarkEdit {
+                bookmarksStore?.tidy(before)
+            }
+        }
+    }
+
+    /// The group whose bookmarks are showing; nil for all of them.
+    @Published var bookmarkGroup: String?
+
+    func openBookmarks() {
+        tool = .bookmarks
+        bookmarkEdit = nil
+        if let group = bookmarkGroup, bookmarksStore?.bookmarks(in: group).isEmpty != false {
+            bookmarkGroup = nil
+        }
+        level = .lanes
+    }
+
+    /// Opens a bookmark in your browser. Only web pages open.
+    func openBookmark(_ bookmark: Bookmark) {
+        guard let address = BookmarkText.address(from: bookmark.url), let url = URL(string: address) else { return }
+        onOpenURL?(url)
+    }
+
+    /// Adds what was typed or dropped: a link, or a name and a link. It goes in the group
+    /// that's showing. Returns false if there's no link in it.
+    @discardableResult
+    func addBookmark(typed: String) -> Bool {
+        guard let store = bookmarksStore else { return false }
+        return store.add(typed: typed, group: bookmarkGroup ?? "") != nil
+    }
+
+    /// Click a bookmark's pencil to edit it; click it again to stop.
+    func editBookmark(_ id: UUID) {
+        tool = .bookmarks
+        bookmarkEdit = bookmarkEdit == id ? nil : id
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    func removeBookmark(_ id: UUID) {
+        if bookmarkEdit == id {
+            bookmarkEdit = nil
+        }
+        bookmarksStore?.remove(id)
+        if let group = bookmarkGroup, bookmarksStore?.bookmarks(in: group).isEmpty != false {
+            bookmarkGroup = nil
+        }
     }
 
     /// The panel's black outline at a level: its size plus the curved shoulders.
@@ -505,6 +608,7 @@ final class NotchModel: ObservableObject {
         case .notes: openNotes()
         case .assistant: openAssistant()
         case .extras: openExtras()
+        case .bookmarks: openBookmarks()
         case .settings(let section): openSettings(section)
         }
         tourPaused = true
@@ -732,6 +836,7 @@ final class NotchModel: ObservableObject {
         notesStore?.removeEmpty(except: nil)
         timetableEdit = nil
         closePlannerEdit()
+        bookmarkEdit = nil
         // A tour left open, or left to try something, waits on the primary menu.
         tourPaused = false
         if tool == .tour {

@@ -23,7 +23,7 @@ struct NotchRootView: View {
                     .fill(Color.black)
                     .shadow(color: Color.black.opacity(level == .rest ? 0 : 0.55), radius: 26, x: 0, y: 14)
                 content(for: level)
-                    .id(settings.theme)
+                    .id(settings.lookID)
                     .frame(width: outline.width, height: outline.height, alignment: .top)
                     .clipShape(shape)
                 if level != .rest {
@@ -70,6 +70,9 @@ struct NotchRootView: View {
                     .transition(.opacity)
             } else if model.tool == .extras {
                 ExtrasView(model: model, settings: AppSettings.shared, expanded: level == .detail)
+                    .transition(.opacity)
+            } else if model.tool == .bookmarks, let store = model.bookmarksStore {
+                BookmarksView(model: model, store: store)
                     .transition(.opacity)
             } else if model.tool == .assistant {
                 AssistantView(model: model, assistant: Assistant.shared, expanded: level == .detail)

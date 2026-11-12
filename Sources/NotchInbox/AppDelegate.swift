@@ -669,12 +669,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = assistant.claudeModel
         Task { [weak self] in
             let result = await assistant.complete(system: AssignmentBreakdown.system, prompt: prompt, model: model)
+            guard let self = self else { return }
             await MainActor.run {
                 switch result {
                 case .success(let answer):
-                    self?.finishPlanning(id, steps: AssignmentBreakdown.parse(answer), problem: "The assistant's plan couldn't be read.")
+                    self.finishPlanning(id, steps: AssignmentBreakdown.parse(answer), problem: "The assistant's plan couldn't be read.")
                 case .failure(let problem):
-                    self?.finishPlanning(id, steps: nil, problem: problem.message)
+                    self.finishPlanning(id, steps: nil, problem: problem.message)
                 }
             }
         }

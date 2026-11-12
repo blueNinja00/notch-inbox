@@ -1013,20 +1013,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What the assistant may know about your day: your newest real emails and latest notes.
     private func assistantContext() -> String {
         var emails: [(account: String, sender: String, subject: String, date: Date, unread: Bool)] = []
+        var previews: [String] = []
         if let model = models.first, !model.isSample {
+            // Everything the notch holds from the last month, for the inboxes that are showing.
             let shown = Set(model.accounts.map { $0.id })
-            emails = model.recent
-                .filter { shown.contains($0.accountID) }
-                .prefix(20)
-                .map { (account: model.account($0.accountID)?.name ?? $0.accountID,
-                        sender: $0.sender, subject: $0.subject, date: $0.date, unread: $0.isUnread) }
+            let since = Date().addingTimeInterval(-Double(AssistantPrompt.mailDays) * 86_400)
+            let month = mailbox.messages
+                .filter { shown.contains($0.accountID) && $0.date >= since }
+                .sorted { $0.date > $1.date }
+                .prefix(AssistantPrompt.mostMail)
+            emails = month.map { (account: model.account($0.accountID)?.name ?? $0.accountID,
+                                  sender: $0.sender, subject: $0.subject, date: $0.date, unread: $0.isUnread) }
+            previews = month.prefix(AssistantPrompt.mostPreviews).map { $0.snippet }
         }
         let recentNotes = notes.notes
             .filter { !$0.isEmpty }
             .prefix(10)
             .map { (title: $0.title, preview: $0.preview) }
         // The timetable goes in separately, with its own setting (and so the assistant can change it).
-        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), now: Date())
+        return AssistantPrompt.context(emails: emails, notes: Array(recentNotes), previews: previews, limit: AssistantPrompt.mostMail, now: Date())
     }
 
     // MARK: Phone by cable

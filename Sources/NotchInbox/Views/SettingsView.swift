@@ -802,8 +802,8 @@ struct AssistantReach: View {
         }
         SettingsToggle(title: "Share my newest emails and notes",
                        detail: claude
-                           ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
-                           : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
+                           ? "The last 30 days of email the notch holds (sender, subject and time of up to 120, and how the newest 25 start), and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac. Agents never see your mail; the assistant writes what matters into their jobs."
+                           : "Qwen sees the last 30 days of email the notch holds (sender, subject and time, and how the newest start), and your latest notes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
     }
 }

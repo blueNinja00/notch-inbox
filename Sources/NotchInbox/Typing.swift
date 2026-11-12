@@ -1,8 +1,8 @@
 import Foundation
 
 /// Text from one of your documents, attached to your next question for the assistant.
-struct DocumentSelection: Equatable {
-    enum Source: String {
+struct DocumentSelection: Equatable, Codable {
+    enum Source: String, Codable {
         /// What was selected in the app you were in.
         case selection
         /// What you'd copied.

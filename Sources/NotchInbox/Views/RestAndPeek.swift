@@ -20,6 +20,9 @@ struct RestView: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(Theme.text)
                     } else {
+                        if let volume = model.steadyLevel(.volume) {
+                            LevelMini(reading: volume)
+                        }
                         RestLeftEar(model: model, anyUnread: anyUnread)
                     }
                 }
@@ -35,6 +38,9 @@ struct RestView: View {
                     } else {
                         ForEach(model.accounts.filter { model.unreadCount($0.id) > 0 }) { account in
                             UnreadNumber(count: model.unreadCount(account.id), color: account.color)
+                        }
+                        if let brightness = model.steadyLevel(.brightness) {
+                            LevelMini(reading: brightness)
                         }
                     }
                 }
@@ -77,6 +83,24 @@ private struct RestLeftEar: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.text2)
         }
+    }
+}
+
+/// A small gauge that stays beside the closed notch: the level's symbol over a short bar.
+struct LevelMini: View {
+    let reading: LevelReading
+
+    var body: some View {
+        VStack(spacing: 2.5) {
+            Image(systemName: reading.symbol)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .frame(height: 11)
+            LevelBar(value: reading.shown)
+                .frame(width: 16, height: 2.5)
+        }
+        .frame(width: 18)
+        .help(reading.label)
     }
 }
 

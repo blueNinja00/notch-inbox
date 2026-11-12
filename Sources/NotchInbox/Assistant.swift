@@ -8,27 +8,13 @@ final class Assistant: ObservableObject {
     /// One assistant for every screen's notch.
     static let shared = Assistant()
 
-    struct Message: Identifiable, Equatable {
-        typealias Role = ChatTurn.Role
+    /// One message in a chat (see Chats.swift).
+    typealias Message = ChatMessage
 
-        let id = UUID()
-        let role: Role
-        /// As streamed; shown without any <think> reasoning.
-        var raw: String
-        var failed = false
-        /// Text from one of your documents that went with this question.
-        var attachment: DocumentSelection?
-
-        /// Without reasoning or a block asking for a change (the app makes those).
-        var text: String {
-            role == .assistant ? AgentBlock.hidden(AssistantPrompt.withoutThinking(raw)) : raw
-        }
-
-        /// What the assistant is sent: your question, with any text you attached.
-        var sent: String {
-            attachment.map { DocumentText.attached(text, $0) } ?? text
-        }
-    }
+    /// Every chat, kept on this Mac between launches. The open one's messages are `messages`.
+    let chats: ChatsStore
+    /// The answer being written right now: only it is added to as the answer streams in.
+    private var answeringID: UUID?
 
     /// Text from one of your documents (what you'd selected, or copied), to go with your
     /// next question.
@@ -179,7 +165,8 @@ final class Assistant: ObservableObject {
     private var qwenModel: String?
     private var answering: Task<Void, Never>?
 
-    init() {
+    init(chats: ChatsStore = ChatsStore()) {
+        self.chats = chats
         let defaults = UserDefaults.standard
         let engine = defaults.string(forKey: Assistant.engineKey).flatMap(AssistantEngine.init(rawValue:)) ?? .standard
         self.engine = engine
@@ -191,6 +178,8 @@ final class Assistant: ObservableObject {
         usesWeb = defaults.object(forKey: Assistant.webKey) == nil ? true : defaults.bool(forKey: Assistant.webKey)
         abilitiesOff = Set(defaults.stringArray(forKey: Assistant.abilitiesOffKey) ?? [])
         apiKeyHint = APIKeyFile.read().map(APIKeyFile.hint(for:))
+        // The chat you were last in, as you left it.
+        messages = chats.book.current?.messages ?? []
     }
 
     /// Whether answers can draw on the web right now: only Claude Code has the tools for it.
@@ -329,7 +318,11 @@ final class Assistant: ObservableObject {
         let turns = ClaudeStream.turns(from: history)
 
         messages.append(Message(role: .user, raw: question, attachment: attached))
-        messages.append(Message(role: .assistant, raw: ""))
+        // Your question is kept straight away; the answer when it's finished.
+        remember()
+        let answer = Message(role: .assistant, raw: "")
+        answeringID = answer.id
+        messages.append(answer)
         isAnswering = true
 
         let engine = self.engine
@@ -354,11 +347,70 @@ final class Assistant: ObservableObject {
         answering?.cancel()
     }
 
+    /// A new, empty chat. The one you were in stays in the list.
     func newChat() {
         stop()
-        messages = []
+        remember()
+        chats.change { $0.startNew(now: Date()) }
+        open()
         draft = ""
+    }
+
+    /// Opens another of your chats.
+    func selectChat(_ id: UUID) {
+        guard id != chats.book.currentID else { return }
+        stop()
+        remember()
+        chats.change { $0.select(id) }
+        open()
+    }
+
+    /// Deletes a chat for good.
+    func deleteChat(_ id: UUID) {
+        let wasOpen = id == chats.book.currentID
+        if wasOpen {
+            stop()
+        } else {
+            remember()
+        }
+        chats.change { $0.remove(id, now: Date()) }
+        if wasOpen {
+            open()
+        }
+    }
+
+    func renameChat(_ id: UUID, to title: String) {
+        chats.change { $0.rename(id, to: title) }
+    }
+
+    /// Deletes every chat.
+    func clearChats() {
+        stop()
+        chats.change { $0.clear(now: Date()) }
+        open()
+        chats.saveNow()
+    }
+
+    /// Writes the chats to disk now (the app is quitting).
+    func saveChats() {
+        remember()
+        chats.saveNow()
+    }
+
+    /// Shows the chat that's open in the book.
+    private func open() {
+        answeringID = nil
+        messages = chats.book.current?.messages ?? []
         attachment = nil
+    }
+
+    /// Keeps the open chat as it stands. An answer still being written is left out until it's done.
+    private func remember() {
+        var kept = messages
+        if isAnswering, let last = kept.last, last.id == answeringID, last.raw.isEmpty {
+            kept.removeLast()
+        }
+        chats.change { $0.setMessages(kept, now: Date()) }
     }
 
     // MARK: Claude Code
@@ -527,7 +579,7 @@ final class Assistant: ObservableObject {
     // MARK: Answers
 
     private func appendToAnswer(_ piece: String) {
-        guard let last = messages.indices.last, messages[last].role == .assistant else { return }
+        guard let last = messages.indices.last, messages[last].role == .assistant, messages[last].id == answeringID else { return }
         messages[last].raw += piece
         if activity != nil {
             activity = nil
@@ -536,7 +588,7 @@ final class Assistant: ObservableObject {
 
     /// What it writes after looking something up starts on a new line.
     private func startParagraph() {
-        guard let last = messages.indices.last, messages[last].role == .assistant else { return }
+        guard let last = messages.indices.last, messages[last].role == .assistant, messages[last].id == answeringID else { return }
         let written = messages[last].raw
         if !written.isEmpty && !written.hasSuffix("\n\n") {
             messages[last].raw += written.hasSuffix("\n") ? "\n" : "\n\n"
@@ -547,7 +599,11 @@ final class Assistant: ObservableObject {
         await MainActor.run {
             self.isAnswering = false
             self.activity = nil
-            guard let last = self.messages.indices.last, self.messages[last].role == .assistant else { return }
+            // Only the answer that was being written: you may have moved to another chat since.
+            guard let last = self.messages.indices.last, self.messages[last].role == .assistant,
+                  self.messages[last].id == self.answeringID else { return }
+            self.answeringID = nil
+            defer { self.remember() }
             if let problem = problem {
                 if self.messages[last].text.isEmpty {
                     self.messages[last].raw = problem

@@ -361,6 +361,14 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// Whether agents share a team chat with each other, the chief of staff and you.
+    @Published var agentsTeamChat: Bool = AppSettings.saved("agents.teamChat", otherwise: true) {
+        didSet {
+            guard agentsTeamChat != oldValue else { return }
+            UserDefaults.standard.set(agentsTeamChat, forKey: "agents.teamChat")
+        }
+    }
+
     /// Why the last folder you tried to add wasn't taken, if it wasn't.
     @Published var agentFolderProblem: String?
 

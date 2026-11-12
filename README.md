@@ -14,7 +14,7 @@ Paste this into Terminal (macOS 13 Ventura or later):
 pkill -x NotchInbox; curl -fL --retry 4 --retry-delay 3 -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/releases/latest/download/NotchInbox.zip && rm -rf "/Applications/Notch Inbox.app" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
 ```
 
-It downloads the latest build, puts **Notch Inbox** in your Applications folder (replacing any copy already there, after quitting it) and starts it. GitHub sometimes answers a download with a server error; it tries again a few times. To have it start when you log in, add it under **System Settings → General → Login Items**.
+It downloads the newest build that has been released to everyone, puts **Notch Inbox** in your Applications folder (replacing any copy already there, after quitting it) and starts it. GitHub sometimes answers a download with a server error; it tries again a few times. To have it start when you log in, add it under **System Settings → General → Login Items**.
 
 ## Link your Gmail
 

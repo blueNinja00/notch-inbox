@@ -441,6 +441,10 @@ final class NotchModel: ObservableObject {
                 }
                 all.tidy()
             }
+            // Closing a result leaves Marks on its subject.
+            if assignmentOpen == nil, assignmentsTab == .marks, let item = assignmentsStore?.assignments.item(before) {
+                marksSubject = item.subject
+            }
         }
     }
 
@@ -496,9 +500,7 @@ final class NotchModel: ObservableObject {
         item.examID = exam?.id
         item.handedIn = true
         store.change { $0.add(item) }
-        if !item.subject.isEmpty {
-            marksSubject = item.subject
-        }
+        marksSubject = item.subject
         showAssignment(item.id)
     }
 

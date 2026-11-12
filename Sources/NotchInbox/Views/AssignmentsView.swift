@@ -689,7 +689,10 @@ struct MarksBoard: View {
         let all = store.assignments
         let subjects = all.subjects
         let summaries = subjects.map { Marks.summary(subject: $0, items: all.items, goal: all.goal(for: $0)) }
-        let chosen = MarksBoard.chosen(model.marksSubject, among: subjects)
+        // The result you're editing decides which subject shows, so it stays in view as you
+        // type its subject.
+        let editing = all.item(model.assignmentOpen)
+        let chosen = MarksBoard.chosen(editing?.subject ?? model.marksSubject, among: subjects)
         let toMark = all.examsToMark(planner.planner.exams, now: now)
 
         HStack(spacing: 10) {

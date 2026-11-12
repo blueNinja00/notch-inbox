@@ -286,6 +286,18 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    private static let steadyLevelsKey = "extra.levels.always"
+
+    /// Whether the volume and brightness stay beside the closed notch all the time, as two
+    /// small gauges, and not only for a moment when they change.
+    @Published var levelsAlways: Bool = AppSettings.saved(AppSettings.steadyLevelsKey, otherwise: true) {
+        didSet {
+            guard levelsAlways != oldValue else { return }
+            UserDefaults.standard.set(levelsAlways, forKey: AppSettings.steadyLevelsKey)
+            onLevelsChanged?()
+        }
+    }
+
     var onLevelsChanged: (() -> Void)?
 
     /// Whether macOS lets Notch Inbox press keys in other apps and take over the volume

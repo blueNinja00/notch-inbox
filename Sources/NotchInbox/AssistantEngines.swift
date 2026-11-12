@@ -126,7 +126,7 @@ enum APIKeyFile {
 
 /// One turn of the conversation, as sent to the model.
 struct ChatTurn: Equatable {
-    enum Role: String {
+    enum Role: String, Codable {
         case user
         case assistant
     }

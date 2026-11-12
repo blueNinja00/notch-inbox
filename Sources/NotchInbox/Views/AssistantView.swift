@@ -52,7 +52,11 @@ struct AssistantView: View {
 
             switch assistant.status {
             case .ready:
-                chat
+                HStack(spacing: 10) {
+                    ChatList(assistant: assistant, store: assistant.chats, typeAgain: { typing = true })
+                        .frame(width: expanded ? 196 : 168)
+                    chat
+                }
             case .checking:
                 Text(assistant.engine == .claudeCode ? "Looking for Claude Code on this Mac…"
                      : assistant.engine == .qwen ? "Looking for Qwen on this Mac…" : "Getting Claude ready…")
@@ -92,6 +96,13 @@ struct AssistantView: View {
                 .scrollIndicators(.hidden)
                 .onChange(of: assistant.messages) { messages in
                     if let last = messages.last {
+                        scroller.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+                .onAppear {
+                    // Opened again: start at the newest message, once the chat has been laid out.
+                    guard let last = assistant.messages.last else { return }
+                    DispatchQueue.main.async {
                         scroller.scrollTo(last.id, anchor: .bottom)
                     }
                 }
@@ -147,6 +158,110 @@ struct AssistantView: View {
     static func selectionHelp(app: String?, claude: Bool) -> String {
         let place = app.map { "in \($0)" } ?? "in the app you were in"
         return "Attach what you've selected \(place) to your next question" + (claude ? ". It's sent to Anthropic with the question." : ". It stays on this Mac.")
+    }
+}
+
+/// Your chats down the side: a new one on top, then the rest with the latest first. They're
+/// kept on this Mac, so they're still here after a restart or an update.
+struct ChatList: View {
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var store: ChatsStore
+    /// Puts the cursor back in the box you type in.
+    let typeAgain: () -> Void
+
+    var body: some View {
+        let chats = store.book.newestFirst
+        let open = store.book.currentID
+
+        VStack(spacing: 6) {
+            NewChatButton(action: {
+                assistant.newChat()
+                typeAgain()
+            })
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 2) {
+                    ForEach(chats) { chat in
+                        ChatRow(chat: chat, selected: chat.id == open,
+                                open: {
+                                    assistant.selectChat(chat.id)
+                                    typeAgain()
+                                },
+                                delete: { assistant.deleteChat(chat.id) })
+                            .contextMenu {
+                                Button("Delete Chat") { assistant.deleteChat(chat.id) }
+                                    .disabled(chat.isEmpty)
+                            }
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(6)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.lane))
+    }
+}
+
+struct NewChatButton: View {
+    let action: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10.5, weight: .bold))
+                Text("New chat")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.text2)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Theme.hover : Theme.raised))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Start a new chat. This one stays in the list.")
+    }
+}
+
+/// One chat in the list: its name, when it was last used, and a cross to delete it.
+struct ChatRow: View {
+    let chat: Chat
+    let selected: Bool
+    let open: () -> Void
+    let delete: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(chat.name)
+                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? Theme.text : Theme.text2)
+                    .lineLimit(1)
+                Text(chat.isEmpty ? "Nothing asked yet" : MailTime.label(for: chat.updated))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 2)
+            if hovering && !chat.isEmpty {
+                IconButton(symbol: "xmark", label: "Delete this chat", size: 20, action: delete)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 4)
+        .frame(height: 38)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(selected ? Theme.raised : (hovering ? Theme.hover.opacity(0.55) : Color.clear)))
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onTapGesture(perform: open)
+        .onHover { hovering = $0 }
+        .help(chat.preview.isEmpty ? chat.name : chat.name + "\n" + chat.preview)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

@@ -1012,6 +1012,9 @@ final class NotchModel: ObservableObject {
         }
         if levelHUD != nil {
             width = max(width, NotchMetrics.levelEarWidth)
+        } else if !steadyLevels.isEmpty {
+            // A small gauge at the edge of each ear, beside whatever else is there.
+            width = (width > 0 ? width : NotchMetrics.steadyLevelPad) + NotchMetrics.steadyLevelWidth
         }
         return width
     }
@@ -1020,6 +1023,13 @@ final class NotchModel: ObservableObject {
 
     /// The volume or brightness, shown beside the closed notch for a moment after it changes.
     @Published var levelHUD: LevelReading?
+    /// The volume and brightness as they are, when they're kept beside the closed notch
+    /// all the time (Settings → Extras). Empty when they aren't.
+    @Published var steadyLevels: [LevelReading] = []
+
+    func steadyLevel(_ kind: LevelKind) -> LevelReading? {
+        steadyLevels.first { $0.kind == kind }
+    }
 
     // MARK: Typing into your documents
 

@@ -750,6 +750,9 @@ struct AssistantSettings: View {
         AssistantReach(assistant: assistant)
 
         SettingsDivider()
+        ChatSettings(assistant: assistant, store: assistant.chats)
+
+        SettingsDivider()
         TypingSettings(assistant: assistant, settings: settings)
 
         SettingsDivider()
@@ -802,6 +805,40 @@ struct AssistantReach: View {
                            ? "Senders, subjects and times of your 20 newest emails, and your latest notes, are sent to Anthropic with each question. Off keeps them on this Mac."
                            : "Qwen sees senders, subjects and times of your newest emails, and your latest notes. They stay on this Mac.",
                        isOn: $assistant.sharesContext)
+    }
+}
+
+/// Your saved chats: where they're kept, and deleting them all.
+struct ChatSettings: View {
+    @ObservedObject var assistant: Assistant
+    @ObservedObject var store: ChatsStore
+    @State var sure = false
+
+    var body: some View {
+        let count = store.book.chats.filter { !$0.isEmpty }.count
+
+        SettingsRow(title: "Your chats", detail: ChatSettings.detail(count: count)) {
+            if sure {
+                HStack(spacing: 6) {
+                    PillButton(title: "Delete All", prominent: true, action: {
+                        assistant.clearChats()
+                        sure = false
+                    })
+                    PillButton(title: "Keep", action: { sure = false })
+                }
+            } else {
+                PillButton(title: "Delete All Chats…", action: { sure = true })
+                    .disabled(count == 0)
+            }
+        }
+    }
+}
+
+extension ChatSettings {
+    static func detail(count: Int) -> String {
+        let kept = "Chats are kept on this Mac, in a file only you can read, so they're still there after a restart or an update. The newest \(ChatBook.mostChats) are kept, and the list down the side of the assistant switches between them."
+        if count == 0 { return kept }
+        return kept + (count == 1 ? " There's 1 now." : " There are \(count) now.")
     }
 }
 
@@ -1271,6 +1308,9 @@ struct LevelsSettings: View {
                        detail: "When you change the volume or the brightness, the closed notch shows it for a moment, and the Extras panel has a slider for each. This needs no permission. Brightness is for this Mac's own screen.",
                        isOn: $settings.showsLevels)
         if settings.showsLevels {
+            SettingsToggle(title: "Keep them beside the notch",
+                           detail: "Two small gauges stay beside the closed notch all the time: the volume on the left, the brightness on the right. Off, they only show for a moment when one changes.",
+                           isOn: $settings.levelsAlways)
             SettingsToggle(title: "Hide macOS's own pop-up",
                            detail: "The notch takes over the volume and brightness keys and changes them itself, so macOS's pop-up doesn't show as well. Only those keys are looked at. With a second screen plugged in, the brightness keys are left to macOS.",
                            isOn: $settings.replacesSystemLevels)

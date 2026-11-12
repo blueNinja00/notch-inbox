@@ -45,6 +45,12 @@ struct LevelReading: Equatable {
         }
     }
 
+    /// The same reading to the nearest fiftieth, so a gauge that's always on show isn't
+    /// redrawn for changes too small to see.
+    var rounded: LevelReading {
+        LevelReading(kind: kind, value: (value * 50).rounded() / 50, muted: muted)
+    }
+
     /// "Volume 44%", "Muted", "Brightness 80%".
     var label: String {
         if kind == .volume && muted { return "Muted" }

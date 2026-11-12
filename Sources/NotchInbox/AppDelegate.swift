@@ -238,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         planner.saveNow()
         bookmarks.saveNow()
         assignments.saveNow()
+        Assistant.shared.saveChats()
         // Agents still working are stopped: what they'd written so far is kept.
         agentRunner.stopAll()
         mediaKeys.stop()
@@ -342,6 +343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openAgentFile(file, of: id)
         }
         model.typingTarget = documentTyper.targetName
+        if settings.showsLevels && settings.levelsAlways {
+            model.steadyLevels = [LevelsWatcher.shared.volume, LevelsWatcher.shared.brightness].compactMap { $0?.rounded }
+        }
         model.onTypeIntoDocument = { [weak self, weak model] text in
             self?.typeIntoDocument(text, from: model)
         }
@@ -772,7 +776,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.onCheckAccessibility = { [weak self] in
             self?.checkAccessibility()
         }
+        // The gauges that stay beside the closed notch follow the volume and brightness.
+        LevelsWatcher.shared.$volume
+            .combineLatest(LevelsWatcher.shared.$brightness)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] volume, brightness in
+                self?.showSteadyLevels(volume: volume, brightness: brightness)
+            }
+            .store(in: &subscriptions)
         applyLevels()
+    }
+
+    /// Keeps the always-on gauges up to date, or takes them away if they're switched off.
+    private func showSteadyLevels(volume: LevelReading?, brightness: LevelReading?) {
+        var levels: [LevelReading] = []
+        if settings.showsLevels && settings.levelsAlways {
+            levels = [volume, brightness].compactMap { $0?.rounded }
+        }
+        for model in models where model.steadyLevels != levels {
+            model.steadyLevels = levels
+        }
     }
 
     /// Starts or stops watching the volume and brightness, as Settings → Extras says.
@@ -783,6 +806,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             LevelsWatcher.shared.stop()
             hideLevel()
         }
+        showSteadyLevels(volume: LevelsWatcher.shared.volume, brightness: LevelsWatcher.shared.brightness)
         checkAccessibility()
     }
 
@@ -1334,7 +1358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let team = agents.team
         let agentsDone = team.jobs.count - team.active.count
         lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once")
-        let levels = settings.showsLevels ? "on" : "off"
+        lines.append("Chats saved: \(assistant.chats.book.chats.count)")
+        let levels = settings.showsLevels ? (settings.levelsAlways ? "on, always showing" : "on") : "off"
         let ownKeys = settings.replacesSystemLevels ? (mediaKeys.isRunning ? "yes" : "wanted, not running") : "no"
         let trusted = DocumentTyper.isTrusted ? "allowed" : "not allowed"
         lines.append("Volume and brightness at the notch: \(levels) · keys taken over: \(ownKeys) · Accessibility: \(trusted)")

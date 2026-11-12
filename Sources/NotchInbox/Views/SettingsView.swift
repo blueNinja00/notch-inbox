@@ -31,6 +31,7 @@ struct SettingsView: View {
                 SettingsSidebar(model: model, settings: settings)
                     .frame(width: 172)
 
+                ScrollViewReader { page in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 16) {
                         switch model.settingsSection {
@@ -60,6 +61,14 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .id(model.settingsSection)
+                .onAppear {
+                    // Changing your own theme redraws everything: come back to its editor.
+                    guard model.settingsSection == .general, settings.theme == .custom, settings.customThemeJustEdited else { return }
+                    DispatchQueue.main.async {
+                        page.scrollTo(SettingsView.themeEditorID, anchor: .center)
+                    }
+                }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
             }
@@ -71,6 +80,9 @@ struct SettingsView: View {
         .frame(width: size.width, height: size.height, alignment: .top)
         .onAppear { assistant.checkSetup() }
     }
+
+    /// Where Settings scrolls back to after a change to your own theme.
+    static let themeEditorID = "own-theme-editor"
 }
 
 // MARK: Sidebar
@@ -180,6 +192,7 @@ struct GeneralSettings: View {
         ThemePicker(settings: settings)
         if settings.theme == .custom {
             CustomThemeEditor(settings: settings)
+                .id(SettingsView.themeEditorID)
         }
         SettingsDivider()
         HomeMenuSettings(settings: settings)

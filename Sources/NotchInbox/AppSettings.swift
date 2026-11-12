@@ -183,11 +183,18 @@ final class AppSettings: ObservableObject {
         didSet {
             guard customTheme != oldValue else { return }
             customTheme.save()
+            customThemeEditedAt = Date()
             if theme == .custom {
                 palette = customTheme.palette
             }
         }
     }
+
+    /// When your own theme was last changed. The notch redraws itself after each change;
+    /// Settings uses this to come back to the editor, not the top of the page.
+    private(set) var customThemeEditedAt = Date.distantPast
+
+    var customThemeJustEdited: Bool { Date().timeIntervalSince(customThemeEditedAt) < 1.5 }
 
     /// The chosen theme's colours, worked out once when it's chosen.
     private(set) var palette: ThemePalette = ThemeChoice.saved().palette

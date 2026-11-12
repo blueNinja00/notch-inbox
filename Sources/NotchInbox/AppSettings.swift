@@ -318,6 +318,14 @@ final class AppSettings: ObservableObject {
         onExtrasChanged?()
     }
 
+    // MARK: Earlier mail
+
+    /// How fetching your earlier mail is going, for Settings → Mail.
+    @Published var historyNote: String?
+    @Published var historyRunning = false
+    /// Asks the add-on, once, to list the last month of your inbox (set by the app).
+    var onFetchHistory: (() -> Void)?
+
     // MARK: Agents
 
     private static let agentsAtOnceKey = "agents.atOnce"

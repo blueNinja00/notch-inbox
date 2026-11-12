@@ -644,6 +644,12 @@ struct MailStorageSettings: View {
             }, selected: settings.wholeEmailLimit, choose: { settings.wholeEmailLimit = $0 })
         }
         .onAppear { settings.measureStorage() }
+        SettingsRow(title: "Earlier mail",
+                    detail: "Gmail only tells the notch about new unread mail. This fetches, once, a list of the last 30 days of each inbox (read mail too) by opening Gmail in a background tab in your browser and reading its list. Nothing in Gmail is changed, and the list stays on this Mac."
+                        + (settings.historyNote.map { "\n" + $0 } ?? "")) {
+            PillButton(title: settings.historyRunning ? "Fetching…" : "Fetch the Last 30 Days", action: { settings.onFetchHistory?() })
+                .disabled(settings.historyRunning)
+        }
     }
 }
 

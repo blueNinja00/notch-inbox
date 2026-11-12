@@ -120,6 +120,26 @@ struct LinkReply: Encodable, Equatable {
 
     var want: [Wanted] = []
     var addon: String? = nil
+    /// Set while you've asked for earlier mail: how many days back the add-on should list.
+    var history: Int? = nil
+}
+
+/// A list of earlier mail from the add-on, read off Gmail's own list: for each
+/// conversation its ID, who it's from, its subject and its preview.
+struct HistoryUpload: Decodable {
+    struct Item: Decodable, Equatable {
+        let id: String
+        let sender: String?
+        let email: String?
+        let subject: String?
+        let snippet: String?
+        let unread: Bool?
+    }
+
+    let account: String
+    let index: Int?
+    let items: [Item]
+    let error: String?
 }
 
 /// One whole email from the add-on: its HTML and/or plain text, or why it couldn't be read.

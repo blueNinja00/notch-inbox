@@ -7,6 +7,7 @@ struct TourPage: Equatable, Identifiable {
         case welcome
         case mail
         case planner
+        case assignments
         case timetable
         case notes
         case assistant
@@ -33,6 +34,7 @@ struct TourPage: Equatable, Identifiable {
         case assistant
         case extras
         case bookmarks
+        case assignments
         case settings(SettingsSection)
     }
 
@@ -162,6 +164,19 @@ enum Tour {
                     .init(symbol: "studentdesk", text: "Google Classroom emails add their assignments by themselves, with their due dates. Your school account's inbox has to be in the notch."),
                 ],
                 action: .init(title: "Open the Planner", target: .planner))
+        case .assignments:
+            return TourPage(
+                kind: kind, symbol: "list.bullet.clipboard", title: "Assignments and Marks",
+                summary: "Bigger pieces of work, broken into steps, and the marks that come back.",
+                points: [
+                    .init(symbol: "plus", text: "The + at the top adds an assignment: what it is, when it's due and what it's worth."),
+                    .init(symbol: "sparkles", text: setup.assistantReady
+                              ? "Paste in the task sheet and click Break into Steps: \(assistant) plans it. Tick the steps off as you go."
+                              : "Paste in the task sheet and click Break into Steps. Until \(assistant) is set up, the usual steps for that kind of work go in."),
+                    .init(symbol: "clock", text: "The planner fits the steps still to do into your free time before it's due."),
+                    .init(symbol: "chart.bar", text: "Marks keeps every result, your average in each subject, and what you need on the rest to reach the mark you're after."),
+                ],
+                action: .init(title: "Open Assignments", target: .assignments))
         case .timetable:
             return TourPage(
                 kind: kind, symbol: "calendar", title: "Timetable",

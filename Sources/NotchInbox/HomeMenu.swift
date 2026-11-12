@@ -4,6 +4,7 @@ import Foundation
 enum HomeTile: String, CaseIterable, Identifiable, Codable {
     case mail
     case planner
+    case assignments
     case timetable
     case notes
     case assistant
@@ -15,6 +16,7 @@ enum HomeTile: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .mail: return "Mail"
         case .planner: return "Planner"
+        case .assignments: return "Assignments"
         case .timetable: return "Timetable"
         case .notes: return "Notes"
         case .assistant: return "Assistant"
@@ -26,6 +28,7 @@ enum HomeTile: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .mail: return "envelope.fill"
         case .planner: return "checklist"
+        case .assignments: return "list.bullet.clipboard"
         case .timetable: return "calendar"
         case .notes: return "note.text"
         case .assistant: return "sparkles"
@@ -37,7 +40,7 @@ enum HomeTile: String, CaseIterable, Identifiable, Codable {
     var weight: Double {
         switch self {
         case .mail: return 2.25
-        case .planner, .timetable: return 1.36
+        case .planner, .timetable, .assignments: return 1.36
         case .notes: return 0.95
         case .assistant: return 0.95
         case .bookmarks: return 1.08
@@ -53,7 +56,7 @@ struct HomeMenu: Equatable {
     private(set) var hidden: Set<HomeTile>
 
     /// The order tiles start in.
-    static let standardOrder: [HomeTile] = [.mail, .planner, .timetable, .notes, .assistant, .bookmarks]
+    static let standardOrder: [HomeTile] = [.mail, .planner, .assignments, .timetable, .notes, .assistant, .bookmarks]
     static let standard = HomeMenu()
 
     static let orderKey = "homeMenu.order"

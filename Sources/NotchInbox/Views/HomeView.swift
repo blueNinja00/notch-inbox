@@ -73,7 +73,7 @@ struct HomeTiles: View {
     var body: some View {
         let menu = model.homeMenu
 
-        if size.height > 200 {
+        if size.height > NotchMetrics.tallTiles {
             let tall = menu.tall
             HStack(spacing: 8) {
                 if tall.mail {
@@ -144,6 +144,10 @@ struct HomeTileView: View {
         case .planner:
             if let planner = model.plannerStore, let timetable = model.timetableStore {
                 PlannerToolTile(model: model, store: planner, timetable: timetable)
+            }
+        case .assignments:
+            if let store = model.assignmentsStore {
+                AssignmentsToolTile(model: model, store: store)
             }
         case .timetable:
             if let timetable = model.timetableStore {

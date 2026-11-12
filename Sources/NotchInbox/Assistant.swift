@@ -505,19 +505,20 @@ final class Assistant: ObservableObject {
     }
 
     /// Asks once and waits for the whole answer, outside the chat: for jobs behind the scenes,
-    /// like finding due dates in emails. Claude answers with its fastest model.
-    func complete(system: String, prompt: String) async -> Result<String, Problem> {
+    /// like finding due dates in emails. Claude answers with its fastest model unless another
+    /// is asked for.
+    func complete(system: String, prompt: String, model: ClaudeModel = .haiku) async -> Result<String, Problem> {
         switch engine {
         case .claudeCode:
-            return await completeWithClaudeCode(system: system, prompt: prompt)
+            return await completeWithClaudeCode(system: system, prompt: prompt, model: model)
         case .claudeAPI:
-            return await completeWithAnthropic(system: system, prompt: prompt)
+            return await completeWithAnthropic(system: system, prompt: prompt, model: model)
         case .qwen:
             return await completeWithQwen(system: system, prompt: prompt)
         }
     }
 
-    private func completeWithClaudeCode(system: String, prompt: String) async -> Result<String, Problem> {
+    private func completeWithClaudeCode(system: String, prompt: String, model: ClaudeModel) async -> Result<String, Problem> {
         guard let path = claudePath ?? ClaudeCode.find() else {
             return .failure(Problem(message: "Couldn't find Claude Code on this Mac."))
         }
@@ -531,7 +532,7 @@ final class Assistant: ObservableObject {
                 problem = nil
                 let outcome = try await ClaudeCode.run(
                     path: path,
-                    arguments: ClaudeStream.codeArguments(model: .haiku, system: system, compatible: compatible),
+                    arguments: ClaudeStream.codeArguments(model: model, system: system, compatible: compatible),
                     prompt: prompt
                 ) { piece in
                     switch piece {
@@ -558,7 +559,7 @@ final class Assistant: ObservableObject {
         return .success(whole.isEmpty ? streamed : whole)
     }
 
-    private func completeWithAnthropic(system: String, prompt: String) async -> Result<String, Problem> {
+    private func completeWithAnthropic(system: String, prompt: String, model: ClaudeModel) async -> Result<String, Problem> {
         guard let key = APIKeyFile.read() else {
             return .failure(Problem(message: "Add your Anthropic API key in Settings → Assistant."))
         }
@@ -568,7 +569,7 @@ final class Assistant: ObservableObject {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue(ClaudeStream.apiVersion, forHTTPHeaderField: "anthropic-version")
         request.timeoutInterval = 90
-        request.httpBody = ClaudeStream.apiBody(model: .haiku, system: system, turns: [ChatTurn(role: .user, text: prompt)],
+        request.httpBody = ClaudeStream.apiBody(model: model, system: system, turns: [ChatTurn(role: .user, text: prompt)],
                                                 maxTokens: 1500, stream: false)
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

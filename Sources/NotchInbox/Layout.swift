@@ -45,6 +45,8 @@ struct NotchMetrics: Equatable {
     /// The primary menu's tiles, with the gaps around them: in one row, or in two.
     static let oneTileRow: CGFloat = 110
     static let twoTileRows: CGFloat = 214
+    /// The tiles go in two rows (Mail down the left) once there's this much height for them.
+    static let tallTiles: CGFloat = 180
     /// Ears wide enough for the focus timer's minutes, when nothing is unread.
     static let focusEarWidth: CGFloat = 44
 

@@ -128,7 +128,8 @@ struct TimetableGrid: View {
             let rows = table.rows
             // Homework and revision planned into this week's free slots.
             let planned = showingThisWeek && settings.plansStudy
-                ? TimetableGrid.planned(planner.planner, table: table, rows: rows, now: now, daily: settings.studyMinutesADay)
+                ? TimetableGrid.planned(planner.planner, table: table, rows: rows, now: now, daily: settings.studyMinutesADay,
+                                        steps: model.assignmentsStore?.assignments.planTasks() ?? [])
                 : [:]
 
             GeometryReader { area in
@@ -174,8 +175,8 @@ struct TimetableGrid: View {
     /// What's planned for this week's slots, keyed "day-row": the study sessions the planner
     /// fitted into free time, to show (faintly) in the slots they'd use.
     static func planned(_ planner: Planner, table: Timetable, rows: [Timetable.Period], now: Date, daily: Int,
-                        calendar: Calendar = .current) -> [String: String] {
-        let sessions = StudyPlanner.plan(tasks: planner.tasks, exams: planner.exams, timetable: table, now: now,
+                        steps: [PlannerTask] = [], calendar: Calendar = .current) -> [String: String] {
+        let sessions = StudyPlanner.plan(tasks: planner.tasks + steps, exams: planner.exams, timetable: table, now: now,
                                          calendar: calendar, daily: daily)
         let monday = Timetable.monday(of: now, calendar: calendar)
         var result: [String: String] = [:]

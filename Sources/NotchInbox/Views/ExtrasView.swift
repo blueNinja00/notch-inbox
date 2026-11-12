@@ -208,6 +208,11 @@ struct FocusButtons: View {
                     if let task = session.taskID, let store = model.plannerStore, store.planner.task(task)?.done == false {
                         IconButton(symbol: "checkmark.circle", label: "Tick off \(session.title)", size: size, tint: Theme.text2,
                                    action: { store.change { $0.setDone(task, true) } })
+                    } else if let step = session.taskID, let store = model.assignmentsStore,
+                              store.assignments.owner(of: step)?.steps.contains(where: { $0.id == step && !$0.done }) == true {
+                        // The round was for a step of an assignment.
+                        IconButton(symbol: "checkmark.circle", label: "Tick off \(session.title)", size: size, tint: Theme.text2,
+                                   action: { store.change { $0.setStep(step, done: true) } })
                     }
                     IconButton(symbol: "cup.and.saucer.fill", label: "Start a \(timer.breakMinutes)-minute break", size: size, tint: Theme.text,
                                action: { timer.startBreak() })

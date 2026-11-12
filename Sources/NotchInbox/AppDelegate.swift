@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Files parked on the shelf, shared by every screen's notch.
     private let shelf = ShelfStore()
     private let bookmarks = BookmarksStore()
+    private let assignments = AssignmentsStore()
     /// Homework and exams, shared by every screen's notch.
     private let planner = PlannerStore()
     /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
@@ -223,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timetable.saveNow()
         planner.saveNow()
         bookmarks.saveNow()
+        assignments.saveNow()
     }
 
     // MARK: Screens
@@ -296,6 +298,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.plannerStore = planner
         model.shelfStore = shelf
         model.bookmarksStore = bookmarks
+        model.assignmentsStore = assignments
+        model.onPlanAssignment = { [weak self] id in
+            self?.planAssignment(id)
+        }
         model.homeMenu = settings.homeMenu
         model.onArrangeHome = { [weak self] menu in
             self?.settings.homeMenu = menu
@@ -577,8 +583,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Homework and revision fitted into free time, if that's switched on.
     private func studyPlan() -> [StudySession] {
         guard settings.plansStudy else { return [] }
-        return StudyPlanner.plan(tasks: planner.planner.tasks, exams: planner.planner.exams, timetable: timetable.timetable,
-                                 now: Date(), daily: settings.studyMinutesADay)
+        return StudyPlanner.plan(tasks: planner.planner.tasks + assignments.assignments.planTasks(), exams: planner.planner.exams,
+                                 timetable: timetable.timetable, now: Date(), daily: settings.studyMinutesADay)
     }
 
     // MARK: Assistant
@@ -644,6 +650,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mailIcon.conceal()
         } else {
             mailIcon.reveal()
+        }
+    }
+
+    // MARK: Assignments
+
+    /// Has the assistant break an assignment into steps. Its name, subject, due date, task
+    /// sheet and notes go to the assistant (to Anthropic, with Claude); nothing else does.
+    /// If the assistant isn't set up or can't, the usual steps for that kind of work go in.
+    private func planAssignment(_ id: UUID) {
+        guard let item = assignments.assignments.item(id) else { return }
+        let assistant = Assistant.shared
+        guard assistant.status.isReady else {
+            finishPlanning(id, steps: nil, problem: "\(assistant.engine.name) isn't set up yet (Settings → Assistant).")
+            return
+        }
+        let prompt = AssignmentBreakdown.prompt(for: item, now: Date())
+        let model = assistant.claudeModel
+        Task { [weak self] in
+            let result = await assistant.complete(system: AssignmentBreakdown.system, prompt: prompt, model: model)
+            await MainActor.run {
+                switch result {
+                case .success(let answer):
+                    self?.finishPlanning(id, steps: AssignmentBreakdown.parse(answer), problem: "The assistant's plan couldn't be read.")
+                case .failure(let problem):
+                    self?.finishPlanning(id, steps: nil, problem: problem.message)
+                }
+            }
+        }
+    }
+
+    private func finishPlanning(_ id: UUID, steps: [AssignmentStep]?, problem: String) {
+        for model in models {
+            model.finishPlanning(id, steps: steps, problem: problem)
         }
     }
 
@@ -914,6 +953,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let offMenu = menu.order.filter { !menu.isShown($0) }.map { $0.title }
         lines.append("Primary menu: \(menu.shown.map { $0.title }.joined(separator: ", "))\(offMenu.isEmpty ? "" : " · hidden: " + offMenu.joined(separator: ", "))")
         lines.append("Theme: \(settings.theme.title)\(settings.theme == .custom ? " (" + settings.customTheme.stamp + ")" : "") · Bookmarks: \(bookmarks.bookmarks.count)")
+        let work = assignments.assignments
+        lines.append("Assignments: \(work.open.count) to hand in, \(work.awaiting.count) waiting for a mark, \(work.marked.count) marked · \(work.subjects.count) subjects")
         lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")
         let lastSync = lastFeedAt.map { MailTime.label(for: $0) } ?? "never"
         if let upload = lastUpload {

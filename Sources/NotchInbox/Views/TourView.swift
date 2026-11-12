@@ -177,6 +177,12 @@ struct TourPreview: View {
                     .frame(height: 132)
                     .allowsHitTesting(false)
             }
+        case .assignments:
+            if let assignments = model.assignmentsStore {
+                AssignmentsToolTile(model: model, store: assignments)
+                    .frame(height: 132)
+                    .allowsHitTesting(false)
+            }
         case .timetable:
             if let timetable = model.timetableStore {
                 TimetableToolTile(model: model, store: timetable)
@@ -213,7 +219,8 @@ struct TourPreview: View {
     static func caption(_ kind: TourPage.Kind) -> String? {
         switch kind {
         case .welcome: return "The notch, open: a tile for each tool."
-        case .mail, .planner, .timetable, .notes, .assistant: return "Its tile on the primary menu, as it is right now."
+        case .mail, .planner, .assignments, .timetable, .assistant: return "Its tile on the primary menu, as it is right now."
+        case .notes: return "Their tiles on the primary menu, as they are right now."
         case .extras: return "The extras, as they are right now."
         case .looks: return "Click a theme to try it."
         case .privacy, .done: return nil
@@ -224,7 +231,7 @@ struct TourPreview: View {
 /// A small drawing of the top of the screen with the notch open: the menu bar, the black
 /// panel hanging from it, a tile for each tool, and the pointer that opened it.
 struct TourNotchPicture: View {
-    private static let tools = ["envelope.fill", "checklist", "calendar", "note.text", "sparkles"]
+    private static let tools = ["envelope.fill", "checklist", "list.bullet.clipboard", "calendar", "sparkles"]
 
     var body: some View {
         let screen = RoundedRectangle(cornerRadius: 12, style: .continuous)

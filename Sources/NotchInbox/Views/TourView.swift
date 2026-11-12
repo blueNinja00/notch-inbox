@@ -186,7 +186,12 @@ struct TourPreview: View {
         case .notes:
             if let notes = model.notesStore {
                 NotesToolTile(model: model, store: notes)
-                    .frame(height: 132)
+                    .frame(height: 120)
+                    .allowsHitTesting(false)
+            }
+            if let bookmarks = model.bookmarksStore {
+                BookmarksToolTile(model: model, store: bookmarks)
+                    .frame(height: 120)
                     .allowsHitTesting(false)
             }
         case .assistant:
@@ -304,7 +309,7 @@ struct TourThemes: View {
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 12) {
-            ForEach(ThemeChoice.allCases) { theme in
+            ForEach(ThemeChoice.presets) { theme in
                 TourThemeButton(theme: theme, selected: settings.theme == theme, choose: { settings.theme = theme })
             }
         }

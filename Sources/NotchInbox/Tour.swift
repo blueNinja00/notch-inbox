@@ -32,6 +32,7 @@ struct TourPage: Equatable, Identifiable {
         case notes
         case assistant
         case extras
+        case bookmarks
         case settings(SettingsSection)
     }
 
@@ -174,12 +175,13 @@ enum Tour {
                 action: .init(title: "Open the Timetable", target: .timetable))
         case .notes:
             return TourPage(
-                kind: kind, symbol: "note.text", title: "Notes",
-                summary: "Quick notes, one hover away.",
+                kind: kind, symbol: "note.text", title: "Notes and Bookmarks",
+                summary: "Quick notes, and the pages you open every day, one hover away.",
                 points: [
                     .init(symbol: "plus", text: "Click the Notes tile to write one. Its first line is its title."),
                     .init(symbol: "internaldrive", text: "Notes are saved on this Mac as you type."),
                     .init(symbol: "sparkles", text: "The assistant can read your latest notes, but only if you let it in Settings → Assistant."),
+                    .init(symbol: "bookmark", text: "Bookmarks keeps your links: paste one in, or drag it from your browser. Click a bookmark on the tile and the page opens."),
                 ],
                 action: .init(title: "Open Notes", target: .notes))
         case .assistant:
@@ -212,10 +214,11 @@ enum Tour {
                 kind: kind, symbol: "paintpalette", title: "Make it yours",
                 summary: "Settings is the gear at the top right of every panel.",
                 points: [
-                    .init(symbol: "paintpalette", text: "Eight themes to choose from. Click one on the right to try it now."),
+                    .init(symbol: "paintpalette", text: "Eight themes to choose from: click one on the right to try it now. Or make your own from any colour in Settings → General."),
                     .init(symbol: "menubar.rectangle", text: setup.mailTab
                               ? "You're using the mail tab. Settings → General puts Notch Inbox back at the notch."
                               : "Rather not use the notch? Settings → General swaps it for a small mail tab you can slide along the top."),
+                    .init(symbol: "square.grid.2x2", text: "The primary menu is yours to arrange: right-click a tile to move it or hide it, or set the order in Settings → General."),
                     .init(symbol: "arrow.down.circle", text: "New builds install from Settings → Updates. An Update button appears in the notch when one is ready."),
                 ],
                 action: .init(title: "Open Settings", target: .settings(.general)))

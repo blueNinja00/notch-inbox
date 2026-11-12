@@ -70,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timetable = TimetableStore()
     /// Files parked on the shelf, shared by every screen's notch.
     private let shelf = ShelfStore()
+    private let bookmarks = BookmarksStore()
     /// Homework and exams, shared by every screen's notch.
     private let planner = PlannerStore()
     /// Reads mail into the planner: Classroom's emails here, others with the assistant if that's on.
@@ -132,6 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         planner.change { $0.tidy() }
         Assistant.shared.checkSetup()
         readMailForPlannerSoon()
+        // The primary menu's tiles were rearranged: every screen follows.
+        settings.onHomeMenuChanged = { [weak self] in
+            self?.applyHomeMenu()
+        }
         // The extras: what's playing, the focus timer, the clipboard, the shelf.
         settings.onExtrasChanged = { [weak self] in
             self?.applyExtras()
@@ -217,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notes.saveNow()
         timetable.saveNow()
         planner.saveNow()
+        bookmarks.saveNow()
     }
 
     // MARK: Screens
@@ -289,6 +295,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.timetableStore = timetable
         model.plannerStore = planner
         model.shelfStore = shelf
+        model.bookmarksStore = bookmarks
+        model.homeMenu = settings.homeMenu
+        model.onArrangeHome = { [weak self] menu in
+            self?.settings.homeMenu = menu
+        }
         model.showsExtras = settings.showsExtras
         model.focusRunning = settings.showsFocus && FocusTimer.shared.session != nil
         model.customSizes = AppDelegate.loadPanelSizes()
@@ -636,7 +647,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: The primary menu
+
+    /// Gives every screen's notch the arrangement chosen in Settings (or by right-clicking
+    /// a tile). A size the menu was dragged to for a different number of tiles would squash
+    /// them or leave a gap, so that goes back to standard.
+    private func applyHomeMenu() {
+        let menu = settings.homeMenu
+        for model in models where model.homeMenu != menu {
+            model.homeMenu = menu
+        }
+        var sizes = models.first?.customSizes ?? [:]
+        if sizes[.peek] != nil && UserDefaults.standard.integer(forKey: AppDelegate.peekClassKey) != menu.sizeClass {
+            sizes[.peek] = nil
+            panelResized(sizes)
+        }
+    }
+
     // MARK: Panel sizes
+
+    /// How many tiles the primary menu had (as a size class) when you dragged it to a size.
+    private static let peekClassKey = "panelSizes.peekTiles"
 
     private static func loadPanelSizes() -> [NotchLevel: CGSize] {
         var saved = UserDefaults.standard.dictionary(forKey: panelSizesKey) as? [String: [Double]] ?? [:]
@@ -648,6 +679,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 saved[NotchLevel.peek.rawValue] = nil
                 UserDefaults.standard.set(saved, forKey: panelSizesKey)
             }
+        }
+        // The same when the menu has a different number of tiles than it was dragged for
+        // (a new tool arrived with an update, say).
+        if saved[NotchLevel.peek.rawValue] != nil
+            && UserDefaults.standard.integer(forKey: peekClassKey) != HomeMenu(defaults: .standard).sizeClass {
+            saved[NotchLevel.peek.rawValue] = nil
+            UserDefaults.standard.set(saved, forKey: panelSizesKey)
         }
         var sizes: [NotchLevel: CGSize] = [:]
         for (key, value) in saved {
@@ -665,6 +703,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             saved[level.rawValue] = [Double(size.width), Double(size.height)]
         }
         UserDefaults.standard.set(saved, forKey: AppDelegate.panelSizesKey)
+        if sizes[.peek] != nil {
+            UserDefaults.standard.set(settings.homeMenu.sizeClass, forKey: AppDelegate.peekClassKey)
+        }
         for model in models where model.customSizes != sizes {
             model.customSizes = sizes
         }
@@ -869,6 +910,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let copies = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count
         lines.append("Copies of the app running: \(copies) · app at \(Bundle.main.bundlePath)")
         lines.append("Tour: \(Tour.isPending() ? "not finished yet" : "finished or skipped") · \(Tour.opensAtLaunch() ? "will open at the next launch" : "has opened by itself already")")
+        let menu = settings.homeMenu
+        let offMenu = menu.order.filter { !menu.isShown($0) }.map { $0.title }
+        lines.append("Primary menu: \(menu.shown.map { $0.title }.joined(separator: ", "))\(offMenu.isEmpty ? "" : " · hidden: " + offMenu.joined(separator: ", "))")
+        lines.append("Theme: \(settings.theme.title)\(settings.theme == .custom ? " (" + settings.customTheme.stamp + ")" : "") · Bookmarks: \(bookmarks.bookmarks.count)")
         lines.append("Add-on files: in this app \(BrowserExtensionInstaller.bundledVersion ?? "missing") · in the folder Chrome loads \(BrowserExtensionInstaller.installedVersion ?? "missing") (\(BrowserExtensionInstaller.installedFolder.path))")
         let lastSync = lastFeedAt.map { MailTime.label(for: $0) } ?? "never"
         if let upload = lastUpload {

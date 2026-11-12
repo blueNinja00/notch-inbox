@@ -35,37 +35,10 @@ struct HomeView: View {
                 HomeActions(model: model)
             }
 
-            // Short: the tools in a row. Dragged taller: Mail on the left with your latest
-            // emails; the planner, timetable, notes and assistant on the right.
+            // The tools you've chosen, in your order. Short: in a row. Taller: Mail down the
+            // left with your latest emails, and the others in two rows beside it.
             GeometryReader { area in
-                if area.size.height > 200 {
-                    HStack(spacing: 8) {
-                        MailToolTile(model: model)
-                        VStack(spacing: 8) {
-                            HStack(spacing: 8) {
-                                plannerTile
-                                timetableTile
-                            }
-                            HStack(spacing: 8) {
-                                notesTile
-                                AssistantToolTile(model: model, assistant: Assistant.shared)
-                            }
-                        }
-                        .frame(width: min(max(area.size.width * 0.46, 360), 560))
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        MailToolTile(model: model)
-                        plannerTile
-                            .frame(width: min(max(area.size.width * 0.19, 150), 280))
-                        timetableTile
-                            .frame(width: min(max(area.size.width * 0.19, 150), 280))
-                        notesTile
-                            .frame(width: min(max(area.size.width * 0.135, 110), 240))
-                        AssistantToolTile(model: model, assistant: Assistant.shared)
-                            .frame(width: min(max(area.size.width * 0.135, 110), 240))
-                    }
-                }
+                HomeTiles(model: model, size: area.size)
             }
             .frame(maxHeight: .infinity)
             .padding(.top, 6)
@@ -90,25 +63,122 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder
-    private var plannerTile: some View {
-        if let planner = model.plannerStore, let timetable = model.timetableStore {
-            PlannerToolTile(model: model, store: planner, timetable: timetable)
+}
+
+/// The primary menu's tiles, laid out for the room there is.
+struct HomeTiles: View {
+    @ObservedObject var model: NotchModel
+    let size: CGSize
+
+    var body: some View {
+        let menu = model.homeMenu
+
+        if size.height > 200 {
+            let tall = menu.tall
+            HStack(spacing: 8) {
+                if tall.mail {
+                    HomeTileView(model: model, tile: .mail)
+                }
+                if !tall.top.isEmpty {
+                    VStack(spacing: 8) {
+                        HomeTileRow(model: model, tiles: tall.top)
+                        if !tall.bottom.isEmpty {
+                            HomeTileRow(model: model, tiles: tall.bottom)
+                        }
+                    }
+                    .frame(width: tall.mail ? HomeTiles.rowsWidth(tall, in: size.width) : nil)
+                }
+            }
+        } else {
+            let tiles = menu.shown
+            let widths = HomeMenu.widths(of: tiles, in: Double(size.width))
+            HStack(spacing: 8) {
+                ForEach(Array(tiles.enumerated()), id: \.element) { index, tile in
+                    // Mail takes whatever the others leave.
+                    HomeTileView(model: model, tile: tile)
+                        .frame(width: tile == .mail ? nil : CGFloat(widths[index]))
+                }
+            }
         }
     }
 
-    @ViewBuilder
-    private var timetableTile: some View {
-        if let timetable = model.timetableStore {
-            TimetableToolTile(model: model, store: timetable)
+    /// How wide the two rows are beside Mail: their share of the menu, but never so narrow
+    /// a tile can't show its name, nor so wide Mail is squeezed out.
+    static func rowsWidth(_ tall: HomeMenu.Tall, in width: CGFloat) -> CGFloat {
+        let columns = CGFloat(max(1, tall.top.count))
+        let narrowest = columns * 150 + (columns - 1) * 8
+        let widest = max(narrowest, width - 250)
+        return min(max(width * CGFloat(tall.share), narrowest), widest)
+    }
+}
+
+/// A row of tiles sharing the width equally.
+struct HomeTileRow: View {
+    @ObservedObject var model: NotchModel
+    let tiles: [HomeTile]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(tiles) { tile in
+                HomeTileView(model: model, tile: tile)
+            }
         }
+    }
+}
+
+/// One tool's tile. Right-click it to move it or take it off the primary menu.
+struct HomeTileView: View {
+    @ObservedObject var model: NotchModel
+    let tile: HomeTile
+
+    var body: some View {
+        content
+            .contextMenu { HomeTileMenu(model: model, tile: tile) }
     }
 
     @ViewBuilder
-    private var notesTile: some View {
-        if let store = model.notesStore {
-            NotesToolTile(model: model, store: store)
+    private var content: some View {
+        switch tile {
+        case .mail:
+            MailToolTile(model: model)
+        case .planner:
+            if let planner = model.plannerStore, let timetable = model.timetableStore {
+                PlannerToolTile(model: model, store: planner, timetable: timetable)
+            }
+        case .timetable:
+            if let timetable = model.timetableStore {
+                TimetableToolTile(model: model, store: timetable)
+            }
+        case .notes:
+            if let store = model.notesStore {
+                NotesToolTile(model: model, store: store)
+            }
+        case .assistant:
+            AssistantToolTile(model: model, assistant: Assistant.shared)
+        case .bookmarks:
+            if let store = model.bookmarksStore {
+                BookmarksToolTile(model: model, store: store)
+            }
         }
+    }
+}
+
+/// A tile's right-click menu: open it, move it, or take it off the primary menu.
+struct HomeTileMenu: View {
+    @ObservedObject var model: NotchModel
+    let tile: HomeTile
+
+    var body: some View {
+        Button("Open \(tile.title)") { model.open(tile) }
+        Divider()
+        Button("Move Left") { model.moveTile(tile, by: -1) }
+            .disabled(!model.homeMenu.canMove(tile, by: -1, amongShown: true))
+        Button("Move Right") { model.moveTile(tile, by: 1) }
+            .disabled(!model.homeMenu.canMove(tile, by: 1, amongShown: true))
+        Button("Hide from the Primary Menu") { model.hideTile(tile) }
+            .disabled(!model.homeMenu.canHide(tile))
+        Divider()
+        Button("Arrange the Primary Menu…") { model.openSettings(.general) }
     }
 }
 

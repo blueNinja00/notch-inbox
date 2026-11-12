@@ -42,17 +42,23 @@ struct NotchMetrics: Equatable {
     /// The row of extras under the primary menu's tiles (now playing, focus, clipboard,
     /// shelf), with the gap above it.
     static let extrasRow: CGFloat = 48
+    /// The primary menu's tiles, with the gaps around them: in one row, or in two.
+    static let oneTileRow: CGFloat = 110
+    static let twoTileRows: CGFloat = 214
     /// Ears wide enough for the focus timer's minutes, when nothing is unread.
     static let focusEarWidth: CGFloat = 44
 
     /// `ears` is the width of each ear when closed (0 for none); other levels ignore it.
-    /// `extras` adds room for the row of extras on the primary menu.
-    func bodySize(_ level: NotchLevel, ears: CGFloat = 0, extras: Bool = false) -> CGSize {
+    /// `extras` adds room for the row of extras on the primary menu, and `tiles` is how
+    /// many tools have a tile there: six sit in a slightly wider row, more go in two rows.
+    func bodySize(_ level: NotchLevel, ears: CGFloat = 0, extras: Bool = false, tiles: Int = 5) -> CGSize {
         switch level {
         case .rest:
             return CGSize(width: notchWidth + max(0, ears) * 2, height: notchHeight)
         case .peek:
-            return CGSize(width: 1000, height: topRow + 110 + (extras ? NotchMetrics.extrasRow : 0))
+            let width: CGFloat = tiles == HomeMenu.mostInOneRow ? 1060 : 1000
+            let rows: CGFloat = tiles > HomeMenu.mostInOneRow ? NotchMetrics.twoTileRows : NotchMetrics.oneTileRow
+            return CGSize(width: width, height: topRow + rows + (extras ? NotchMetrics.extrasRow : 0))
         case .lanes:
             return CGSize(width: 900, height: topRow + 318)
         case .detail:

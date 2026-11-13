@@ -316,9 +316,9 @@ final class Assistant: ObservableObject {
             how.append(DocumentText.instructions)
         }
         let web = searchesWeb
-        var history = messages.map { (role: $0.role, text: $0.sent, failed: $0.failed) }
-        history.append((role: .user, text: attached.map { DocumentText.attached(question, $0) } ?? question, failed: false))
-        let turns = ClaudeStream.turns(from: history)
+        // (A report an agent sent back to this chat goes along with the next thing you say.)
+        let asked = attached.map { DocumentText.attached(question, $0) } ?? question
+        let turns = ClaudeStream.turns(from: ChatMessage.history(messages, then: asked))
 
         messages.append(Message(role: .user, raw: question, attachment: attached))
         // Your question is kept straight away; the answer when it's finished.
@@ -366,6 +366,7 @@ final class Assistant: ObservableObject {
         remember()
         chats.change { $0.select(id) }
         open()
+        sawReports()
     }
 
     /// Deletes a chat for good.
@@ -388,6 +389,7 @@ final class Assistant: ObservableObject {
 
     /// Deletes every chat.
     func clearChats() {
+        waitingReports = []
         stop()
         chats.change { $0.clear(now: Date()) }
         open()
@@ -398,6 +400,61 @@ final class Assistant: ObservableObject {
     func saveChats() {
         remember()
         chats.saveNow()
+    }
+
+    // MARK: Reports from agents
+
+    /// Reports that have come back from agents since you last looked at the assistant.
+    @Published private(set) var reportsBack = 0
+    /// Reports waiting for the answer being written to finish, each with the chat it's for.
+    private var waitingReports: [(message: Message, chat: UUID?)] = []
+
+    /// You're looking at the assistant: what came back isn't news any more.
+    func sawReports() {
+        if reportsBack != 0 {
+            reportsBack = 0
+        }
+    }
+
+    /// An agent the assistant handed a job to has finished: what it reported goes into the
+    /// chat the job was handed out from, as a message of its own. (If that chat has been
+    /// deleted, into the one that's open.) `watched` says the assistant is on screen, so
+    /// a report that lands in front of you isn't counted as news.
+    func deliver(_ text: String, from agent: UUID, to chat: UUID?, watched: Bool = false) {
+        let message = Message(role: .assistant, raw: text, report: agent)
+        if let chat = chat, chats.book.isElsewhere(chat) {
+            // A chat that isn't open: it goes in the book, and the chat is marked.
+            chats.change { $0.deliver(message, to: chat, now: Date()) }
+            reportsBack += 1
+            return
+        }
+        // The open chat. An answer being written keeps its place at the end: the report follows it.
+        if isAnswering {
+            waitingReports.append((message: message, chat: chats.book.currentID))
+            return
+        }
+        messages.append(message)
+        remember()
+        if !watched {
+            reportsBack += 1
+        }
+    }
+
+    /// The answer has finished: the reports that were waiting for it go in.
+    private func deliverWaiting() {
+        guard !waitingReports.isEmpty, !isAnswering else { return }
+        let waiting = waitingReports
+        waitingReports = []
+        for report in waiting {
+            // You may have moved to another chat since: it still goes to the one it was for.
+            if let chat = report.chat, chats.book.isElsewhere(chat) {
+                chats.change { $0.deliver(report.message, to: chat, now: Date()) }
+            } else {
+                messages.append(report.message)
+                remember()
+            }
+            reportsBack += 1
+        }
     }
 
     /// Shows the chat that's open in the book.
@@ -664,6 +721,9 @@ final class Assistant: ObservableObject {
                 let said = AgentBlock.hidden(AssistantPrompt.withoutThinking(raw))
                 self.messages[last].raw = (said.isEmpty ? "" : said + "\n\n") + notes.joined(separator: "\n")
             }
+        }
+        await MainActor.run {
+            self.deliverWaiting()
         }
     }
 

@@ -406,6 +406,15 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// Whether an agent the assistant started sends its report back to the chat it was
+    /// started from when it finishes.
+    @Published var agentsReportBack: Bool = AppSettings.saved("agents.reportBack", otherwise: true) {
+        didSet {
+            guard agentsReportBack != oldValue else { return }
+            UserDefaults.standard.set(agentsReportBack, forKey: "agents.reportBack")
+        }
+    }
+
     /// Whether agents share a team chat with each other, the chief of staff and you.
     @Published var agentsTeamChat: Bool = AppSettings.saved("agents.teamChat", otherwise: true) {
         didSet {

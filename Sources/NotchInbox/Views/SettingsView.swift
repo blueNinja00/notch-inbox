@@ -980,6 +980,9 @@ struct AgentSettings: View {
                            ? "Working agents share a chat: they post what they find, read each other's posts so they don't double up, and can ask the chief of staff. You can post there too, from the top of the agent room. The chief's answers there use a little more of your plan."
                            : "A chat in the agent room where you and the chief of staff can talk. Agents can only join it with “Claude, with your Claude plan”.",
                        isOn: $settings.agentsTeamChat)
+        SettingsToggle(title: "Send reports back to the chat",
+                       detail: "When an agent the assistant started finishes, its report arrives in the chat you asked in, without your going to look. A chain reports once, at the end.",
+                       isOn: $settings.agentsReportBack)
         SettingsToggle(title: "Chime when an agent finishes",
                        detail: "A sound when a report is ready, or when an agent couldn't finish.",
                        isOn: $settings.agentsChime)

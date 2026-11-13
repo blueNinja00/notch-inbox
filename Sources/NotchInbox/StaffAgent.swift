@@ -100,8 +100,9 @@ enum StaffAgent {
         yourself. A chain uses about three agents' worth of the user's plan: keep it for work that needs it, not for quick lookups. \
         Write the whole job in "task", and give "name" as a short name for the work itself.
         - {"stop":["Researcher"]} stops an agent that's working.
-        - Say in a sentence what you've set going. When an agent has finished, its report is in the list below: use it to answer \
-        questions about what it found.
+        - Say in a sentence what you've set going. When an agent you started finishes, the app puts its report in this chat by itself, \
+        so say that it will arrive here; don't offer to check on it or to fetch it. The newest reports are also in the list below: \
+        use them to answer questions about what was found.
         - Never start an agent unless the user asked for something that needs one.
         """
     }

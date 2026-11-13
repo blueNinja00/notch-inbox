@@ -83,6 +83,8 @@ struct AgentJob: Codable, Equatable, Identifiable {
     var cost: Double?
     /// Its place in a chain of agents, if it's part of one.
     var chain: AgentChain?
+    /// The chat the assistant handed it out from. Its report goes back there when it's done.
+    var chat: UUID?
 
     var isActive: Bool { status == .queued || status == .working }
 
@@ -177,7 +179,8 @@ struct AgentTeam: Codable, Equatable {
 
     /// A new job, waiting to start.
     @discardableResult
-    mutating func add(name: String, task: String, origin: AgentJob.Origin = .you, chain: AgentChain? = nil, now: Date = Date()) -> AgentJob {
+    mutating func add(name: String, task: String, origin: AgentJob.Origin = .you, chain: AgentChain? = nil, chat: UUID? = nil,
+                      now: Date = Date()) -> AgentJob {
         let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
         var title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty {
@@ -186,6 +189,7 @@ struct AgentTeam: Codable, Equatable {
         var job = AgentJob(name: String(title.prefix(40)), task: brief, origin: origin,
                            created: Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down)))
         job.chain = chain
+        job.chat = chat
         started += 1
         floors[job.id] = started
         jobs.append(job)
@@ -263,7 +267,7 @@ struct AgentTeam: Codable, Equatable {
         }
         // In a chain, the next agent takes over from here.
         if finishedNow, let done = job(id), let next = done.chain?.next(after: id) {
-            add(name: next.agentName, task: done.task, origin: done.origin, chain: next, now: now)
+            add(name: next.agentName, task: done.task, origin: done.origin, chain: next, chat: done.chat, now: now)
         }
     }
 
@@ -271,14 +275,14 @@ struct AgentTeam: Codable, Equatable {
     /// stage is added as the one before it finishes.
     @discardableResult
     mutating func addChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin = .you, source: UUID? = nil,
-                           now: Date = Date()) -> AgentJob {
+                           chat: UUID? = nil, now: Date = Date()) -> AgentJob {
         let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         var name = AgentChain.title(title)
         if name.isEmpty {
             name = AgentChain.title(AgentBrief.name(for: task))
         }
         let first = AgentChain(kind: kind, title: name, source: source)
-        return add(name: first.agentName, task: task, origin: origin, chain: first, now: now)
+        return add(name: first.agentName, task: task, origin: origin, chain: first, chat: chat, now: now)
     }
 
     /// It couldn't finish. What it had written so far is kept.
@@ -310,9 +314,9 @@ struct AgentTeam: Codable, Equatable {
         guard let old = job(id) else { return nil }
         // One stage of a chain done again carries on down the chain from there.
         if let link = old.chain {
-            return add(name: link.agentName, task: old.task, origin: old.origin, chain: link, now: now)
+            return add(name: link.agentName, task: old.task, origin: old.origin, chain: link, chat: old.chat, now: now)
         }
-        return add(name: old.name, task: old.task, origin: old.origin, now: now)
+        return add(name: old.name, task: old.task, origin: old.origin, chat: old.chat, now: now)
     }
 
     /// What it has used, as counted so far or at the end.
@@ -420,7 +424,8 @@ enum AgentBrief {
         Nobody can answer questions while you work. If something is unclear, make the most sensible assumption and say what you assumed.
 
         Your last message is your report, and it is all the student will read, so make it complete: lead with the answer or the result, \
-        then the details that matter, in short paragraphs or bullet points. Don't describe your process.
+        then the details that matter, in short paragraphs or bullet points. Don't describe your process. \
+        \(RichText.howItsShown("Your report"))
         """
         if tools {
             if web {
@@ -641,6 +646,8 @@ enum AgentReport {
         let id: Int
         let kind: Kind
         let text: String
+        /// For a row of a table: what's in each of its cells.
+        var cells: [String] = []
     }
 
     /// The most lines drawn; a longer report says to open its file or copy it.
@@ -651,12 +658,12 @@ enum AgentReport {
         var inCode = false
         var inTable = false
 
-        func add(_ kind: Line.Kind, _ text: String) {
+        func add(_ kind: Line.Kind, _ text: String, cells: [String] = []) {
             if kind == .gap, out.isEmpty || out.last?.kind == .gap { return }
-            out.append(Line(id: out.count, kind: kind, text: text))
+            out.append(Line(id: out.count, kind: kind, text: text, cells: cells))
         }
 
-        for raw in report.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline }) {
+        for raw in RichText.tidy(report).split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline }) {
             if out.count >= most { break }
             let line = String(raw)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -680,12 +687,18 @@ enum AgentReport {
                 // The line of dashes under a table's header isn't drawn.
                 let dashes = cells.allSatisfy { cell in !cell.isEmpty && cell.allSatisfy { $0 == "-" || $0 == ":" || $0 == " " } }
                 if !dashes {
-                    add(.row(header: !inTable), cells.joined(separator: "  ·  "))
+                    add(.row(header: !inTable), cells.joined(separator: "  ·  "), cells: cells)
                     inTable = true
                 }
                 continue
             }
             inTable = false
+
+            // "Title" over a line of ===: an older way of writing a heading.
+            if trimmed.count >= 3, trimmed.allSatisfy({ $0 == "=" }), let above = out.last, above.kind == .body {
+                out[out.count - 1] = Line(id: above.id, kind: .heading(1), text: above.text)
+                continue
+            }
 
             var spaces = 0
             for character in line {
@@ -731,6 +744,134 @@ enum AgentReport {
             out.removeLast()
         }
         return out
+    }
+
+    // MARK: What's drawn
+
+    /// One cell of a table, and one of its rows.
+    struct TableCell: Identifiable, Equatable {
+        let id: Int
+        let text: String
+    }
+
+    struct TableRow: Identifiable, Equatable {
+        let id: Int
+        let cells: [TableCell]
+        let isHeader: Bool
+    }
+
+    /// A piece of a report as it's drawn: a line on its own, or lines that belong together
+    /// (a paragraph, a block of code, a table).
+    struct Block: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case heading(Int)
+            case bullet(Int)
+            case numbered(String, Int)
+            case quote
+            case rule
+            case gap
+            /// Ordinary words: one paragraph, its lines kept.
+            case paragraph
+            /// Lines of code, kept together.
+            case code
+            /// A table: its rows, the first being the header.
+            case table([TableRow])
+        }
+
+        let id: Int
+        let kind: Kind
+        let text: String
+    }
+
+    /// The most columns a table is drawn with; any more are folded into the last one.
+    static let mostColumns = 6
+
+    /// A report cut into what's drawn. Lines of a paragraph, of a block of code and of a
+    /// table are brought together, so a paragraph can be selected whole and a table's
+    /// columns line up.
+    static func blocks(_ report: String, most: Int = AgentReport.most) -> [Block] {
+        var out: [Block] = []
+        var rows: [[String]] = []
+        var tableID = 0
+        var words: [String] = []
+        var wordsID = 0
+        var code: [String] = []
+        var codeID = 0
+
+        func close() {
+            if !rows.isEmpty {
+                out.append(Block(id: tableID, kind: .table(table(rows)), text: ""))
+                rows = []
+            }
+            if !words.isEmpty {
+                out.append(Block(id: wordsID, kind: .paragraph, text: words.joined(separator: "\n")))
+                words = []
+            }
+            if !code.isEmpty {
+                out.append(Block(id: codeID, kind: .code, text: code.joined(separator: "\n")))
+                code = []
+            }
+        }
+
+        for line in lines(report, most: most) {
+            switch line.kind {
+            case .row:
+                if rows.isEmpty {
+                    close()
+                    tableID = line.id
+                }
+                rows.append(line.cells)
+            case .body:
+                if words.isEmpty {
+                    close()
+                    wordsID = line.id
+                }
+                words.append(line.text)
+            case .code:
+                if code.isEmpty {
+                    close()
+                    codeID = line.id
+                }
+                code.append(line.text)
+            case .heading(let level):
+                close()
+                out.append(Block(id: line.id, kind: .heading(level), text: line.text))
+            case .bullet(let indent):
+                close()
+                out.append(Block(id: line.id, kind: .bullet(indent), text: line.text))
+            case .numbered(let number, let indent):
+                close()
+                out.append(Block(id: line.id, kind: .numbered(number, indent), text: line.text))
+            case .quote:
+                close()
+                out.append(Block(id: line.id, kind: .quote, text: line.text))
+            case .rule:
+                close()
+                out.append(Block(id: line.id, kind: .rule, text: ""))
+            case .gap:
+                close()
+                out.append(Block(id: line.id, kind: .gap, text: ""))
+            }
+        }
+        close()
+        return out
+    }
+
+    /// A table's rows made even: each as wide as the widest, and no wider than is drawn.
+    static func table(_ rows: [[String]]) -> [TableRow] {
+        let widest = min(mostColumns, rows.map { $0.count }.max() ?? 0)
+        guard widest > 0 else { return [] }
+        return rows.enumerated().map { index, row in
+            var cells = Array(row.prefix(widest))
+            if row.count > widest {
+                // Too many columns to draw: the rest go in the last one.
+                cells[widest - 1] = row[(widest - 1)...].filter { !$0.isEmpty }.joined(separator: " · ")
+            }
+            while cells.count < widest {
+                cells.append("")
+            }
+            return TableRow(id: index, cells: cells.enumerated().map { TableCell(id: $0.offset, text: $0.element) }, isHeader: index == 0)
+        }
     }
 
     /// Whether the report is longer than what's drawn.
@@ -803,6 +944,200 @@ enum RichText {
     static func isWeb(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased() ?? ""
         return (scheme == "http" || scheme == "https") && !(url.host ?? "").isEmpty
+    }
+
+    // MARK: Things the app can't draw as they're written
+
+    /// What's told to the assistant and to agents about how their words are shown.
+    static func howItsShown(_ what: String = "Your answer") -> String {
+        "\(what) is drawn from simple Markdown: short headings, bold, bullet and numbered lists, small tables and code blocks. "
+            + "It can't draw LaTeX, so write maths in ordinary characters: x², √2, ×, ÷, ≤, π, and fractions as a/b."
+    }
+
+    /// Before a report is cut into lines: a line break written as <br> becomes a space, and
+    /// maths written in LaTeX (which can't be drawn) is put in ordinary characters. Code is
+    /// left exactly as it is, in a fenced block or between backticks.
+    static func tidy(_ text: String) -> String {
+        let whole = text.replacingOccurrences(of: "\r\n", with: "\n")
+        guard whole.contains("\\") || whole.contains("$$") || whole.range(of: "<br", options: .caseInsensitive) != nil else { return whole }
+        var out: [String] = []
+        var words: [String] = []
+        var inCode = false
+        for line in whole.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" }) {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                if !words.isEmpty {
+                    out.append(tidyWords(words.joined(separator: "\n")))
+                    words = []
+                }
+                out.append(String(line))
+                inCode.toggle()
+            } else if inCode {
+                out.append(String(line))
+            } else {
+                words.append(String(line))
+            }
+        }
+        if !words.isEmpty {
+            out.append(tidyWords(words.joined(separator: "\n")))
+        }
+        return out.joined(separator: "\n")
+    }
+
+    private static func tidyWords(_ text: String) -> String {
+        var out = text
+        for tag in ["<br>", "<br/>", "<br />"] {
+            out = out.replacingOccurrences(of: tag, with: "  ", options: .caseInsensitive)
+        }
+        out = maths(in: out, from: "\\[", to: "\\]", ownLine: true)
+        out = maths(in: out, from: "$$", to: "$$", ownLine: true)
+        out = maths(in: out, from: "\\(", to: "\\)", ownLine: false)
+        return out
+    }
+
+    /// Replaces each stretch of LaTeX between two marks with the same maths in ordinary characters.
+    private static func maths(in text: String, from open: String, to close: String, ownLine: Bool) -> String {
+        var out = ""
+        var rest = Substring(text)
+        while let start = rest.range(of: open), let end = rest.range(of: close, range: start.upperBound..<rest.endIndex) {
+            let inside = String(rest[start.upperBound..<end.lowerBound])
+            // Not maths after all: it's too long, it runs over a blank line, or it's inside
+            // `backticks` (a line of code that happens to use the same marks). Leave it be.
+            let before = out + rest[rest.startIndex..<start.lowerBound]
+            let lineSoFar = before.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" }).last ?? ""
+            let inBackticks = lineSoFar.filter({ $0 == "`" }).count % 2 == 1
+            if inside.count > 600 || inside.contains("\n\n") || inBackticks {
+                out += rest[rest.startIndex..<start.upperBound]
+                rest = rest[start.upperBound...]
+                continue
+            }
+            out += rest[rest.startIndex..<start.lowerBound]
+            let plain = plainMaths(inside)
+            out += ownLine ? plain.trimmingCharacters(in: .whitespacesAndNewlines) : plain.trimmingCharacters(in: .whitespaces)
+            rest = rest[end.upperBound...]
+        }
+        return out + rest
+    }
+
+    private static let symbols: [(String, String)] = [
+        ("\\times", "×"), ("\\div", "÷"), ("\\cdot", "·"), ("\\pm", "±"), ("\\mp", "∓"), ("\\leq", "≤"), ("\\geq", "≥"), ("\\le", "≤"), ("\\ge", "≥"),
+        ("\\neq", "≠"), ("\\ne", "≠"), ("\\approx", "≈"), ("\\equiv", "≡"), ("\\infty", "∞"), ("\\rightarrow", "→"), ("\\leftarrow", "←"),
+        ("\\Rightarrow", "⇒"), ("\\to", "→"), ("\\degree", "°"), ("\\circ", "°"), ("\\alpha", "α"), ("\\beta", "β"), ("\\gamma", "γ"), ("\\delta", "δ"),
+        ("\\Delta", "Δ"), ("\\theta", "θ"), ("\\lambda", "λ"), ("\\mu", "μ"), ("\\pi", "π"), ("\\rho", "ρ"), ("\\sigma", "σ"), ("\\Sigma", "Σ"),
+        ("\\omega", "ω"), ("\\Omega", "Ω"), ("\\phi", "φ"), ("\\epsilon", "ε"), ("\\sum", "∑"), ("\\int", "∫"), ("\\partial", "∂"),
+        ("\\ldots", "…"), ("\\dots", "…"), ("\\cdots", "⋯"), ("\\quad", "  "), ("\\left", ""), ("\\right", ""), ("\\,", " "), ("\\;", " "), ("\\!", ""),
+        ("\\%", "%"), ("\\$", "$"), ("\\{", "{"), ("\\}", "}"), ("\\ ", " "), ("^\\circ", "°"), ("^{\\circ}", "°"),
+    ]
+
+    private static let raised: [Character: Character] = ["0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+                                                         "+": "⁺", "-": "⁻", "n": "ⁿ", "x": "ˣ"]
+    private static let lowered: [Character: Character] = ["0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+                                                          "+": "₊", "-": "₋", "n": "ₙ", "x": "ₓ", "i": "ᵢ"]
+
+    /// LaTeX maths in ordinary characters, as far as that goes: \frac{a}{b} as a/b, \sqrt{x}
+    /// as √x, x^2 as x², \times as ×. Anything it doesn't know is left as written.
+    static func plainMaths(_ latex: String) -> String {
+        var out = latex
+        for name in ["\\text", "\\mathrm", "\\mathbf", "\\textbf", "\\mathit", "\\boxed"] {
+            out = unwrap(out, command: name) { $0 }
+        }
+        out = fractions(out)
+        out = unwrap(out, command: "\\sqrt") { $0.count <= 1 || $0.allSatisfy({ $0.isNumber || $0.isLetter }) ? "√" + $0 : "√(" + $0 + ")" }
+        // Longer names first, so that \leq isn't read as \le followed by q.
+        for (name, symbol) in symbols.sorted(by: { $0.0.count > $1.0.count }) {
+            out = out.replacingOccurrences(of: name, with: symbol)
+        }
+        out = scripts(out, mark: "^", table: raised)
+        out = scripts(out, mark: "_", table: lowered)
+        return out
+    }
+
+    /// \name{inside} becomes whatever `change` makes of the inside.
+    private static func unwrap(_ text: String, command: String, change: (String) -> String) -> String {
+        var out = ""
+        var rest = Substring(text)
+        while let found = rest.range(of: command + "{") {
+            guard let end = closing(of: rest, from: found.upperBound) else { break }
+            out += rest[rest.startIndex..<found.lowerBound]
+            out += change(String(rest[found.upperBound..<end]))
+            rest = rest[rest.index(after: end)...]
+        }
+        return out + rest
+    }
+
+    /// Where the brace opened just before `start` closes, counting any opened inside it.
+    private static func closing(of text: Substring, from start: Substring.Index) -> Substring.Index? {
+        var depth = 1
+        var index = start
+        while index < text.endIndex {
+            if text[index] == "{" {
+                depth += 1
+            } else if text[index] == "}" {
+                depth -= 1
+                if depth == 0 { return index }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// \frac{a}{b} as a/b, with brackets round anything longer than a number or a letter.
+    private static func fractions(_ text: String) -> String {
+        var out = ""
+        var rest = Substring(text)
+        for command in ["\\frac{", "\\dfrac{", "\\tfrac{"] where rest.contains(command) {
+            var done = ""
+            while let found = rest.range(of: command) {
+                guard let topEnd = closing(of: rest, from: found.upperBound) else { break }
+                let afterTop = rest.index(after: topEnd)
+                guard afterTop < rest.endIndex, rest[afterTop] == "{",
+                      let bottomEnd = closing(of: rest, from: rest.index(after: afterTop)) else { break }
+                let top = fractions(String(rest[found.upperBound..<topEnd]))
+                let bottom = fractions(String(rest[rest.index(after: afterTop)..<bottomEnd]))
+                done += rest[rest.startIndex..<found.lowerBound]
+                done += part(top) + "/" + part(bottom)
+                rest = rest[rest.index(after: bottomEnd)...]
+            }
+            rest = Substring(done + rest)
+        }
+        out += rest
+        return out
+    }
+
+    private static func part(_ text: String) -> String {
+        let simple = text.allSatisfy { $0.isNumber || $0.isLetter || $0 == "." || $0 == "\\" }
+        return simple ? text : "(" + text + ")"
+    }
+
+    /// x^2 as x² and H_2O as H₂O, where every character has a small form; otherwise x^(…).
+    private static func scripts(_ text: String, mark: Character, table: [Character: Character]) -> String {
+        var out = ""
+        var rest = Substring(text)
+        while let at = rest.firstIndex(of: mark) {
+            out += rest[rest.startIndex..<at]
+            let after = rest.index(after: at)
+            guard after < rest.endIndex else {
+                rest = rest[at...]
+                break
+            }
+            var inside: Substring
+            var next: Substring.Index
+            if rest[after] == "{", let end = closing(of: rest, from: rest.index(after: after)) {
+                inside = rest[rest.index(after: after)..<end]
+                next = rest.index(after: end)
+            } else {
+                inside = rest[after...after]
+                next = rest.index(after: after)
+            }
+            if !inside.isEmpty, inside.allSatisfy({ table[$0] != nil }) {
+                out += String(inside.compactMap { table[$0] })
+            } else if inside.count == 1 {
+                out += String(mark) + inside
+            } else {
+                out += String(mark) + "(" + inside + ")"
+            }
+            rest = rest[next...]
+        }
+        return out + rest
     }
 }
 

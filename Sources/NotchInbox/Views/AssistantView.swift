@@ -72,7 +72,16 @@ struct AssistantView: View {
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
         .frame(width: size.width, height: size.height, alignment: .top)
-        .onAppear { assistant.checkSetup() }
+        .onAppear {
+            assistant.checkSetup()
+            assistant.sawReports()
+        }
+    }
+
+    /// For a report an agent sent back: the way to that agent's floor, where its steps and files are.
+    private func opener(for message: Assistant.Message) -> (() -> Void)? {
+        guard let agent = message.report else { return nil }
+        return { model.showAgent(agent) }
     }
 
     private var chat: some View {
@@ -86,7 +95,7 @@ struct AssistantView: View {
                         ForEach(assistant.messages) { message in
                             ChatBubble(message: message, thinking: assistant.isAnswering && message.id == assistant.messages.last?.id,
                                        doing: assistant.activity, target: model.typingTarget,
-                                       typeIt: { model.typeIntoDocument(message.text) })
+                                       typeIt: { model.typeIntoDocument(message.text) }, openAgent: opener(for: message))
                                 .id(message.id)
                         }
                     }
@@ -248,6 +257,14 @@ struct ChatRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 2)
+            if chat.hasNews && !hovering {
+                // A report came back to this chat while you were somewhere else.
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 7, height: 7)
+                    .padding(.trailing, 6)
+                    .help("A report came back from an agent")
+            }
             if hovering && !chat.isEmpty {
                 IconButton(symbol: "xmark", label: "Delete this chat", size: 20, action: delete)
             }
@@ -335,6 +352,8 @@ struct ChatBubble: View {
     /// The app a finished answer can be typed into ("Pages"), and what types it.
     var target: String? = nil
     var typeIt: (() -> Void)? = nil
+    /// For a report an agent sent back: opens that agent in the Agents room.
+    var openAgent: (() -> Void)? = nil
 
     var body: some View {
         let mine = message.role == .user
@@ -349,9 +368,15 @@ struct ChatBubble: View {
                     Text(busy ?? "Thinking…")
                         .foregroundStyle(Theme.tertiary)
                 } else {
-                    Text(ChatBubble.formatted(text))
-                        .foregroundStyle(message.failed ? Theme.tertiary : (mine ? Theme.text : Theme.body))
-                        .textSelection(.enabled)
+                    if mine || message.failed {
+                        // Your own words are shown as you typed them; so is a note that it went wrong.
+                        Text(text)
+                            .foregroundStyle(message.failed ? Theme.tertiary : Theme.text)
+                            .textSelection(.enabled)
+                    } else {
+                        // Its answer, drawn from its Markdown: headings, lists, tables, code.
+                        MarkdownBlocks(text: text, size: 13, fills: false)
+                    }
                     if let busy = busy {
                         // Looking something up part-way through its answer.
                         Text(busy)
@@ -373,7 +398,7 @@ struct ChatBubble: View {
             .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(mine ? Theme.raised : Theme.surface))
             if finished {
-                BubbleActions(text: text, target: target, typeIt: typeIt)
+                BubbleActions(text: text, target: target, typeIt: typeIt, openAgent: openAgent)
             }
             if !mine { Spacer(minLength: finished ? 8 : 60) }
         }
@@ -395,6 +420,7 @@ struct BubbleActions: View {
     let text: String
     let target: String?
     let typeIt: (() -> Void)?
+    var openAgent: (() -> Void)? = nil
     @State var copied = false
 
     var body: some View {
@@ -402,6 +428,10 @@ struct BubbleActions: View {
             IconButton(symbol: copied ? "checkmark" : "doc.on.doc", label: "Copy this answer", size: 24, tint: Theme.tertiary, action: copy)
             if let typeIt = typeIt {
                 IconButton(symbol: "keyboard", label: BubbleActions.typeHelp(target), size: 24, tint: Theme.tertiary, action: typeIt)
+            }
+            if let openAgent = openAgent {
+                IconButton(symbol: HomeTile.agents.symbol, label: "Open this agent in the Agents room: its steps and the files it saved are there",
+                           size: 24, tint: Theme.tertiary, action: openAgent)
             }
         }
     }
@@ -625,6 +655,8 @@ struct AssistantToolTile: View {
 
     var body: some View {
         let last = assistant.messages.last { $0.role == .assistant && !$0.failed && !$0.text.isEmpty }
+        // (Its first line of words, without the marks its formatting is written in.)
+        let said = last.map { AgentReport.firstLine($0.text, limit: 150) } ?? ""
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -635,11 +667,19 @@ struct AssistantToolTile: View {
                 Spacer(minLength: 0)
             }
             Spacer(minLength: 0)
-            Text(last.map { $0.text } ?? (assistant.status.isReady || assistant.status == .checking
-                                            ? "Ask \(assistant.engine.name) anything" : "Set up \(assistant.engine.name)"))
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.text2)
-                .lineLimit(2)
+            if assistant.reportsBack > 0 {
+                // Something came back from the agents since you last looked.
+                Text(AssistantToolTile.news(assistant.reportsBack))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(2)
+            } else {
+                Text(!said.isEmpty ? said : (assistant.status.isReady || assistant.status == .checking
+                                             ? "Ask \(assistant.engine.name) anything" : "Set up \(assistant.engine.name)"))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text2)
+                    .lineLimit(2)
+            }
             Text(assistant.engine.isClaude ? "Claude \(assistant.claudeModel.title)" : "Runs on this Mac")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.tertiary)
@@ -656,5 +696,9 @@ struct AssistantToolTile: View {
         .onTapGesture { model.openAssistant() }
         .onHover { hovering = $0 }
         .help("Open the assistant")
+    }
+
+    static func news(_ reports: Int) -> String {
+        reports == 1 ? "A report is back from your agents" : "\(reports) reports are back from your agents"
     }
 }

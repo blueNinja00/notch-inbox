@@ -347,20 +347,22 @@ struct ReportLibrary: Equatable, Codable {
     }
 
     /// For a search's results: the words around the first place the search turns up in the
-    /// report. Without a search (or if it only matched the name), the report's first line.
+    /// report (its first word that's in the report itself, in the newest part that has it).
+    /// Without a search, or if it only matched the name, the report's first line.
     static func snippet(of report: LibraryReport, for query: String, around: Int = 60) -> String {
-        guard let first = fold(query).split(separator: " ").first.map(String.init) else { return report.preview }
-        for part in report.parts.reversed() {
-            let text = part.text
-            guard let found = text.range(of: first, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
-            let start = text.index(found.lowerBound, offsetBy: -around, limitedBy: text.startIndex) ?? text.startIndex
-            let end = text.index(found.upperBound, offsetBy: around, limitedBy: text.endIndex) ?? text.endIndex
-            // (Without the marks its formatting is written in.)
-            let words = AgentReport.plain(String(text[start..<end]))
-                .split(whereSeparator: { $0.isWhitespace || $0 == "#" || $0 == "|" || $0 == "*" })
-                .joined(separator: " ")
-            guard !words.isEmpty else { continue }
-            return (start > text.startIndex ? "…" : "") + words + (end < text.endIndex ? "…" : "")
+        for word in fold(query).split(separator: " ").map(String.init) {
+            for part in report.parts.reversed() {
+                let text = part.text
+                guard let found = text.range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
+                let start = text.index(found.lowerBound, offsetBy: -around, limitedBy: text.startIndex) ?? text.startIndex
+                let end = text.index(found.upperBound, offsetBy: around, limitedBy: text.endIndex) ?? text.endIndex
+                // (Without the marks its formatting is written in.)
+                let words = AgentReport.plain(String(text[start..<end]))
+                    .split(whereSeparator: { $0.isWhitespace || $0 == "#" || $0 == "|" || $0 == "*" })
+                    .joined(separator: " ")
+                guard !words.isEmpty else { continue }
+                return (start > text.startIndex ? "…" : "") + words + (end < text.endIndex ? "…" : "")
+            }
         }
         return report.preview
     }
@@ -368,8 +370,12 @@ struct ReportLibrary: Equatable, Codable {
     /// The part of a report to open from a search: the newest one that has what was typed.
     /// (nil without a search, or if only its name matched: it opens at its last part.)
     static func part(of report: LibraryReport, matching query: String) -> UUID? {
-        guard let first = fold(query).split(separator: " ").first.map(String.init) else { return nil }
-        return report.parts.last { has(first, in: $0.text) }?.id
+        for word in fold(query).split(separator: " ").map(String.init) {
+            if let part = report.parts.last(where: { has(word, in: $0.text) }) {
+                return part.id
+            }
+        }
+        return nil
     }
 
     /// "12 reports", for the room and Copy Debug Info.

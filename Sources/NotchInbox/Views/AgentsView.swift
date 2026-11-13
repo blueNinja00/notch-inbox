@@ -1024,9 +1024,8 @@ struct AgentJobField: View {
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
             if !model.teamChatOpen {
-                if AgentJobField.canKeep(model.agentDraft) && model.recipesStore != nil {
-                    IconButton(symbol: "text.book.closed", label: "Save this job as a recipe, to run again (it isn't started)", size: 32,
-                               action: { model.saveDraftAsRecipe() })
+                if model.recipesStore != nil {
+                    IconButton(symbol: "text.book.closed", label: AgentJobField.bookLabel(model.agentDraft), size: 32, action: keep)
                 }
                 ChainToggle(on: $model.agentDraftChain)
             }
@@ -1039,6 +1038,20 @@ struct AgentJobField: View {
     /// Whether there's enough typed to be worth keeping as a recipe.
     static func canKeep(_ draft: String) -> Bool {
         draft.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8
+    }
+
+    /// The book beside the box: it keeps what's typed as a recipe, or with nothing typed
+    /// it opens the recipes you have.
+    static func bookLabel(_ draft: String) -> String {
+        canKeep(draft) ? "Save this job as a recipe, to run again (it isn't started)" : "Your recipes: jobs saved to run again"
+    }
+
+    private func keep() {
+        if AgentJobField.canKeep(model.agentDraft) {
+            model.saveDraftAsRecipe()
+        } else {
+            model.openRecipes()
+        }
     }
 
     static func prompt(teamChat: Bool, chain: Bool) -> String {

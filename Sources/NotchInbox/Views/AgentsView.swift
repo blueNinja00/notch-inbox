@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The agent room: every agent you've handed a job to, newest on top like the floors of a
-/// tower, and the one you pick beside it: what it's doing, what it did, and its report.
-/// The box along the bottom hands out a new job.
+/// The agent room: your groups of tasks down the side (with the team chat, the library and
+/// your recipes under them), and beside them the tasks of the group you pick, as a table
+/// that shows how each is going. Click a task for its own page: what it's doing, what it
+/// did, and its report. The box along the bottom adds a task to the group.
 struct AgentsView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: AgentsStore
@@ -27,6 +28,8 @@ struct AgentsView: View {
             } trailing: {
                 HStack(spacing: 2) {
                     IconButton(symbol: "sparkles", label: "Ask the assistant to hand out jobs", action: { model.openAssistant() })
+                    IconButton(symbol: "keyboard", label: "Shortcuts for this room, and changing their keys",
+                               action: { model.openSettings(.shortcuts) })
                     IconButton(symbol: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                                label: expanded ? "Make smaller" : "Expand",
                                action: { expanded ? model.back() : model.expandAgents() })
@@ -36,8 +39,8 @@ struct AgentsView: View {
             }
 
             HStack(spacing: 10) {
-                AgentTower(model: model, team: team)
-                    .frame(width: expanded ? 320 : 290)
+                AgentSidebar(model: model, team: team, keys: settings.keybinds)
+                    .frame(width: expanded ? 224 : 200)
                 Group {
                     if model.agentsPage == .teamChat, let room = model.teamStore {
                         TeamChatView(model: model, store: room, on: settings.agentsTeamChat)
@@ -45,12 +48,14 @@ struct AgentsView: View {
                         ReportLibraryView(model: model, store: reports)
                     } else if model.agentsPage == .recipes, let recipes = model.recipesStore {
                         RecipesView(model: model, store: recipes, assistant: assistant)
-                    } else if let job = open {
+                    } else if model.agentShowsWork, let job = open {
                         AgentDetail(model: model, job: job, floor: team.floor(of: job.id), team: team)
                             .id(job.id)
-                    } else {
+                    } else if team.jobs.isEmpty && team.groups.isEmpty {
                         AgentsWelcome(model: model, assistant: assistant, settings: settings,
                                       recipes: model.recipesStore?.book.ordered ?? [])
+                    } else {
+                        AgentGroupView(model: model, team: team, group: team.group(model.agentGroupOpen)?.id, keys: settings.keybinds)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -58,7 +63,7 @@ struct AgentsView: View {
             }
             .padding(.top, 6)
 
-            AgentJobField(model: model, assistant: assistant)
+            AgentJobField(model: model, assistant: assistant, group: team.groupName(model.agentGroupOpen), keys: settings.keybinds)
                 .padding(.top, 8)
         }
         .padding(.horizontal, 12)
@@ -72,6 +77,7 @@ struct AgentsView: View {
 enum AgentLook {
     static func tint(_ status: AgentJob.Status) -> Color {
         switch status {
+        case .idle: return Theme.tertiary
         case .queued: return Theme.tertiary
         case .working: return Theme.accent
         case .done: return Theme.good
@@ -82,11 +88,36 @@ enum AgentLook {
 
     static func symbol(_ status: AgentJob.Status) -> String {
         switch status {
+        case .idle: return "circle"
         case .queued: return "clock.fill"
         case .working: return "circle.fill"
         case .done: return "checkmark.circle.fill"
         case .failed: return "exclamationmark.circle.fill"
         case .stopped: return "stop.circle.fill"
+        }
+    }
+
+    /// A state's words in the table: quiet until it's started, then its own colour.
+    static func ink(_ status: AgentJob.Status) -> Color {
+        switch status {
+        case .idle: return Theme.tertiary
+        case .queued: return Theme.secondary
+        case .working: return Theme.text
+        case .done: return Theme.good
+        case .failed: return Theme.danger
+        case .stopped: return Theme.warning
+        }
+    }
+
+    /// A state's stretch of a status bar. What hasn't been started has none.
+    static func bar(_ status: AgentJob.Status) -> Color {
+        switch status {
+        case .idle: return Color.clear
+        case .queued: return Theme.accent.opacity(0.3)
+        case .working: return Theme.accent
+        case .done: return Theme.good
+        case .failed: return Theme.danger
+        case .stopped: return Theme.warning
         }
     }
 
@@ -185,154 +216,6 @@ struct AgentCaption: View {
     }
 }
 
-// MARK: The tower
-
-/// Every agent, newest on top: the first job you ever gave is on floor 1.
-struct AgentTower: View {
-    @ObservedObject var model: NotchModel
-    let team: AgentTeam
-
-    var body: some View {
-        let jobs = team.newestFirst
-        let finished = jobs.filter { !$0.isActive }.count
-        let held = team.heldForChains
-
-        VStack(spacing: 0) {
-            if let room = model.teamStore {
-                TeamChatRow(store: room, selected: model.teamChatOpen, open: { model.openTeamChat() })
-                    .padding(EdgeInsets(top: 6, leading: 6, bottom: 0, trailing: 6))
-            }
-            if let reports = model.reportsStore {
-                AgentShelfTabs(model: model, reports: reports)
-                    .padding(EdgeInsets(top: 5, leading: 6, bottom: 0, trailing: 6))
-            }
-            if jobs.isEmpty {
-                AgentTowerEmpty()
-            } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(jobs) { job in
-                            AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen && model.agentsPage == .agent,
-                                          open: { model.showAgent(job.id) })
-                                .contextMenu {
-                                    AgentMenu(model: model, job: job, held: held.contains(job.id), canCarryOn: team.canCarryOn(job.id))
-                                }
-                        }
-                    }
-                    .padding(6)
-                }
-                .scrollIndicators(.hidden)
-                // (Finished agents that a chain still going is built on can't be cleared yet.)
-                if team.clearable > 0 {
-                    AgentTowerFoot(finished: finished, clear: { model.clearFinishedAgents() })
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.lane))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-struct AgentTowerEmpty: View {
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "building.2")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(Theme.tertiary)
-            Text("Nobody's working yet")
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(Theme.secondary)
-            Text("Your first agent takes floor 1. Each new one goes on top.")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.tertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// The bottom of the tower: how many have finished, and a way to clear them out.
-struct AgentTowerFoot: View {
-    let finished: Int
-    let clear: () -> Void
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(finished == 1 ? "1 finished" : "\(finished) finished")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.tertiary)
-            Spacer(minLength: 4)
-            SmallPill(title: "Clear", symbol: "xmark", action: clear)
-                .help("Take the finished agents out of the room. Their reports stay in the Library, and the files they saved in their folders.")
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
-        .frame(height: 34)
-        .background(Theme.surface.opacity(0.6))
-    }
-}
-
-/// One agent's floor: its number, its name, and what it's doing or how it ended.
-struct AgentFloorRow: View {
-    let job: AgentJob
-    let floor: Int
-    let selected: Bool
-    let open: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 10) {
-                AgentFloorBadge(floor: floor, status: job.status)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(job.name)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(Theme.text)
-                            .lineLimit(1)
-                        if job.origin == .chief {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Theme.tertiary)
-                                .help("The assistant handed out this job")
-                        }
-                        if let chain = job.chain {
-                            Image(systemName: "link")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Theme.tertiary)
-                                .help("\(chain.place) of a chain: \(chain.line)")
-                        }
-                    }
-                    Text(job.summary)
-                        .font(.system(size: 11))
-                        .foregroundStyle(job.status == .failed ? Theme.danger : Theme.tertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                AgentClock(job: job)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 46)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected ? Theme.raised : (hovering ? Theme.hover.opacity(0.55) : Color.clear)))
-            // The line joining the floors, like a lift shaft, behind their numbers.
-            .background(alignment: .leading) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.07))
-                    .frame(width: 2)
-                    .padding(.leading, 21)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityLabel(Text("Floor \(floor), \(job.name), \(job.statusWord)"))
-    }
-}
-
 /// An agent's floor number. Filled in the accent colour while it works; a small mark at
 /// the corner says how it ended.
 struct AgentFloorBadge: View {
@@ -358,11 +241,12 @@ struct AgentFloorBadge: View {
                         .offset(x: 4, y: 4)
                 }
             }
-            .help("Floor \(floor): \(AgentFloorBadge.word(status))")
+            .help("Task \(floor): \(AgentFloorBadge.word(status))")
     }
 
     static func word(_ status: AgentJob.Status) -> String {
         switch status {
+        case .idle: return "ready to start"
         case .queued: return "waiting its turn"
         case .working: return "working"
         case .done: return "done"
@@ -395,16 +279,33 @@ struct AgentClock: View {
 struct AgentMenu: View {
     @ObservedObject var model: NotchModel
     let job: AgentJob
+    let team: AgentTeam
     /// A chain still going is built on its work, so it can't be taken out yet.
     var held = false
     /// It's a stage of a chain that stopped short, and the next agent could start from it.
     var canCarryOn = false
 
     var body: some View {
-        if job.isActive {
+        let own = team.group(job.group)?.id
+        let others = team.groupIDs.filter { $0 != own }
+
+        Button("Open") { model.showAgent(job.id) }
+        if job.isIdle {
+            Button("Start") { model.startTask(job.id) }
+        } else if job.isActive {
             Button("Stop") { model.stopAgent(job.id) }
         } else {
             Button("Run Again") { model.agentAgain(job.id) }
+        }
+        if Recipe.canSave(job) {
+            Button("Duplicate") { model.duplicateAgent(job.id) }
+        }
+        if !others.isEmpty {
+            Menu("Move to Group") {
+                ForEach(others, id: \.self) { id in
+                    Button(team.groupName(id)) { model.moveAgent(job.id, to: id) }
+                }
+            }
         }
         if canCarryOn {
             Button("Carry On the Chain from Here") { model.carryOnChain(job.id) }
@@ -417,50 +318,12 @@ struct AgentMenu: View {
         }
         if !job.isActive && !held {
             Divider()
-            Button("Remove from the Room") { model.removeAgent(job.id) }
+            Button(job.isIdle ? "Remove This Task" : "Remove from the Room") { model.removeAgent(job.id) }
         }
     }
 }
 
 // MARK: The team chat
-
-/// The team chat's place at the top of the tower: its latest message.
-struct TeamChatRow: View {
-    @ObservedObject var store: TeamStore
-    let selected: Bool
-    let open: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        let last = store.room.messages.last
-
-        HStack(spacing: 10) {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.text2)
-                .frame(width: 28, height: 28)
-                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.avatar))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Team chat")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.text)
-                Text(last.map { "\($0.name): \(AgentStream.shorten($0.text, to: 60))" } ?? "Agents, the chief of staff and you")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 46)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(selected ? Theme.raised : (hovering ? Theme.hover.opacity(0.55) : Theme.surface.opacity(0.6))))
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onTapGesture(perform: open)
-        .onHover { hovering = $0 }
-        .help("The chat your agents share with the chief of staff and you")
-    }
-}
 
 /// The team chat: what agents, the chief of staff and you have said, newest at the bottom.
 struct TeamChatView: View {
@@ -556,7 +419,7 @@ struct TeamBubble: View {
 
     static func who(_ message: TeamMessage) -> String {
         if case .agent(let name, let floor) = message.from {
-            return "\(name) · floor \(floor)"
+            return "\(name) · task \(floor)"
         }
         return message.name
     }
@@ -579,7 +442,11 @@ struct AgentDetail: View {
             }
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 10) {
-                    AgentTask(task: job.task)
+                    if job.isIdle {
+                        AgentTaskEditor(model: model, id: job.id)
+                    } else {
+                        AgentTask(task: job.task)
+                    }
                     if let problem = job.problem, !problem.isEmpty {
                         AgentProblem(text: problem, failed: job.status == .failed)
                     }
@@ -596,6 +463,11 @@ struct AgentDetail: View {
                     } else {
                         AgentReportText(report: job.report, finished: true)
                         AgentLog(steps: job.steps)
+                    }
+                    if job.isIdle {
+                        Text("It hasn't been started. Change the job above if you like, then press Start here, or Start All on its group.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.tertiary)
                     }
                     if job.isActive && job.steps.isEmpty && job.report.isEmpty {
                         Text(job.status == .queued ? "It starts as soon as another agent finishes." : "Getting started…")
@@ -619,7 +491,8 @@ struct AgentHeader: View {
     var held = false
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 9) {
+            IconButton(symbol: "chevron.left", label: "Back to its group (Esc)", size: 26, action: { model.closeAgent() })
             AgentFloorBadge(floor: floor, status: job.status, size: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text(job.name)
@@ -750,7 +623,10 @@ struct AgentActions: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if job.isActive {
+            if job.isIdle {
+                SmallPill(title: "Start", symbol: "play.fill", action: { model.startTask(job.id) })
+                    .help("Start this task")
+            } else if job.isActive {
                 SmallPill(title: "Stop", symbol: "stop.fill", action: { model.stopAgent(job.id) })
                     .help("Stop this agent. What it has written so far is kept.")
             } else {
@@ -770,7 +646,7 @@ struct AgentActions: View {
                            action: { model.saveRecipe(from: job.id) })
             }
             if !job.isActive && !held {
-                IconButton(symbol: "trash", label: "Take this agent out of the room (its report stays in the Library, and its files in its folder)", size: 26,
+                IconButton(symbol: "trash", label: AgentRowActions.removeLabel(job), size: 26,
                            action: { model.removeAgent(job.id) })
             }
         }
@@ -804,6 +680,36 @@ struct AgentTask: View {
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onTapGesture { whole.toggle() }
         .help(whole ? "Click to show less" : "Click to show the whole job")
+    }
+}
+
+/// A task that hasn't started: what it will be asked to do can still be changed. It's
+/// saved as it's typed.
+struct AgentTaskEditor: View {
+    @ObservedObject var model: NotchModel
+    let id: UUID
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            AgentCaption(text: "The job (yours to change until it's started)")
+            TextField("What to find out, write or compare", text: text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text)
+                .lineLimit(2...10)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.lane))
+        }
+    }
+
+    /// The job, read from the room as it's typed.
+    private var text: Binding<String> {
+        Binding(
+            get: { model.agentsStore?.team.job(id)?.task ?? "" },
+            set: { typed in model.rewriteTask(id, to: typed) }
+        )
     }
 }
 
@@ -935,7 +841,7 @@ struct AgentsWelcome: View {
                 Text("The agent room")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Text("Hand a job to an agent and it works on it by itself while you get on with something else. Each agent gets a floor: watch what it's doing, then read its report. Or just ask the assistant, and it hands the big jobs out for you.")
+                Text("Type a task in the box below and press Return: it joins the group that's showing, ready to start. Press Start on it, or Start All on its group, and an agent works on it by itself while you get on with something else. The table shows how each one is going; click a task to watch it and read its report. Make groups with the + beside Groups. Or just ask the assistant, and it hands the big jobs out for you.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.body)
                     .lineSpacing(2)
@@ -1000,26 +906,33 @@ struct AgentsWelcomeRecipes: View {
     }
 }
 
-/// The box along the bottom of the room: type a job, press Return, and a new agent starts on it.
+/// The box along the bottom of the room: type a task and press Return, and it joins the
+/// group that's showing, ready to start. (While the team chat is showing, it posts there.)
 struct AgentJobField: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var assistant: Assistant
+    /// The group a new task goes in, by name.
+    let group: String
+    /// Your shortcuts, for the tooltips.
+    let keys: Keybinds
     @FocusState private var typing: Bool
 
-    init(model: NotchModel, assistant: Assistant) {
+    init(model: NotchModel, assistant: Assistant, group: String, keys: Keybinds) {
         self.model = model
         self.assistant = assistant
+        self.group = group
+        self.keys = keys
     }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField(AgentJobField.prompt(teamChat: model.teamChatOpen, chain: model.agentDraftChain), text: $model.agentDraft, axis: .vertical)
+            TextField(AgentJobField.prompt(teamChat: model.teamChatOpen, chain: model.agentDraftChain, group: group), text: $model.agentDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.text)
                 .lineLimit(1...4)
                 .focused($typing)
-                .onSubmit(start)
+                .onSubmit(send)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
@@ -1027,12 +940,19 @@ struct AgentJobField: View {
                 if model.recipesStore != nil {
                     IconButton(symbol: "text.book.closed", label: AgentJobField.bookLabel(model.agentDraft), size: 32, action: keep)
                 }
-                ChainToggle(on: $model.agentDraftChain)
+                ChainToggle(on: $model.agentDraftChain, hint: keys.hint(for: .chain))
             }
-            IconButton(symbol: "arrow.up", label: AgentJobField.sendLabel(teamChat: model.teamChatOpen, chain: model.agentDraftChain), size: 32,
-                       tint: Theme.text, action: start)
+            IconButton(symbol: model.teamChatOpen ? "arrow.up" : "plus",
+                       label: AgentJobField.sendLabel(teamChat: model.teamChatOpen, chain: model.agentDraftChain, group: group), size: 32,
+                       tint: Theme.text, action: send)
         }
         .onAppear { typing = true }
+        // A shortcut (New task) or a button asked for the cursor.
+        .onChange(of: model.agentsFocusTick) { _ in
+            if model.takeFocus(.box) {
+                typing = true
+            }
+        }
     }
 
     /// Whether there's enough typed to be worth keeping as a recipe.
@@ -1043,7 +963,7 @@ struct AgentJobField: View {
     /// The book beside the box: it keeps what's typed as a recipe, or with nothing typed
     /// it opens the recipes you have.
     static func bookLabel(_ draft: String) -> String {
-        canKeep(draft) ? "Save this job as a recipe, to run again (it isn't started)" : "Your recipes: jobs saved to run again"
+        canKeep(draft) ? "Save this job as a recipe, to run again (it isn't added)" : "Your recipes: jobs saved to run again"
     }
 
     private func keep() {
@@ -1054,24 +974,26 @@ struct AgentJobField: View {
         }
     }
 
-    static func prompt(teamChat: Bool, chain: Bool) -> String {
+    static func prompt(teamChat: Bool, chain: Bool, group: String) -> String {
         if teamChat {
             return "Say something to the team: the chief and every working agent can read it…"
         }
-        return chain ? "Give a chain a job: it's researched, written, then checked against its sources…"
-                     : "Give an agent a job: what to find out, write or compare…"
+        return chain ? "Add a chain to \(group): it's researched, written, then checked. It waits until you press Start…"
+                     : "Add a task to \(group): what to find out, write or compare. It waits until you press Start…"
     }
 
-    static func sendLabel(teamChat: Bool, chain: Bool) -> String {
+    static func sendLabel(teamChat: Bool, chain: Bool, group: String) -> String {
         if teamChat {
             return "Post it (Return)"
         }
-        return chain ? "Start a chain on it (Return)" : "Start an agent on it (Return)"
+        return chain ? "Add it to \(group) as a chain (Return). It waits there until you press Start."
+                     : "Add it to \(group) (Return). It waits there until you press Start."
     }
 
-    private func start() {
-        // Nothing can answer yet: the assistant's page says what to set up.
-        if !assistant.status.isReady && assistant.status != .checking {
+    private func send() {
+        // Nothing can answer in the team chat yet: the assistant's page says what to set up.
+        // (A task can be added before then: it's Start that needs the assistant.)
+        if model.teamChatOpen && !assistant.status.isReady && assistant.status != .checking {
             model.openAssistant()
             return
         }
@@ -1084,6 +1006,8 @@ struct AgentJobField: View {
 /// then a checker) in place of one. It switches itself off again after each chain.
 struct ChainToggle: View {
     @Binding var on: Bool
+    /// Its shortcut, for the tooltip: " (⌘K)".
+    var hint = ""
     @State var hovering = false
 
     var body: some View {
@@ -1103,7 +1027,7 @@ struct ChainToggle: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(on ? "On: this job goes to a chain. " + AgentChain.about : AgentChain.about)
+        .help((on ? "On: this job goes to a chain. " + AgentChain.about : AgentChain.about) + hint)
         .accessibilityLabel(Text(on ? "Chain, on" : "Chain, off"))
     }
 
@@ -1184,7 +1108,7 @@ struct AgentsToolTile: View {
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture {
             if let job = latest {
-                model.showAgent(job.id)
+                model.pickAgent(job.id)
             }
             model.openAgents()
         }

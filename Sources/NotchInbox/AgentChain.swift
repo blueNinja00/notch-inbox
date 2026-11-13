@@ -285,6 +285,7 @@ struct AgentChain: Codable, Equatable {
         guard let chain = job.chain else { return job.statusWord }
         let role = chain.role
         switch job.status {
+        case .idle: return "\(role) ready to start (\(chain.place.lowercased()))"
         case .queued:
             // Held back by the day's usage cap, it says so.
             let waiting = "\(role) waiting its turn (\(chain.place.lowercased()))"
@@ -362,7 +363,7 @@ extension AgentTeam {
     /// until it's done, since the next stage reads their reports.
     var heldForChains: Set<UUID> {
         var held = Set<UUID>()
-        for job in jobs where job.isActive {
+        for job in jobs where job.isActive || job.isIdle {
             if let chain = job.chain {
                 held.formUnion(chain.earlier)
             }
@@ -373,7 +374,7 @@ extension AgentTeam {
     /// How many finished agents "Clear" would take out.
     var clearable: Int {
         let held = heldForChains
-        return jobs.filter { !$0.isActive && !held.contains($0.id) }.count
+        return jobs.filter { $0.isFinished && !held.contains($0.id) }.count
     }
 
     /// The newest agent researching this assignment, if any are in the room.
@@ -399,7 +400,7 @@ extension AgentTeam {
     @discardableResult
     mutating func carryOn(_ id: UUID, now: Date = Date()) -> AgentJob? {
         guard canCarryOn(id), let stage = self.job(id), let next = stage.chain?.next(after: id) else { return nil }
-        return add(name: next.agentName, task: stage.task, origin: stage.origin, chain: next, chat: stage.chat, now: now)
+        return add(name: next.agentName, task: stage.task, origin: stage.origin, chain: next, chat: stage.chat, group: stage.group, now: now)
     }
 
     /// The chain this job belongs to, stage by stage, for the strip above its report.

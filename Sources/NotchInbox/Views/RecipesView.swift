@@ -10,7 +10,9 @@ struct RecipesView: View {
 
     var body: some View {
         if let recipe = store.book.recipe(model.recipeOpen) {
-            RecipePage(model: model, store: store, recipe: recipe, start: { run(recipe.id) })
+            RecipePage(model: model, store: store, recipe: recipe,
+                       group: model.agentsStore?.team.groupName(model.agentGroupOpen) ?? AgentGroup.general,
+                       add: { model.queueRecipe(recipe.id) }, start: { run(recipe.id) })
                 .id(recipe.id)
         } else {
             RecipeList(model: model, recipes: store.book.ordered, run: run)
@@ -125,26 +127,33 @@ struct RecipeRow: View {
     }
 }
 
-/// One recipe: change its name and its job, fill in its blanks, and start it. Everything
-/// is saved as it's typed.
+/// One recipe: change its name and its job, fill in its blanks, and add a run of it to
+/// the group that's showing (or start it straight away). Everything is saved as it's typed.
 struct RecipePage: View {
     @ObservedObject var model: NotchModel
     let store: RecipesStore
     let recipe: Recipe
+    /// The group a run is added to, by name.
+    let group: String
+    let add: () -> Void
     let start: () -> Void
     /// The blank being typed in, by its key.
     @FocusState private var typing: String?
 
-    init(model: NotchModel, store: RecipesStore, recipe: Recipe, start: @escaping () -> Void) {
+    init(model: NotchModel, store: RecipesStore, recipe: Recipe, group: String, add: @escaping () -> Void, start: @escaping () -> Void) {
         self.model = model
         self.store = store
         self.recipe = recipe
+        self.group = group
+        self.add = add
         self.start = start
     }
 
     var body: some View {
         let blanks = recipe.blanks
         let ready = recipe.isReady(with: model.recipeBlanks)
+        // (After a run is added, the line says so until the next one is being filled in.)
+        let added = RecipePage.shows(note: model.recipeNote, typed: model.recipeBlanks)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -161,22 +170,25 @@ struct RecipePage: View {
                 VStack(alignment: .leading, spacing: 9) {
                     RecipeJobField(text: text(\.text))
                     if !blanks.isEmpty {
-                        RecipeBlanks(blanks: blanks, values: $model.recipeBlanks, typing: $typing, submit: start)
+                        RecipeBlanks(blanks: blanks, values: $model.recipeBlanks, typing: $typing, submit: addAndGoOn)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 2)
             }
             .scrollIndicators(.hidden)
-            HStack(spacing: 10) {
-                Text(recipe.hint(with: model.recipeBlanks))
+            HStack(spacing: 8) {
+                Text(added ? (model.recipeNote ?? "") : recipe.hint(with: model.recipeBlanks))
                     .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
+                    .foregroundStyle(added ? Theme.good : Theme.tertiary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
-                PillButton(title: recipe.chain ? "Start a Chain" : "Start an Agent", prominent: ready, action: start)
-                    .help(ready ? "Hand this job out now" : "Fill in the job and its blanks first")
+                PillButton(title: "Start Now", action: start)
+                    .help(ready ? "Hand this job out straight away" : "Fill in the job and its blanks first")
+                PillButton(title: "Add to \(Recipe.cut(group, to: 16))", prominent: ready, action: addAndGoOn)
+                    .help(ready ? "Add it to \(group), ready to start. It waits there until you press Start. (Return in a blank does this.)"
+                                : "Fill in the job and its blanks first")
             }
         }
         .padding(12)
@@ -186,6 +198,18 @@ struct RecipePage: View {
         .onAppear {
             typing = Recipe.firstEmpty(of: recipe.blanks, in: model.recipeBlanks)
         }
+    }
+
+    /// Whether the line under the recipe says what was just added: until the next run is
+    /// being filled in.
+    static func shows(note: String?, typed: [String: String]) -> Bool {
+        note != nil && typed.values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// Adds a run, and leaves the cursor in the first blank for the next one.
+    private func addAndGoOn() {
+        add()
+        typing = Recipe.firstEmpty(of: recipe.blanks, in: model.recipeBlanks)
     }
 
     /// Its name or its job, read from the recipes as it's typed.

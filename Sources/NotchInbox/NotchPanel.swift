@@ -202,8 +202,46 @@ final class NotchWindowController {
         }
     }
 
+    /// The keys of a key press, as a shortcut.
+    static func combo(for event: NSEvent) -> KeyCombo {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let code = Int(event.keyCode)
+        return KeyCombo(code: code, symbol: KeyCombo.symbol(code: code, characters: event.charactersIgnoringModifiers),
+                        command: flags.contains(.command), control: flags.contains(.control),
+                        option: flags.contains(.option), shift: flags.contains(.shift))
+    }
+
+    /// While a shortcut is being set: Esc gives up, Delete takes its key off, and any
+    /// other keys become its key if they can be one (if not, Settings says why and waits).
+    private func record(_ event: NSEvent, for action: KeyAction) {
+        let combo = Self.combo(for: event)
+        let bare = !combo.hasModifier && !combo.shift
+        if combo.code == KeyCombo.escape && bare {
+            model.recordingKey = nil
+            return
+        }
+        if (combo.code == KeyCombo.delete || combo.code == KeyCombo.forwardDelete) && bare {
+            AppSettings.shared.clearKey(action)
+            model.keyNote = "“\(action.title)” has no key now."
+            model.recordingKey = nil
+            return
+        }
+        if let problem = combo.problem {
+            model.keyNote = problem
+            return
+        }
+        model.keyNote = AppSettings.shared.setKey(combo, for: action)
+        model.recordingKey = nil
+    }
+
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         guard let panel = panel, panel.isKeyWindow, model.level != .rest else { return event }
+
+        // Setting a shortcut in Settings: the next keys pressed become it.
+        if let action = model.recordingKey {
+            record(event, for: action)
+            return nil
+        }
 
         // In the tour, the arrow keys (and Return) turn the pages, and Esc leaves it for the
         // primary menu, where it stays on offer.
@@ -265,6 +303,24 @@ final class NotchWindowController {
                 model.close()
             }
             return nil
+        }
+
+        // Your shortcuts (Settings → Shortcuts). One that also edits text (⌘⌫, ⌘↑…) is
+        // left to the text while there's some in the box you're typing in.
+        let pressed = Self.combo(for: event)
+        if pressed.hasModifier || KeyCombo.functionKeys.contains(pressed.code) {
+            let typed = (panel.firstResponder as? NSText)?.string ?? ""
+            let inAgents = model.tool == .agents && (model.level == .lanes || model.level == .detail)
+            if !(pressed.editsText && !typed.isEmpty),
+               let action = AppSettings.shared.keybinds.action(for: pressed, inAgents: inAgents) {
+                // (A key held down only repeats what moves the selection.)
+                if event.isARepeat && !action.repeats {
+                    return nil
+                }
+                if model.perform(action) {
+                    return nil
+                }
+            }
         }
 
         // The app has no menu bar of its own, so copy, paste, select all and undo are

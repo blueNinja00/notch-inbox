@@ -367,6 +367,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onResearchAssignment = { [weak self] id in
             self?.researchAssignment(id)
         }
+        model.onStartWaiting = { [weak self] id in
+            self?.agentRunner.startWaiting(id)
+        }
+        model.onStartGroup = { [weak self] group in
+            self?.agentRunner.startAll(in: group)
+        }
+        model.onStopGroup = { [weak self] group in
+            self?.agentRunner.stopAll(in: group)
+        }
+        model.onClearGroup = { [weak self] group in
+            self?.agentRunner.clearFinished(in: group)
+        }
+        model.agentsCanStart = {
+            Assistant.shared.status.isReady || Assistant.shared.status == .checking
+        }
         model.onStopAgent = { [weak self] id in
             self?.agentRunner.stop(id)
         }
@@ -827,6 +842,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             changes.append("\(job.name) stopped")
         }
         for job in StaffAgent.jobs(in: plan) {
+            // The group it asked for: one that's there by that name, or a new one.
+            var group: UUID?
+            agents.change { team in
+                group = StaffAgent.group(for: job, in: &team)
+            }
             if let kind = job.chain {
                 // A researcher now; the others follow by themselves. A plan for an
                 // assignment in your list gets its task sheet too (if the assistant
@@ -838,10 +858,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     goal = StaffAgent.planGoal(for: job, item: item, now: Date())
                     source = item.id
                 }
-                if let started = agentRunner.startChain(title: job.name, goal: goal, kind: kind, origin: .chief, source: source, chat: reportsTo) {
+                if let started = agentRunner.startChain(title: job.name, goal: goal, kind: kind, origin: .chief, source: source, chat: reportsTo,
+                                                        group: group) {
                     changes.append("\(started.name) started (a chain: \(AgentChain.line(for: kind)))")
                 }
-            } else if let started = agentRunner.start(name: job.name, task: job.task, origin: .chief, chat: reportsTo) {
+            } else if let started = agentRunner.start(name: job.name, task: job.task, origin: .chief, chat: reportsTo, group: group) {
                 changes.append("\(started.name) started")
             }
         }
@@ -870,7 +891,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func researchAssignment(_ id: UUID) -> UUID? {
         guard let item = assignments.assignments.item(id), AgentChain.canResearch(item) else { return nil }
         let goal = AgentChain.goal(for: item, now: Date())
-        return agentRunner.startChain(title: item.title, goal: goal, kind: .assignment, origin: .you, source: id)?.id
+        // (In the group named after its subject, if you've made one.)
+        let group = agents.team.group(named: item.subject)?.id
+        return agentRunner.startChain(title: item.title, goal: goal, kind: .assignment, origin: .you, source: id, group: group)?.id
     }
 
     /// Shows an agent's own folder in Finder.

@@ -261,6 +261,16 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    /// Whether holding its key down does it again and again: moving through the tasks
+    /// and the groups does, and nothing else (so that a held key can't start a task
+    /// over and over, or remove one after another).
+    var repeats: Bool {
+        switch self {
+        case .nextTask, .previousTask, .nextGroup, .previousGroup: return true
+        default: return false
+        }
+    }
+
     /// Its key until you change it. The ones that go somewhere start with none.
     var standard: KeyCombo? {
         switch self {

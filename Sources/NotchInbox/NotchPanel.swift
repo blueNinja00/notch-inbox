@@ -312,9 +312,14 @@ final class NotchWindowController {
             let typed = (panel.firstResponder as? NSText)?.string ?? ""
             let inAgents = model.tool == .agents && (model.level == .lanes || model.level == .detail)
             if !(pressed.editsText && !typed.isEmpty),
-               let action = AppSettings.shared.keybinds.action(for: pressed, inAgents: inAgents),
-               model.perform(action) {
-                return nil
+               let action = AppSettings.shared.keybinds.action(for: pressed, inAgents: inAgents) {
+                // (A key held down only repeats what moves the selection.)
+                if event.isARepeat && !action.repeats {
+                    return nil
+                }
+                if model.perform(action) {
+                    return nil
+                }
             }
         }
 

@@ -241,7 +241,7 @@ struct AgentFloorBadge: View {
                         .offset(x: 4, y: 4)
                 }
             }
-            .help("Floor \(floor): \(AgentFloorBadge.word(status))")
+            .help("Task \(floor): \(AgentFloorBadge.word(status))")
     }
 
     static func word(_ status: AgentJob.Status) -> String {
@@ -296,6 +296,9 @@ struct AgentMenu: View {
             Button("Stop") { model.stopAgent(job.id) }
         } else {
             Button("Run Again") { model.agentAgain(job.id) }
+        }
+        if Recipe.canSave(job) {
+            Button("Duplicate") { model.duplicateAgent(job.id) }
         }
         if !others.isEmpty {
             Menu("Move to Group") {
@@ -416,7 +419,7 @@ struct TeamBubble: View {
 
     static func who(_ message: TeamMessage) -> String {
         if case .agent(let name, let floor) = message.from {
-            return "\(name) · floor \(floor)"
+            return "\(name) · task \(floor)"
         }
         return message.name
     }
@@ -439,7 +442,11 @@ struct AgentDetail: View {
             }
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 10) {
-                    AgentTask(task: job.task)
+                    if job.isIdle {
+                        AgentTaskEditor(model: model, id: job.id)
+                    } else {
+                        AgentTask(task: job.task)
+                    }
                     if let problem = job.problem, !problem.isEmpty {
                         AgentProblem(text: problem, failed: job.status == .failed)
                     }
@@ -458,7 +465,7 @@ struct AgentDetail: View {
                         AgentLog(steps: job.steps)
                     }
                     if job.isIdle {
-                        Text("It hasn't been started. Press Start here, or Start All on its group.")
+                        Text("It hasn't been started. Change the job above if you like, then press Start here, or Start All on its group.")
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.tertiary)
                     }
@@ -673,6 +680,36 @@ struct AgentTask: View {
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onTapGesture { whole.toggle() }
         .help(whole ? "Click to show less" : "Click to show the whole job")
+    }
+}
+
+/// A task that hasn't started: what it will be asked to do can still be changed. It's
+/// saved as it's typed.
+struct AgentTaskEditor: View {
+    @ObservedObject var model: NotchModel
+    let id: UUID
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            AgentCaption(text: "The job (yours to change until it's started)")
+            TextField("What to find out, write or compare", text: text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text)
+                .lineLimit(2...10)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.lane))
+        }
+    }
+
+    /// The job, read from the room as it's typed.
+    private var text: Binding<String> {
+        Binding(
+            get: { model.agentsStore?.team.job(id)?.task ?? "" },
+            set: { typed in model.rewriteTask(id, to: typed) }
+        )
     }
 }
 

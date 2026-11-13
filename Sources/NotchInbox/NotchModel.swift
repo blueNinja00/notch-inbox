@@ -692,6 +692,30 @@ final class NotchModel: ObservableObject {
         }
     }
 
+    /// A copy of a task, added to the same group, ready to start. (Not research for an
+    /// assignment: that's started from the assignment.)
+    func duplicateAgent(_ id: UUID) {
+        guard let store = agentsStore, let job = store.team.job(id), Recipe.canSave(job) else { return }
+        var added: AgentJob?
+        store.change { team in
+            if let chain = job.chain {
+                added = team.addChain(title: chain.title, goal: job.task, kind: chain.kind, group: job.group, start: false)
+            } else {
+                added = team.add(name: job.name, task: job.task, group: job.group, start: false)
+            }
+        }
+        guard let copy = added else { return }
+        agentsPage = .agent
+        agentShowsWork = false
+        agentGroupOpen = store.team.group(copy.group)?.id
+        agentOpen = copy.id
+    }
+
+    /// Changes what a task that hasn't started will be asked to do, as it's typed.
+    func rewriteTask(_ id: UUID, to task: String) {
+        agentsStore?.change { $0.rewrite(id, task: task) }
+    }
+
     /// Whether the work can start. If the assistant isn't set up, its page opens to say
     /// what's missing, and nothing starts.
     private func readyToStart() -> Bool {

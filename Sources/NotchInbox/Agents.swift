@@ -389,11 +389,34 @@ struct AgentTeam: Codable, Equatable {
 
     // MARK: Starting what's waiting
 
-    /// Start on a job that was waiting in its group: it joins the queue.
+    /// Start on a job that was waiting in its group: it joins the queue. (One whose job
+    /// has been emptied has nothing to do, and stays where it is.)
     mutating func start(_ id: UUID) {
         change(id) { job in
-            guard job.status == .idle else { return }
+            guard job.status == .idle, !job.task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            job.task = job.task.trimmingCharacters(in: .whitespacesAndNewlines)
             job.status = .queued
+        }
+    }
+
+    /// The longest a job may be.
+    static let longestTask = 6_000
+
+    /// Changes what a job that hasn't started will be asked to do, as it's typed. If it
+    /// was named after its job, its name follows.
+    mutating func rewrite(_ id: UUID, task: String) {
+        change(id) { job in
+            guard job.status == .idle else { return }
+            let before = job.task
+            job.task = String(task.prefix(AgentTeam.longestTask))
+            if var chain = job.chain {
+                guard chain.title == AgentChain.title(AgentBrief.name(for: before)) else { return }
+                chain.title = AgentChain.title(AgentBrief.name(for: job.task))
+                job.chain = chain
+                job.name = String(chain.agentName.prefix(40))
+            } else if job.name == AgentBrief.name(for: before) {
+                job.name = AgentBrief.name(for: job.task)
+            }
         }
     }
 

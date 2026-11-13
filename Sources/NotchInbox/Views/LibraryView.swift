@@ -140,7 +140,9 @@ struct LibrarySearchField: View {
     }
 
     private func takeFocus() {
-        if model.takeFocus(.search) {
+        guard model.takeFocus(.search) else { return }
+        // (A moment later, so that a box that has only just appeared is there to take it.)
+        DispatchQueue.main.async {
             typing = true
         }
     }

@@ -378,7 +378,9 @@ struct AgentGroupHeader: View {
     }
 
     private func takeFocus() {
-        if group != nil, model.takeFocus(.groupName) {
+        guard group != nil, model.takeFocus(.groupName) else { return }
+        // (A moment later, so that a name box that has only just appeared is there to take it.)
+        DispatchQueue.main.async {
             naming = true
         }
     }

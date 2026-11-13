@@ -67,8 +67,9 @@ struct MarkdownBlock: View {
         case .paragraph:
             AgentWords(text: block.text, size: size, colour: colour, fills: fills)
         case .gap:
+            // (A fixed width, so that a blank line doesn't stretch a chat bubble to full width.)
             Color.clear
-                .frame(height: 4)
+                .frame(width: 1, height: 4)
         }
     }
 

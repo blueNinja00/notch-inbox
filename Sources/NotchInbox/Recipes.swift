@@ -116,8 +116,8 @@ struct Recipe: Identifiable, Equatable, Codable {
         if blanks.isEmpty {
             return "Tip: put anything that changes each time in curly brackets, like {topic}, and it's asked for on each run."
         }
-        return chain ? "Ready. A researcher starts on it, then a writer and a checker follow."
-                     : "Ready. A new agent starts on it with these filled in."
+        return chain ? "Ready: add it to the group, or start it now. A researcher does it first, then a writer and a checker follow."
+                     : "Ready: add it to the group, or start it now."
     }
 
     /// The key of the first blank nothing has been typed into: where typing goes next.

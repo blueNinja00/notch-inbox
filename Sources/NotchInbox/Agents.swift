@@ -40,6 +40,8 @@ struct AgentStep: Codable, Equatable, Identifiable {
 /// A job handed to an agent, and how it's going.
 struct AgentJob: Codable, Equatable, Identifiable {
     enum Status: String, Codable {
+        /// Added to its group but not started: it waits until you press Start.
+        case idle
         /// Waiting for a free place: only so many agents work at once.
         case queued
         case working
@@ -85,8 +87,14 @@ struct AgentJob: Codable, Equatable, Identifiable {
     var chain: AgentChain?
     /// The chat the assistant handed it out from. Its report goes back there when it's done.
     var chat: UUID?
+    /// The group it's in; nil for the first group, which is always there.
+    var group: UUID?
 
     var isActive: Bool { status == .queued || status == .working }
+    /// Not started yet: it waits for Start.
+    var isIdle: Bool { status == .idle }
+    /// It ended, one way or another: done, couldn't finish, or stopped.
+    var isFinished: Bool { status == .done || status == .failed || status == .stopped }
 
     /// How long it has been working, or took.
     func elapsed(now: Date) -> TimeInterval {
@@ -97,6 +105,7 @@ struct AgentJob: Codable, Equatable, Identifiable {
     /// "Working", "Done", "Stopped"…
     var statusWord: String {
         switch status {
+        case .idle: return "Ready"
         case .queued: return "Waiting its turn"
         case .working: return "Working"
         case .done: return "Done"
@@ -114,6 +123,9 @@ struct AgentTeam: Codable, Equatable {
     private(set) var started = 0
     /// The floor each job is on.
     private(set) var floors: [UUID: Int] = [:]
+    /// The groups you've made, in the order they're listed. (The first group, for
+    /// everything that's in none of these, is always there and isn't kept here.)
+    private(set) var groups: [AgentGroup] = []
 
     /// How many finished jobs are kept.
     static let keepFinished = 30
@@ -123,7 +135,7 @@ struct AgentTeam: Codable, Equatable {
     static let mostReport = 60_000
 
     private enum CodingKeys: String, CodingKey {
-        case jobs, started, floors
+        case jobs, started, floors, groups
     }
 
     init() {}
@@ -132,6 +144,7 @@ struct AgentTeam: Codable, Equatable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         jobs = try values.decodeIfPresent([AgentJob].self, forKey: .jobs) ?? []
         started = try values.decodeIfPresent(Int.self, forKey: .started) ?? jobs.count
+        groups = (try? values.decodeIfPresent([AgentGroup].self, forKey: .groups)) ?? []
         let saved = try values.decodeIfPresent([String: Int].self, forKey: .floors) ?? [:]
         for (key, floor) in saved {
             if let id = UUID(uuidString: key) {
@@ -149,6 +162,7 @@ struct AgentTeam: Codable, Equatable {
             saved[id.uuidString] = floor
         }
         try values.encode(saved, forKey: .floors)
+        try values.encode(groups, forKey: .groups)
     }
 
     // MARK: Looking things up
@@ -177,10 +191,11 @@ struct AgentTeam: Codable, Equatable {
 
     // MARK: Changing things
 
-    /// A new job, waiting to start.
+    /// A new job. It joins the queue and starts when there's a free place, or with
+    /// `start` false it waits in its group until it's started.
     @discardableResult
     mutating func add(name: String, task: String, origin: AgentJob.Origin = .you, chain: AgentChain? = nil, chat: UUID? = nil,
-                      now: Date = Date()) -> AgentJob {
+                      group: UUID? = nil, start: Bool = true, now: Date = Date()) -> AgentJob {
         let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
         var title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty {
@@ -190,6 +205,8 @@ struct AgentTeam: Codable, Equatable {
                            created: Date(timeIntervalSince1970: now.timeIntervalSince1970.rounded(.down)))
         job.chain = chain
         job.chat = chat
+        job.group = self.group(group)?.id
+        job.status = start ? .queued : .idle
         started += 1
         floors[job.id] = started
         jobs.append(job)
@@ -265,9 +282,9 @@ struct AgentTeam: Codable, Equatable {
             job.problem = nil
             finishedNow = true
         }
-        // In a chain, the next agent takes over from here.
+        // In a chain, the next agent takes over from here, in the same group.
         if finishedNow, let done = job(id), let next = done.chain?.next(after: id) {
-            add(name: next.agentName, task: done.task, origin: done.origin, chain: next, chat: done.chat, now: now)
+            add(name: next.agentName, task: done.task, origin: done.origin, chain: next, chat: done.chat, group: done.group, now: now)
         }
     }
 
@@ -275,14 +292,14 @@ struct AgentTeam: Codable, Equatable {
     /// stage is added as the one before it finishes.
     @discardableResult
     mutating func addChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin = .you, source: UUID? = nil,
-                           chat: UUID? = nil, now: Date = Date()) -> AgentJob {
+                           chat: UUID? = nil, group: UUID? = nil, start: Bool = true, now: Date = Date()) -> AgentJob {
         let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         var name = AgentChain.title(title)
         if name.isEmpty {
             name = AgentChain.title(AgentBrief.name(for: task))
         }
         let first = AgentChain(kind: kind, title: name, source: source)
-        return add(name: first.agentName, task: task, origin: origin, chain: first, chat: chat, now: now)
+        return add(name: first.agentName, task: task, origin: origin, chain: first, chat: chat, group: group, start: start, now: now)
     }
 
     /// It couldn't finish. What it had written so far is kept.
@@ -314,9 +331,9 @@ struct AgentTeam: Codable, Equatable {
         guard let old = job(id) else { return nil }
         // One stage of a chain done again carries on down the chain from there.
         if let link = old.chain {
-            return add(name: link.agentName, task: old.task, origin: old.origin, chain: link, chat: old.chat, now: now)
+            return add(name: link.agentName, task: old.task, origin: old.origin, chain: link, chat: old.chat, group: old.group, now: now)
         }
-        return add(name: old.name, task: old.task, origin: old.origin, chat: old.chat, now: now)
+        return add(name: old.name, task: old.task, origin: old.origin, chat: old.chat, group: old.group, now: now)
     }
 
     /// What it has used, as counted so far or at the end.
@@ -354,11 +371,85 @@ struct AgentTeam: Codable, Equatable {
         floors = floors.filter { entry in jobs.contains { $0.id == entry.key } }
     }
 
-    /// Clears away every job that isn't still going, or that a chain still going is built on.
+    /// Clears away every job that has ended, except ones a chain still going is built on.
+    /// (Jobs that haven't been started yet stay.)
     mutating func clearFinished() {
         let held = heldForChains
-        jobs.removeAll { !$0.isActive && !held.contains($0.id) }
+        jobs.removeAll { $0.isFinished && !held.contains($0.id) }
         floors = floors.filter { entry in jobs.contains { $0.id == entry.key } }
+    }
+
+    /// The same, for one group.
+    mutating func clearFinished(in group: UUID?) {
+        let held = heldForChains
+        let going = Set(self.jobs(in: group).filter { $0.isFinished && !held.contains($0.id) }.map { $0.id })
+        jobs.removeAll { going.contains($0.id) }
+        floors = floors.filter { entry in jobs.contains { $0.id == entry.key } }
+    }
+
+    // MARK: Starting what's waiting
+
+    /// Start on a job that was waiting in its group: it joins the queue.
+    mutating func start(_ id: UUID) {
+        change(id) { job in
+            guard job.status == .idle else { return }
+            job.status = .queued
+        }
+    }
+
+    /// Start on every job waiting in a group, oldest first. Returns how many there were.
+    @discardableResult
+    mutating func startAll(in group: UUID?) -> Int {
+        let waiting = self.jobs(in: group).filter { $0.isIdle }
+        for job in waiting {
+            start(job.id)
+        }
+        return waiting.count
+    }
+
+    // MARK: Groups
+
+    /// How many groups you can make, and how long a group's name may be.
+    static let mostGroups = 12
+    static let longestGroupName = 30
+
+    /// A new group, at the end of the list. Without a name it's "Group 2", "Group 3"…
+    /// nil once there are as many as there can be.
+    @discardableResult
+    mutating func addGroup(name: String = "", now: Date = Date()) -> AgentGroup? {
+        guard groups.count < AgentTeam.mostGroups else { return nil }
+        var title = AgentGroup.clean(name)
+        if title.isEmpty {
+            var number = groups.count + 2
+            while groups.contains(where: { $0.name == "Group \(number)" }) {
+                number += 1
+            }
+            title = "Group \(number)"
+        }
+        let group = AgentGroup(name: title, created: now)
+        groups.append(group)
+        return group
+    }
+
+    /// A group's new name, as it's typed.
+    mutating func renameGroup(_ id: UUID, to name: String) {
+        guard let index = groups.firstIndex(where: { $0.id == id }) else { return }
+        groups[index].name = String(name.filter { !$0.isNewline }.prefix(AgentTeam.longestGroupName))
+    }
+
+    /// Takes a group away. What was in it goes to the first group: nothing is lost.
+    mutating func removeGroup(_ id: UUID) {
+        guard groups.contains(where: { $0.id == id }) else { return }
+        groups.removeAll { $0.id == id }
+        for index in jobs.indices where jobs[index].group == id {
+            jobs[index].group = nil
+        }
+    }
+
+    /// Puts a job in another group (nil: the first group).
+    mutating func move(_ id: UUID, to group: UUID?) {
+        let target = self.group(group)?.id
+        change(id) { $0.group = target }
     }
 
     /// At launch: anything that was still going was cut off when the app quit.
@@ -369,10 +460,10 @@ struct AgentTeam: Codable, Equatable {
         }
     }
 
-    /// Keeps the newest finished jobs and lets the oldest go.
+    /// Keeps the newest finished jobs and lets the oldest go. (Jobs not started yet stay.)
     private mutating func trim() {
         let held = heldForChains
-        let finished = jobs.filter { !$0.isActive && !held.contains($0.id) }
+        let finished = jobs.filter { $0.isFinished && !held.contains($0.id) }
         guard finished.count > AgentTeam.keepFinished else { return }
         let going = Set(finished.prefix(finished.count - AgentTeam.keepFinished).map { $0.id })
         jobs.removeAll { going.contains($0.id) }
@@ -548,6 +639,8 @@ extension AgentJob {
     /// The line under the agent's name in the room: what it's doing, or how it ended.
     var summary: String {
         switch status {
+        case .idle:
+            return "Ready: press Start"
         case .queued:
             // Held back by the day's usage cap, it says so.
             return activity.isEmpty ? "Waiting its turn" : activity
@@ -574,6 +667,8 @@ extension AgentJob {
         var parts: [String] = []
         let time = clock(now: now)
         switch status {
+        case .idle:
+            parts.append("Ready to start")
         case .queued:
             parts.append("Waiting its turn")
         case .working:

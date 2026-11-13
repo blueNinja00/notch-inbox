@@ -1,70 +1,6 @@
 import AppKit
 import SwiftUI
 
-// MARK: The room's two shelves
-
-/// At the top of the tower, under the team chat: the library and the recipes.
-struct AgentShelfTabs: View {
-    @ObservedObject var model: NotchModel
-    @ObservedObject var reports: ReportsStore
-
-    var body: some View {
-        HStack(spacing: 6) {
-            AgentShelfTab(title: "Library", symbol: "books.vertical.fill", count: reports.library.reports.count,
-                          selected: model.agentsPage == .library,
-                          tip: "Every report your agents have finished, kept to search and pin",
-                          open: { model.openLibrary() })
-            AgentShelfTab(title: "Recipes", symbol: "text.book.closed.fill", count: 0,
-                          selected: model.agentsPage == .recipes,
-                          tip: "Jobs you hand out often, saved to run again",
-                          open: { model.openRecipes() })
-        }
-    }
-}
-
-struct AgentShelfTab: View {
-    let title: String
-    let symbol: String
-    let count: Int
-    let selected: Bool
-    let tip: String
-    let open: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(selected ? Theme.text : Theme.secondary)
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(selected ? Theme.text : Theme.text2)
-                .lineLimit(1)
-            if count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Theme.tertiary)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 28)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(fill))
-        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onTapGesture(perform: open)
-        .onHover { hovering = $0 }
-        .help(tip)
-        .accessibilityLabel(Text(title))
-        .accessibilityAddTraits(.isButton)
-    }
-
-    private var fill: Color {
-        if selected {
-            return Theme.raised
-        }
-        return hovering ? Theme.hover.opacity(0.55) : Theme.surface.opacity(0.6)
-    }
-}
-
 // MARK: The library
 
 /// How the library's pieces look.
@@ -131,7 +67,7 @@ struct ReportList: View {
                     .foregroundStyle(Theme.tertiary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                LibrarySearchField(text: $model.librarySearch)
+                LibrarySearchField(model: model)
             }
             if !subjects.isEmpty {
                 LibrarySubjectBar(subjects: subjects, picked: picked, table: table, pick: pick)
@@ -171,25 +107,42 @@ struct ReportList: View {
 
 /// The library's search box: it looks through names, jobs and the reports themselves.
 struct LibrarySearchField: View {
-    @Binding var text: String
+    @ObservedObject var model: NotchModel
+    @FocusState private var typing: Bool
+
+    init(model: NotchModel) {
+        self.model = model
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.tertiary)
-            TextField("Search your reports", text: $text)
+            TextField("Search your reports", text: $model.librarySearch)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.text)
-            if !text.isEmpty {
-                IconButton(symbol: "xmark", label: "Clear the search", size: 20, tint: Theme.tertiary, action: { text = "" })
+                .focused($typing)
+            if !model.librarySearch.isEmpty {
+                IconButton(symbol: "xmark", label: "Clear the search (Esc)", size: 20, tint: Theme.tertiary, action: { model.librarySearch = "" })
             }
         }
         .padding(.leading, 9)
         .padding(.trailing, 4)
         .frame(width: 230, height: 26)
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.raised))
+        // The Search shortcut puts the cursor here.
+        .onAppear(perform: takeFocus)
+        .onChange(of: model.agentsFocusTick) { _ in
+            takeFocus()
+        }
+    }
+
+    private func takeFocus() {
+        if model.takeFocus(.search) {
+            typing = true
+        }
     }
 }
 

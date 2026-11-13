@@ -27,22 +27,50 @@ final class AgentRunner {
 
     /// Hands out a job. It starts as soon as there's a free place.
     @discardableResult
-    func start(name: String, task: String, origin: AgentJob.Origin, chat: UUID? = nil) -> AgentJob? {
+    func start(name: String, task: String, origin: AgentJob.Origin, chat: UUID? = nil, group: UUID? = nil) -> AgentJob? {
         guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var added: AgentJob?
-        store.change { added = $0.add(name: name, task: task, origin: origin, chat: chat) }
+        store.change { added = $0.add(name: name, task: task, origin: origin, chat: chat, group: group) }
         pump()
         return added
+    }
+
+    /// Starts a job that was waiting in its group for you to press Start.
+    func startWaiting(_ id: UUID) {
+        store.change { $0.start(id) }
+        pump()
+    }
+
+    /// Starts every job waiting in a group.
+    func startAll(in group: UUID?) {
+        store.change { $0.startAll(in: group) }
+        pump()
+    }
+
+    /// Stops everything in a group that's working or waiting its turn: the waiting ones
+    /// first, so that none of them starts as the others stop.
+    func stopAll(in group: UUID?) {
+        let going = store.team.jobs(in: group).filter { $0.isActive }
+        for job in going where job.status == .queued {
+            stop(job.id)
+        }
+        for job in going where job.status == .working {
+            stop(job.id)
+        }
+    }
+
+    func clearFinished(in group: UUID?) {
+        store.change { $0.clearFinished(in: group) }
     }
 
     /// Hands a job to a chain: a researcher starts on it, and each of the others takes
     /// over as the one before finishes. `source` is the assignment it's for, if any.
     @discardableResult
     func startChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin, source: UUID? = nil,
-                    chat: UUID? = nil) -> AgentJob? {
+                    chat: UUID? = nil, group: UUID? = nil) -> AgentJob? {
         guard !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var added: AgentJob?
-        store.change { added = $0.addChain(title: title, goal: goal, kind: kind, origin: origin, source: source, chat: chat) }
+        store.change { added = $0.addChain(title: title, goal: goal, kind: kind, origin: origin, source: source, chat: chat, group: group) }
         pump()
         return added
     }

@@ -11,6 +11,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case timetable
     case planner
     case extras
+    case shortcuts
     case gmail
     case updates
 
@@ -24,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .timetable: return "Timetable"
         case .planner: return "Planner"
         case .extras: return "Extras"
+        case .shortcuts: return "Shortcuts"
         case .gmail: return "Gmail link"
         case .updates: return "Updates"
         }
@@ -37,6 +39,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .timetable: return "calendar"
         case .planner: return "checklist"
         case .extras: return "tray.full"
+        case .shortcuts: return "keyboard"
         case .gmail: return "link"
         case .updates: return "arrow.down.circle"
         }
@@ -404,6 +407,47 @@ final class AppSettings: ObservableObject {
             guard agentsChime != oldValue else { return }
             UserDefaults.standard.set(agentsChime, forKey: AppSettings.agentsChimeKey)
         }
+    }
+
+    // MARK: Shortcuts
+
+    /// Your shortcuts: what each key does in the open notch.
+    @Published var keybinds: Keybinds = Keybinds.saved(in: .standard) {
+        didSet {
+            guard keybinds != oldValue else { return }
+            keybinds.save(in: .standard)
+        }
+    }
+
+    /// Gives an action a key, and says what happened (or why the key can't be used).
+    @discardableResult
+    func setKey(_ combo: KeyCombo, for action: KeyAction) -> String {
+        if let problem = combo.problem {
+            return problem
+        }
+        var binds = keybinds
+        let other = binds.set(combo, for: action)
+        keybinds = binds
+        return Keybinds.note(set: combo, for: action, taking: other)
+    }
+
+    func clearKey(_ action: KeyAction) {
+        var binds = keybinds
+        binds.clear(action)
+        keybinds = binds
+    }
+
+    /// Puts an action back on its own key. Says so if that took the key from another.
+    @discardableResult
+    func resetKey(_ action: KeyAction) -> String? {
+        var binds = keybinds
+        let other = binds.reset(action)
+        keybinds = binds
+        return other.map { "“\($0.title)” has no key any more." }
+    }
+
+    func resetKeys() {
+        keybinds = Keybinds()
     }
 
     /// Whether an agent the assistant started sends its report back to the chat it was

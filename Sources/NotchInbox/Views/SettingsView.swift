@@ -51,6 +51,8 @@ struct SettingsView: View {
                             }
                         case .extras:
                             ExtrasSettings(model: model, settings: settings, timer: FocusTimer.shared)
+                        case .shortcuts:
+                            ShortcutSettings(model: model, settings: settings)
                         case .gmail:
                             GmailLinkSettings(settings: settings)
                         case .updates:

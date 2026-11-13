@@ -424,8 +424,39 @@ final class NotchModel: ObservableObject {
     /// Your agents and their jobs, shared by every screen (set by the app).
     var agentsStore: AgentsStore?
 
-    /// The agent whose work is showing on the right of the Agents room.
+    /// The task that's picked out in the Agents room: the one its shortcuts act on.
     @Published var agentOpen: UUID?
+    /// Whether the picked task's own page (its job, what it did, its report) is showing in
+    /// place of its group's table.
+    @Published var agentShowsWork = false
+    /// The group whose tasks are showing; nil is the first group, General.
+    @Published var agentGroupOpen: UUID?
+
+    /// Somewhere in the room to put the typing cursor.
+    enum AgentsFocus: Equatable {
+        /// The box a new task is typed in.
+        case box
+        case groupName
+        case search
+    }
+
+    /// Where a shortcut or a button last asked for the cursor, and a count that goes up
+    /// each time it's asked, so that asking twice for the same place still counts.
+    @Published private(set) var agentsFocus: AgentsFocus?
+    @Published private(set) var agentsFocusTick = 0
+
+    func focusAgents(_ place: AgentsFocus) {
+        agentsFocus = place
+        agentsFocusTick += 1
+    }
+
+    /// For the view that owns a place: whether the cursor was asked for there. Asking
+    /// uses the request up.
+    func takeFocus(_ place: AgentsFocus) -> Bool {
+        guard agentsFocus == place else { return false }
+        agentsFocus = nil
+        return true
+    }
     /// The job being typed for a new agent.
     @Published var agentDraft = ""
     /// Whether the job in the box goes to a chain: a researcher, a writer, then a checker.
@@ -473,7 +504,7 @@ final class NotchModel: ObservableObject {
     /// otherwise a job for a new agent.
     func sendAgentDraft() {
         guard teamChatOpen else {
-            startDraftedAgent()
+            addDraftedTask()
             return
         }
         let said = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -486,7 +517,38 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    /// Hands the job in the box to a new agent, or to a chain of them.
+    /// The job in the box joins the group that's showing, ready to start: it waits there
+    /// until you press Start on it or on its group.
+    func addDraftedTask() {
+        if addTask(agentDraft, chain: agentDraftChain) {
+            agentDraft = ""
+            agentDraftChain = false
+        }
+    }
+
+    /// Adds a task to the group that's showing without starting it. Returns false if
+    /// there was nothing to add.
+    @discardableResult
+    func addTask(_ task: String, name: String = "", chain: Bool = false) -> Bool {
+        let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !brief.isEmpty, let store = agentsStore else { return false }
+        let group = store.team.group(agentGroupOpen)?.id
+        var added: AgentJob?
+        store.change { team in
+            if chain {
+                added = team.addChain(title: name, goal: brief, kind: .write, group: group, start: false)
+            } else {
+                added = team.add(name: name, task: brief, group: group, start: false)
+            }
+        }
+        agentsPage = .agent
+        agentShowsWork = false
+        agentGroupOpen = group
+        agentOpen = added?.id ?? agentOpen
+        return true
+    }
+
+    /// Hands the job in the box to a new agent, or to a chain of them, straight away.
     func startDraftedAgent() {
         if agentDraftChain {
             if startChain(goal: agentDraft) {
@@ -506,6 +568,15 @@ final class NotchModel: ObservableObject {
     var onCarryOnChain: ((UUID) -> UUID?)?
     /// Has agents research an assignment (set by the app).
     var onResearchAssignment: ((UUID) -> UUID?)?
+    /// Starts a task that was waiting, starts or stops a whole group, or clears a group's
+    /// finished tasks (set by the app, which runs the agents).
+    var onStartWaiting: ((UUID) -> Void)?
+    var onStartGroup: ((UUID?) -> Void)?
+    var onStopGroup: ((UUID?) -> Void)?
+    var onClearGroup: ((UUID?) -> Void)?
+    /// Whether the assistant is set up to do the work (set by the app). If it isn't,
+    /// pressing Start opens its page, which says what to set up.
+    var agentsCanStart: (() -> Bool)?
     var onStopAgent: ((UUID) -> Void)?
     var onAgentAgain: ((UUID) -> UUID?)?
     var onRemoveAgent: ((UUID) -> Void)?
@@ -514,13 +585,23 @@ final class NotchModel: ObservableObject {
     var onShowAgentFolder: ((UUID) -> Void)?
     var onOpenAgentFile: ((UUID, String) -> Void)?
 
-    /// The Agents room: every agent, newest on top, with the one you pick on the right.
+    /// The Agents room: your groups down the side, and the tasks of the one you pick.
     func openAgents() {
         tool = .agents
-        if agentsStore?.team.job(agentOpen) == nil {
-            agentOpen = agentsStore?.team.newestFirst.first?.id
-        }
+        settleAgents()
         level = .lanes
+    }
+
+    /// Keeps what's picked real: a group that's still there, and a task that's in it.
+    private func settleAgents() {
+        guard let team = agentsStore?.team else { return }
+        agentGroupOpen = team.group(agentGroupOpen)?.id
+        if let picked = team.job(agentOpen) {
+            agentGroupOpen = team.group(picked.group)?.id
+        } else {
+            agentOpen = team.jobs(in: agentGroupOpen).first?.id
+            agentShowsWork = false
+        }
     }
 
     func expandAgents() {
@@ -538,9 +619,220 @@ final class NotchModel: ObservableObject {
         tool = .agents
         agentsPage = .agent
         agentOpen = id
+        agentShowsWork = true
+        if let job = agentsStore?.team.job(id) {
+            agentGroupOpen = agentsStore?.team.group(job.group)?.id
+        }
         if level == .rest || level == .peek {
             level = .lanes
         }
+    }
+
+    /// Back from a task's own page to its group's table. The task stays picked.
+    func closeAgent() {
+        agentShowsWork = false
+    }
+
+    /// Picks a task in the table without opening it.
+    func pickAgent(_ id: UUID) {
+        guard let job = agentsStore?.team.job(id) else { return }
+        agentsPage = .agent
+        agentGroupOpen = agentsStore?.team.group(job.group)?.id
+        agentOpen = id
+    }
+
+    // MARK: Groups
+
+    /// Shows a group's tasks (nil: the first group, General).
+    func showGroup(_ id: UUID?) {
+        tool = .agents
+        agentsPage = .agent
+        agentShowsWork = false
+        let group = agentsStore?.team.group(id)?.id
+        if group != agentGroupOpen || agentsStore?.team.job(agentOpen) == nil {
+            agentGroupOpen = group
+            agentOpen = agentsStore?.team.jobs(in: group).first?.id
+        }
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// A new group, opened with its name ready to type over. (Nothing happens once
+    /// there are as many groups as there can be.)
+    func newGroup() {
+        guard let store = agentsStore else { return }
+        var made: AgentGroup?
+        store.change { made = $0.addGroup() }
+        guard let group = made else { return }
+        showGroup(group.id)
+        focusAgents(.groupName)
+    }
+
+    func renameGroup(_ id: UUID, to name: String) {
+        agentsStore?.change { $0.renameGroup(id, to: name) }
+    }
+
+    /// Takes a group away. Its tasks go to General.
+    func removeGroup(_ id: UUID) {
+        agentsStore?.change { $0.removeGroup(id) }
+        if agentGroupOpen == id {
+            agentGroupOpen = nil
+            settleAgents()
+        }
+    }
+
+    /// Moves a task to another group, and follows it there if it was the one picked.
+    func moveAgent(_ id: UUID, to group: UUID?) {
+        agentsStore?.change { $0.move(id, to: group) }
+        if agentOpen == id, !agentShowsWork {
+            agentOpen = agentsStore?.team.jobs(in: agentGroupOpen).first?.id
+        } else if agentOpen == id {
+            agentGroupOpen = agentsStore?.team.group(group)?.id
+        }
+    }
+
+    /// Whether the work can start. If the assistant isn't set up, its page opens to say
+    /// what's missing, and nothing starts.
+    private func readyToStart() -> Bool {
+        if agentsCanStart?() == false {
+            openAssistant()
+            return false
+        }
+        return true
+    }
+
+    /// Start on a task that was waiting in its group.
+    func startTask(_ id: UUID) {
+        guard agentsStore?.team.job(id)?.isIdle == true, readyToStart() else { return }
+        if let start = onStartWaiting {
+            start(id)
+        } else {
+            agentsStore?.change { $0.start(id) }
+        }
+    }
+
+    /// Start on every task waiting in the group that's showing.
+    func startGroup() {
+        guard let team = agentsStore?.team, team.tally(in: agentGroupOpen).idle > 0, readyToStart() else { return }
+        if let start = onStartGroup {
+            start(agentGroupOpen)
+        } else {
+            agentsStore?.change { $0.startAll(in: agentGroupOpen) }
+        }
+    }
+
+    /// Stop everything in the group that's showing that's working or waiting its turn.
+    func stopGroup() {
+        if let stop = onStopGroup {
+            stop(agentGroupOpen)
+        } else if let team = agentsStore?.team {
+            for job in team.jobs(in: agentGroupOpen) where job.isActive {
+                stopAgent(job.id)
+            }
+        }
+    }
+
+    /// Takes the finished tasks out of the group that's showing. Their reports stay in
+    /// the library.
+    func clearGroup() {
+        if let clear = onClearGroup {
+            clear(agentGroupOpen)
+        } else {
+            agentsStore?.change { $0.clearFinished(in: agentGroupOpen) }
+        }
+        if agentsStore?.team.job(agentOpen) == nil {
+            agentOpen = agentsStore?.team.jobs(in: agentGroupOpen).first?.id
+            agentShowsWork = false
+        }
+    }
+
+    /// Picks the next task down the table (or the one above), without opening it.
+    func pickTask(by offset: Int) {
+        guard let team = agentsStore?.team else { return }
+        agentsPage = .agent
+        if let next = team.job(after: agentOpen, in: agentGroupOpen, by: offset) {
+            agentOpen = next
+        }
+    }
+
+    // MARK: Shortcuts
+
+    /// The shortcut being set in Settings: the next keys pressed become its key.
+    @Published var recordingKey: KeyAction?
+    /// What happened the last time a key was set, or why it couldn't be.
+    @Published var keyNote: String?
+
+    /// Does what a shortcut is for. False if it has nothing to act on right now.
+    @discardableResult
+    func perform(_ action: KeyAction) -> Bool {
+        let team = agentsStore?.team
+        let picked = team?.job(agentOpen)
+        switch action {
+        case .goHome: goHome()
+        case .goMail: open(.mail)
+        case .goPlanner: open(.planner)
+        case .goTimetable: open(.timetable)
+        case .goAssignments: open(.assignments)
+        case .goNotes: open(.notes)
+        case .goAssistant: open(.assistant)
+        case .goAgents: open(.agents)
+        case .goBookmarks: open(.bookmarks)
+        case .goSettings: openSettings()
+        case .newTask:
+            agentsPage = .agent
+            agentShowsWork = false
+            focusAgents(.box)
+        case .newGroup:
+            newGroup()
+        case .startAll:
+            startGroup()
+        case .stopAll:
+            stopGroup()
+        case .clearDone:
+            clearGroup()
+        case .nextTask:
+            pickTask(by: 1)
+        case .previousTask:
+            pickTask(by: -1)
+        case .nextGroup:
+            showGroup(team?.group(after: agentGroupOpen, by: 1))
+        case .previousGroup:
+            showGroup(team?.group(after: agentGroupOpen, by: -1))
+        case .chain:
+            agentDraftChain.toggle()
+        case .library:
+            openLibrary()
+        case .recipes:
+            openRecipes()
+        case .teamChat:
+            openTeamChat()
+        case .searchLibrary:
+            if agentsPage != .library || reportOpen != nil {
+                agentsPage = .library
+                closeReport()
+            }
+            focusAgents(.search)
+        case .toggleTask:
+            guard agentsPage == .agent, let job = picked else { return false }
+            if job.isIdle {
+                startTask(job.id)
+            } else if job.isActive {
+                stopAgent(job.id)
+            } else {
+                return false
+            }
+        case .againTask:
+            guard agentsPage == .agent, let job = picked, job.isFinished else { return false }
+            agentAgain(job.id)
+        case .openTask:
+            guard agentsPage == .agent, picked != nil else { return false }
+            agentShowsWork.toggle()
+        case .removeTask:
+            guard agentsPage == .agent, let job = picked, !job.isActive, team?.heldForChains.contains(job.id) != true else { return false }
+            removeAgent(job.id)
+        }
+        return true
     }
 
     /// Gives an agent a job you typed. Returns false if nothing was typed.
@@ -549,13 +841,15 @@ final class NotchModel: ObservableObject {
         let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else { return false }
         agentsPage = .agent
+        agentShowsWork = false
         if let start = onStartAgent {
             if let id = start(name, brief) {
+                agentsStore?.change { $0.move(id, to: agentGroupOpen) }
                 agentOpen = id
             }
         } else if let store = agentsStore {
             var added: AgentJob?
-            store.change { added = $0.add(name: name, task: brief) }
+            store.change { added = $0.add(name: name, task: brief, group: agentGroupOpen) }
             agentOpen = added?.id ?? agentOpen
         }
         return true
@@ -568,13 +862,15 @@ final class NotchModel: ObservableObject {
         let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return false }
         agentsPage = .agent
+        agentShowsWork = false
         if let start = onStartChain {
             if let id = start(title, task) {
+                agentsStore?.change { $0.move(id, to: agentGroupOpen) }
                 agentOpen = id
             }
         } else if let store = agentsStore {
             var added: AgentJob?
-            store.change { added = $0.addChain(title: title, goal: task, kind: .write) }
+            store.change { added = $0.addChain(title: title, goal: task, kind: .write, group: agentGroupOpen) }
             agentOpen = added?.id ?? agentOpen
         }
         return true
@@ -636,7 +932,8 @@ final class NotchModel: ObservableObject {
             agentsStore?.change { $0.remove(id) }
         }
         if agentsStore?.team.job(agentOpen) == nil {
-            agentOpen = agentsStore?.team.newestFirst.first?.id
+            agentOpen = agentsStore?.team.jobs(in: agentGroupOpen).first?.id
+            agentShowsWork = false
         }
     }
 
@@ -647,13 +944,19 @@ final class NotchModel: ObservableObject {
             agentsStore?.change { $0.clearFinished() }
         }
         if agentsStore?.team.job(agentOpen) == nil {
-            agentOpen = agentsStore?.team.newestFirst.first?.id
+            agentOpen = agentsStore?.team.jobs(in: agentGroupOpen).first?.id
+            agentShowsWork = false
         }
     }
 
-    /// Esc in the agent room: back from an open report or recipe to its list, or out of a
-    /// search of the library. False if there was nothing to step back from.
+    /// Esc in the agent room: back from a task's own page to its group, from an open report
+    /// or recipe to its list, or out of a search of the library. False if there was
+    /// nothing to step back from.
     func stepBackInAgents() -> Bool {
+        if agentsPage == .agent, agentShowsWork, agentsStore?.team.job(agentOpen) != nil {
+            closeAgent()
+            return true
+        }
         if agentsPage == .library, reportOpen != nil {
             closeReport()
             return true
@@ -678,6 +981,8 @@ final class NotchModel: ObservableObject {
     @Published var recipeOpen: UUID?
     /// What's been typed into the open recipe's blanks, by each blank's key.
     @Published var recipeBlanks: [String: String] = [:]
+    /// What became of the last run added from a recipe: "Added to Biology: …".
+    @Published var recipeNote: String?
 
     /// The Recipes page of the agent room: back at the recipe you had open, or the list.
     /// (Clicked again while it's showing, it goes back to the list.)
@@ -701,6 +1006,7 @@ final class NotchModel: ObservableObject {
         if recipeOpen != id {
             recipeOpen = id
             recipeBlanks = [:]
+            recipeNote = nil
         }
         if level == .rest || level == .peek {
             level = .lanes
@@ -711,6 +1017,7 @@ final class NotchModel: ObservableObject {
     func closeRecipe() {
         recipeOpen = nil
         recipeBlanks = [:]
+        recipeNote = nil
         recipesStore?.change { $0.tidy() }
     }
 
@@ -777,6 +1084,42 @@ final class NotchModel: ObservableObject {
                                    : startAgent(task: job, name: recipe.agentName(with: values))
         guard started else { return false }
         recipesStore?.change { $0.used(id) }
+        recipeNote = nil
+        if recipeOpen == id {
+            recipeBlanks = [:]
+        }
+        return true
+    }
+
+    /// Adds a run of a recipe to the group that's showing without starting it: it waits
+    /// there for Start, like a task typed in the box. You stay on the recipe, its blanks
+    /// emptied, so that several runs can be lined up one after another. If a blank is
+    /// still empty, the recipe opens to be filled in instead, and this returns false.
+    @discardableResult
+    func queueRecipe(_ id: UUID) -> Bool {
+        guard let recipe = recipesStore?.book.recipe(id) else { return false }
+        let values = recipeOpen == id ? recipeBlanks : [:]
+        guard recipe.isReady(with: values) else {
+            showRecipe(id)
+            return false
+        }
+        guard let store = agentsStore else { return false }
+        let job = recipe.job(with: values)
+        let group = store.team.group(agentGroupOpen)?.id
+        var added: AgentJob?
+        store.change { team in
+            if recipe.chain {
+                added = team.addChain(title: recipe.chainTitle(with: values), goal: job, kind: .write, group: group, start: false)
+            } else {
+                added = team.add(name: recipe.agentName(with: values), task: job, group: group, start: false)
+            }
+        }
+        guard let task = added else { return false }
+        agentGroupOpen = group
+        agentOpen = task.id
+        agentShowsWork = false
+        recipesStore?.change { $0.used(id) }
+        recipeNote = "Added to \(store.team.groupName(group)): \(task.name). It waits there until you press Start."
         if recipeOpen == id {
             recipeBlanks = [:]
         }
@@ -1498,6 +1841,7 @@ final class NotchModel: ObservableObject {
 
     func close() {
         level = .rest
+        recordingKey = nil
         sentFrom = nil
         homePinned = false
         endSearch()

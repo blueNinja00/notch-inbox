@@ -627,6 +627,10 @@ struct AccountSettings: View {
                 }
             }
         }
+        if !settings.accounts.isEmpty {
+            SettingsDivider()
+            LinkPlaceSettings(settings: settings)
+        }
         SettingsDivider()
         MailStorageSettings(settings: settings)
     }

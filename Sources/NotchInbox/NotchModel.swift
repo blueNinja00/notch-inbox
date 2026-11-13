@@ -1980,9 +1980,41 @@ final class NotchModel: ObservableObject {
 
     // MARK: Gmail in the browser
 
+    /// Opens a web page that belongs with one of your inboxes (a link in one of its emails,
+    /// or its Gmail), in the browser profile that inbox is signed in to. Set by the app.
+    var onOpenAccountURL: ((URL, String) -> Void)?
+
+    /// Opens a page for an inbox. Without one, a Gmail link still says whose it is; any
+    /// other page opens the way links always have.
+    func open(_ url: URL, for accountID: String?) {
+        let id = accountID ?? self.accountID(inGmailLink: url)
+        if let id = id, let email = account(id)?.email, !email.isEmpty, let open = onOpenAccountURL {
+            open(url, email)
+        } else {
+            onOpenURL?(url)
+        }
+    }
+
+    /// The inbox a Gmail link is for: the one whose address it carries.
+    func accountID(inGmailLink url: URL) -> String? {
+        guard url.host?.lowercased() == "mail.google.com",
+              let user = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "authuser" })?.value,
+              !user.isEmpty else { return nil }
+        return accounts.first { account in
+            account.email.map { BrowserProfiles.same($0, user) } ?? false
+        }?.id
+    }
+
+    /// Opens a planner task's link (its page in Classroom, or its email in Gmail) where
+    /// the inbox its email came to is signed in.
+    func openTaskLink(_ link: URL, emailID: String?) {
+        let from = emailID.flatMap { id in messages.first { $0.id == id }?.accountID }
+        open(link, for: from)
+    }
+
     func openInGmail() {
-        if let link = openMessage?.link {
-            onOpenURL?(link)
+        if let message = openMessage, let link = message.link {
+            open(link, for: message.accountID)
         } else {
             openAccountInGmail(activeAccountID)
         }
@@ -1990,7 +2022,7 @@ final class NotchModel: ObservableObject {
 
     func openAccountInGmail(_ accountID: String) {
         if let url = gmailURL(for: accountID) {
-            onOpenURL?(url)
+            open(url, for: accountID)
         }
     }
 
@@ -2001,16 +2033,17 @@ final class NotchModel: ObservableObject {
                        URLQueryItem(name: "fs", value: "1"),
                        URLQueryItem(name: "tf", value: "1")]
         if let url = gmailURL(for: accountID, extra: compose) {
-            onOpenURL?(url)
+            open(url, for: accountID)
         }
     }
 
-    /// A link clicked inside an email. Web links open in the browser; email addresses
-    /// start a new message in Gmail from the inbox that's open.
+    /// A link clicked inside an email. Web links open in the browser, in the profile the
+    /// email's inbox is signed in to; email addresses start a new message in Gmail from
+    /// the inbox that's open.
     func openLink(_ url: URL) {
         switch url.scheme?.lowercased() {
         case "http", "https":
-            onOpenURL?(url)
+            open(url, for: openMessage?.accountID)
         case "mailto":
             let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
             var compose = [URLQueryItem(name: "view", value: "cm"),
@@ -2030,7 +2063,7 @@ final class NotchModel: ObservableObject {
                 }
             }
             if let link = gmailURL(for: activeAccountID, extra: compose) {
-                onOpenURL?(link)
+                open(link, for: activeAccountID)
             }
         default:
             break

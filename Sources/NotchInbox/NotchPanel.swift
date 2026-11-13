@@ -247,6 +247,10 @@ final class NotchWindowController {
                 model.assignmentOpen = nil
                 return nil
             }
+            // In the agent room, Esc first steps back from a report or a recipe to its list.
+            if model.tool == .agents && (model.level == .lanes || model.level == .detail) && model.stepBackInAgents() {
+                return nil
+            }
             // In Mail, Esc first closes the search box.
             if model.tool == .mail && model.searching {
                 model.endSearch()

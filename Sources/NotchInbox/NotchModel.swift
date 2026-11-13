@@ -432,10 +432,32 @@ final class NotchModel: ObservableObject {
     /// It switches itself off after each chain, since a chain uses three agents' worth.
     @Published var agentDraftChain = false
 
+    /// What shows beside the tower in the agent room.
+    enum AgentsPage: Equatable {
+        /// The agent you picked (or, with none picked, what the room is for).
+        case agent
+        case teamChat
+        /// Every finished report, kept to find again.
+        case library
+        /// Jobs saved to run again.
+        case recipes
+    }
+
+    @Published var agentsPage = AgentsPage.agent
+
     /// The team chat agents share with the chief of staff and you (set by the app).
     var teamStore: TeamStore?
     /// Whether the team chat is showing in the agent room, in place of one agent.
-    @Published var teamChatOpen = false
+    var teamChatOpen: Bool {
+        get { agentsPage == .teamChat }
+        set {
+            if newValue {
+                agentsPage = .teamChat
+            } else if agentsPage == .teamChat {
+                agentsPage = .agent
+            }
+        }
+    }
     var onPostToTeam: ((String) -> Void)?
     var onClearTeamChat: (() -> Void)?
 
@@ -506,9 +528,15 @@ final class NotchModel: ObservableObject {
         level = .detail
     }
 
+    /// Shows an agent's floor. One that has left the room is shown in the library, where
+    /// its report is kept.
     func showAgent(_ id: UUID) {
+        if agentsStore?.team.job(id) == nil, let kept = reportsStore?.library.entry(holding: id) {
+            showReport(kept.id, part: kept.parts.first { $0.id == id }?.id)
+            return
+        }
         tool = .agents
-        teamChatOpen = false
+        agentsPage = .agent
         agentOpen = id
         if level == .rest || level == .peek {
             level = .lanes
@@ -520,6 +548,7 @@ final class NotchModel: ObservableObject {
     func startAgent(task: String, name: String = "") -> Bool {
         let brief = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty else { return false }
+        agentsPage = .agent
         if let start = onStartAgent {
             if let id = start(name, brief) {
                 agentOpen = id
@@ -538,7 +567,7 @@ final class NotchModel: ObservableObject {
     func startChain(goal: String, title: String = "") -> Bool {
         let task = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return false }
-        teamChatOpen = false
+        agentsPage = .agent
         if let start = onStartChain {
             if let id = start(title, task) {
                 agentOpen = id
@@ -553,6 +582,7 @@ final class NotchModel: ObservableObject {
 
     /// A stage of a chain stopped short: the next agent starts from what it left.
     func carryOnChain(_ id: UUID) {
+        agentsPage = .agent
         if let carryOn = onCarryOnChain {
             if let new = carryOn(id) {
                 agentOpen = new
@@ -618,6 +648,218 @@ final class NotchModel: ObservableObject {
         }
         if agentsStore?.team.job(agentOpen) == nil {
             agentOpen = agentsStore?.team.newestFirst.first?.id
+        }
+    }
+
+    /// Esc in the agent room: back from an open report or recipe to its list, or out of a
+    /// search of the library. False if there was nothing to step back from.
+    func stepBackInAgents() -> Bool {
+        if agentsPage == .library, reportOpen != nil {
+            closeReport()
+            return true
+        }
+        // (From the list, it first clears a search.)
+        if agentsPage == .library, !librarySearch.isEmpty {
+            librarySearch = ""
+            return true
+        }
+        if agentsPage == .recipes, recipeOpen != nil {
+            closeRecipe()
+            return true
+        }
+        return false
+    }
+
+    // MARK: Recipes
+
+    /// Jobs you hand out often, saved to run again (set by the app).
+    var recipesStore: RecipesStore?
+    /// The recipe that's open on the Recipes page; nil shows them all.
+    @Published var recipeOpen: UUID?
+    /// What's been typed into the open recipe's blanks, by each blank's key.
+    @Published var recipeBlanks: [String: String] = [:]
+
+    /// The Recipes page of the agent room: back at the recipe you had open, or the list.
+    /// (Clicked again while it's showing, it goes back to the list.)
+    func openRecipes() {
+        let already = tool == .agents && agentsPage == .recipes
+        tool = .agents
+        agentsPage = .recipes
+        if already || recipesStore?.book.recipe(recipeOpen) == nil {
+            closeRecipe()
+        }
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Opens a recipe, to fill in its blanks and run it, or to change it.
+    func showRecipe(_ id: UUID) {
+        guard recipesStore?.book.recipe(id) != nil else { return }
+        tool = .agents
+        agentsPage = .recipes
+        if recipeOpen != id {
+            recipeOpen = id
+            recipeBlanks = [:]
+        }
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Back to the list. A recipe that was started and never written is dropped.
+    func closeRecipe() {
+        recipeOpen = nil
+        recipeBlanks = [:]
+        recipesStore?.change { $0.tidy() }
+    }
+
+    /// A new, empty recipe, opened to be written.
+    func newRecipe() {
+        guard let store = recipesStore else { return }
+        var made: Recipe?
+        store.change { made = $0.addEmpty() }
+        if let made = made {
+            showRecipe(made.id)
+        }
+    }
+
+    /// Saves a job as a recipe and opens it, to name it and mark its blanks. False if
+    /// there was no job to save.
+    @discardableResult
+    func saveRecipe(job: String, chain: Bool, name: String = "") -> Bool {
+        guard let store = recipesStore else { return false }
+        var saved: Recipe?
+        store.change { saved = $0.add(name: name, text: job, chain: chain) }
+        guard let recipe = saved else { return false }
+        showRecipe(recipe.id)
+        return true
+    }
+
+    /// The job in the box becomes a recipe (and leaves the box).
+    func saveDraftAsRecipe() {
+        if saveRecipe(job: agentDraft, chain: agentDraftChain) {
+            agentDraft = ""
+            agentDraftChain = false
+        }
+    }
+
+    /// An agent's job becomes a recipe: one for a chain, if a chain did it.
+    func saveRecipe(from agent: UUID) {
+        guard let job = agentsStore?.team.job(agent), Recipe.canSave(job) else { return }
+        saveRecipe(job: job.task, chain: job.chain != nil, name: Recipe.name(from: job))
+    }
+
+    func changeRecipe(_ id: UUID, _ edit: (inout Recipe) -> Void) {
+        recipesStore?.change { $0.change(id, edit) }
+    }
+
+    func removeRecipe(_ id: UUID) {
+        recipesStore?.change { $0.remove(id) }
+        if recipeOpen == id {
+            closeRecipe()
+        }
+    }
+
+    /// Runs a recipe: an agent (or a chain) starts on its job, with what's typed in its
+    /// blanks. If a blank is still empty, the recipe opens to be filled in instead, and
+    /// this returns false.
+    @discardableResult
+    func runRecipe(_ id: UUID) -> Bool {
+        guard let recipe = recipesStore?.book.recipe(id) else { return false }
+        let values = recipeOpen == id ? recipeBlanks : [:]
+        guard recipe.isReady(with: values) else {
+            showRecipe(id)
+            return false
+        }
+        let job = recipe.job(with: values)
+        let started = recipe.chain ? startChain(goal: job, title: recipe.chainTitle(with: values))
+                                   : startAgent(task: job, name: recipe.agentName(with: values))
+        guard started else { return false }
+        recipesStore?.change { $0.used(id) }
+        if recipeOpen == id {
+            recipeBlanks = [:]
+        }
+        return true
+    }
+
+    // MARK: The report library
+
+    /// Every report your agents have finished, kept to find again (set by the app).
+    var reportsStore: ReportsStore?
+    /// The report that's open in the library; nil shows the list.
+    @Published var reportOpen: UUID?
+    /// Which part of it is showing (a chain's has one for each stage); nil is its last.
+    @Published var reportPart: UUID?
+    /// What's typed in the library's search box, and the subject picked ("" for all).
+    @Published var librarySearch = ""
+    @Published var librarySubject = ""
+    /// Shows the folder kept with a report, or opens a file in it (set by the app).
+    var onShowReportFolder: ((String) -> Void)?
+    var onOpenReportFile: ((String, String) -> Void)?
+
+    /// The Library page of the agent room: back at the report you had open, or the list.
+    /// (Clicked again while it's showing, it goes back to the list.)
+    func openLibrary() {
+        let already = tool == .agents && agentsPage == .library
+        tool = .agents
+        agentsPage = .library
+        // Reports pinned to an assignment that's since been deleted are pinned to nothing.
+        if let known = assignmentsStore?.assignments.items.map({ $0.id }) {
+            reportsStore?.change { $0.keepPins(to: Set(known)) }
+        }
+        if already || reportsStore?.library.report(reportOpen) == nil {
+            closeReport()
+        }
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    /// Opens a report in the library, at one of its parts if it's a chain's.
+    func showReport(_ id: UUID, part: UUID? = nil) {
+        guard reportsStore?.library.report(id) != nil else { return }
+        tool = .agents
+        agentsPage = .library
+        reportOpen = id
+        reportPart = part
+        if level == .rest || level == .peek {
+            level = .lanes
+        }
+    }
+
+    func closeReport() {
+        reportOpen = nil
+        reportPart = nil
+    }
+
+    func removeReport(_ id: UUID) {
+        reportsStore?.change { $0.remove(id) }
+        if reportOpen == id {
+            closeReport()
+        }
+    }
+
+    func renameReport(_ id: UUID, to title: String) {
+        reportsStore?.change { $0.rename(id, to: title) }
+    }
+
+    /// Pins a report to a subject. Picking the subject it's already pinned to unpins it.
+    func pinReport(_ id: UUID, subject: String) {
+        guard let report = reportsStore?.library.report(id) else { return }
+        let same = !report.subject.isEmpty && ReportLibrary.same(report.subject, subject)
+        reportsStore?.change { $0.pin(id, subject: same ? "" : subject) }
+    }
+
+    /// Pins a report to an assignment, where it then shows. Picking the one it's already
+    /// pinned to unpins it.
+    func pinReport(_ id: UUID, assignment: UUID) {
+        guard let report = reportsStore?.library.report(id) else { return }
+        if report.assignment == assignment {
+            reportsStore?.change { $0.pin(id, assignment: nil) }
+        } else {
+            let subject = assignmentsStore?.assignments.item(assignment)?.subject ?? ""
+            reportsStore?.change { $0.pin(id, assignment: assignment, subject: subject) }
         }
     }
 

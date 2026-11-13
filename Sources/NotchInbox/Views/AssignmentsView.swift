@@ -430,6 +430,9 @@ struct AssignmentEditor: View {
                             if let agents = model.agentsStore {
                                 AssignmentResearch(model: model, agents: agents, assistant: assistant, settings: AppSettings.shared, item: item)
                             }
+                            if let reports = model.reportsStore {
+                                AssignmentReports(model: model, store: reports, item: item)
+                            }
                         }
                         if isResult || item.handedIn || item.isMarked {
                             MarkField(mark: item.mark, outOf: item.outOf, change: { mark, outOf in

@@ -75,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Your agents and their jobs, shared by every screen's notch.
     private let agents = AgentsStore()
     private lazy var agentRunner = AgentRunner(store: agents, assistant: Assistant.shared, settings: settings)
+    /// Jobs saved to run again, and every report the agents have finished.
+    private let recipes = RecipesStore()
+    private let reports = ReportsStore()
     /// The team chat agents share with the chief of staff and you.
     private let team = TeamStore()
     private lazy var teamDesk = TeamDesk(store: team, agents: agents, assistant: Assistant.shared, settings: settings)
@@ -264,6 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Agents still working are stopped: what they'd written so far is kept.
         agentRunner.stopAll()
         team.saveNow()
+        recipes.saveNow()
+        reports.saveNow()
         mediaKeys.stop()
         LevelsWatcher.shared.stop()
     }
@@ -379,6 +384,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model.onOpenAgentFile = { [weak self] id, file in
             self?.openAgentFile(file, of: id)
+        }
+        model.recipesStore = recipes
+        model.reportsStore = reports
+        model.onShowReportFolder = { [weak self] folder in
+            self?.showReportFolder(folder)
+        }
+        model.onOpenReportFile = { [weak self] folder, file in
+            self?.openReportFile(file, in: folder)
         }
         model.teamStore = team
         model.onPostToTeam = { [weak self] text in
@@ -718,14 +731,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let staff = Assistant.Ability(
             tag: StaffAgent.tag,
             title: "Hand jobs to agents",
-            detail: "It can start agents on bigger jobs, stop them, and read their reports.",
+            detail: "It can start agents on bigger jobs, stop them, read their reports, and see your recipes.",
             instructions: { [weak self] in
                 let tools = Assistant.shared.engine == .claudeCode
                 return StaffAgent.instructions(tools: tools, web: tools && (self?.settings.agentsUseWeb ?? false))
             },
             describe: { [weak self] in
                 guard let self = self else { return "" }
-                return StaffAgent.describe(self.agents.team, now: Date())
+                return StaffAgent.describe(self.agents.team, recipes: self.recipes.book, kept: self.reports.library.reports.count, now: Date())
             },
             apply: { [weak self] json in
                 // Handed out from the chat that's open: that's where the reports come back to.
@@ -782,6 +795,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentRunner.onFinished = { [weak self] job in
             self?.agentFinished(job)
         }
+        // The library starts with the reports of the agents still in the room.
+        if reports.isNew {
+            let known = assignments.assignments
+            reports.change { library in
+                library.fill(from: agents.team, subject: { assignment in known.item(assignment)?.subject ?? "" })
+            }
+        }
         // More agents may work at once now: start the ones that were waiting.
         settings.onAgentsChanged = { [weak self] in
             self?.agentRunner.pump()
@@ -832,6 +852,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// report goes back to that chat. And a chime, if that's on. (Neither for one you
     /// stopped, nor for a stage of a chain that the next agent is carrying on from.)
     private func agentFinished(_ job: AgentJob) {
+        // Its report is kept in the library (each stage of a chain, under the chain's name).
+        if job.status == .done {
+            let subject = assignments.assignments.item(job.chain?.source)?.subject ?? ""
+            reports.change { $0.file(job, subject: subject) }
+        }
         if settings.agentsReportBack, AgentDelivery.reports(job) {
             let watched = models.contains { $0.tool == .assistant && ($0.level == .lanes || $0.level == .detail) }
             Assistant.shared.deliver(AgentDelivery.message(for: job, team: agents.team), from: job.id, to: job.chat, watched: watched)
@@ -863,6 +888,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// could run (a web page, a script) is shown in Finder instead.
     private func openAgentFile(_ file: String, of id: UUID) {
         guard let job = agents.team.job(id), let path = AgentFiles.path(of: file, in: job.folder),
+              FileManager.default.fileExists(atPath: path) else {
+            NSSound.beep()
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        if AgentFiles.opensDirectly(file) {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    /// Shows the folder kept with a report in the library. (Only an agent's own folder:
+    /// the library's file is the app's, but nothing outside the agents' folders opens from it.)
+    private func showReportFolder(_ folder: String) {
+        guard ReportLibrary.isAgentsFolder(folder), FileManager.default.fileExists(atPath: folder) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: folder, isDirectory: true))
+    }
+
+    /// Opens a file kept with a report, by the same rule as an agent's files: plain
+    /// documents open, and anything that could run is shown in Finder instead.
+    private func openReportFile(_ file: String, in folder: String) {
+        guard ReportLibrary.isAgentsFolder(folder), let path = AgentFiles.path(of: file, in: folder),
               FileManager.default.fileExists(atPath: path) else {
             NSSound.beep()
             return
@@ -1591,6 +1642,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let agentsDone = team.jobs.count - team.active.count
         let inChains = team.jobs.filter { $0.chain != nil }.count
         lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once · in chains: \(inChains)")
+        let pinnedReports = reports.library.reports.filter { $0.isPinned }.count
+        lines.append("Library: \(reports.library.countLine), \(pinnedReports) pinned · recipes: \(recipes.book.recipes.count)")
         lines.append("Chats saved: \(assistant.chats.book.chats.count)")
         let usedToday = assistant.usage.log.today()
         lines.append("Usage today: \(UsageText.line(usedToday)) · daily cap for agents: \(UsageText.cap(settings.agentDailyCap))")

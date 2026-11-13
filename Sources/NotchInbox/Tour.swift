@@ -220,7 +220,7 @@ enum Tour {
                 summary: "Bigger jobs, handed to agents that work on them by themselves while you get on with something else.",
                 points: [
                     .init(symbol: "arrow.up.circle", text: "Type a job in the agent room, like \"find five reliable sources on the Cold War and summarise each\", and an agent starts on it."),
-                    .init(symbol: "building.2", text: "Each agent gets a floor. Watch what it's searching and reading, then read its report. A few work at once; the rest wait their turn."),
+                    .init(symbol: "building.2", text: "Each agent gets a floor: watch it work, then read its report. Reports are kept in the Library, and a job you give often can be saved as a recipe."),
                     .init(symbol: "link", text: "Switch on Chain and three agents do the job in turn: one researches, one writes, one checks the links. Or ask the assistant, and it hands the big jobs out."),
                     .init(symbol: "hand.raised", text: "On your Claude plan, an agent can use the web and save files in a folder of its own. It can't run commands, and it can't see your mail, notes or other files."),
                 ],

@@ -107,6 +107,21 @@ enum StaffAgent {
         """
     }
 
+    /// The team in words, with the user's recipes (jobs they hand out often) and a line
+    /// about the library, where finished reports are kept.
+    static func describe(_ team: AgentTeam, recipes: RecipeBook, kept: Int, now: Date) -> String {
+        var parts = [describe(team, now: now)]
+        if kept > 0 {
+            parts.append("Finished reports are also kept in the Agents room's Library (\(kept) there now), where the user can search them "
+                         + "and pin them to a subject or an assignment. You can only see the reports listed above.")
+        }
+        let saved = recipes.describe()
+        if !saved.isEmpty {
+            parts.append(saved)
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
     /// The team in words: who's working on what, and what's been reported.
     static func describe(_ team: AgentTeam, now: Date) -> String {
         let jobs = team.newestFirst.prefix(8)

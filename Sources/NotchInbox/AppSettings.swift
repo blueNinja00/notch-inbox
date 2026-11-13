@@ -409,6 +409,36 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    // MARK: Where links open
+
+    static let linkPlacesKey = "mail.linkPlaces"
+
+    /// What you chose for each inbox's links, by address: "front", or the folder of a
+    /// browser profile. An inbox that isn't here has its profile found for it.
+    @Published private(set) var linkPlaces: [String: String] = (UserDefaults.standard.dictionary(forKey: AppSettings.linkPlacesKey) as? [String: String]) ?? [:] {
+        didSet {
+            guard linkPlaces != oldValue else { return }
+            UserDefaults.standard.set(linkPlaces, forKey: AppSettings.linkPlacesKey)
+        }
+    }
+
+    /// The browser's profiles as they were last read, for Settings, and the browser they
+    /// belong to ("" if no browser that keeps profiles this way is installed). Set by the app.
+    @Published var browserProfiles: [BrowserProfile] = []
+    @Published var profileBrowser = ""
+    /// Asks the app to read the browser's profiles again (Settings does, when it shows them).
+    var onReadBrowserProfiles: (() -> Void)?
+
+    func linkPlace(for account: String) -> LinkPlace {
+        LinkPlace(saved: linkPlaces[BrowserProfiles.canonical(account)])
+    }
+
+    func setLinkPlace(_ place: LinkPlace, for account: String) {
+        var places = linkPlaces
+        places[BrowserProfiles.canonical(account)] = place.saved
+        linkPlaces = places
+    }
+
     // MARK: Shortcuts
 
     /// Your shortcuts: what each key does in the open notch.

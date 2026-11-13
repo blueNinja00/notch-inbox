@@ -411,7 +411,7 @@ struct TaskMenu: View {
             Button("Open Its Email") { model.openEmail(email) }
         }
         if let link = task.link {
-            Button(link.host == "classroom.google.com" ? "Open in Classroom" : "Open in Gmail") { model.onOpenURL?(link) }
+            Button(link.host == "classroom.google.com" ? "Open in Classroom" : "Open in Gmail") { model.openTaskLink(link, emailID: task.emailID) }
         }
         Divider()
         Button("Make It an Exam") {
@@ -892,7 +892,7 @@ struct TaskLinks: View {
                 }
                 if let link = task.link {
                     SmallPill(title: link.host == "classroom.google.com" ? "Classroom" : "Gmail", symbol: "arrow.up.right",
-                              action: { model.onOpenURL?(link) })
+                              action: { model.openTaskLink(link, emailID: task.emailID) })
                 }
             }
             SmallPill(title: "It's an Exam", symbol: "graduationcap", action: {

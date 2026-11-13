@@ -42,6 +42,15 @@ The notch starts with **one inbox**, and you choose the rest:
 
 An inbox that isn't in the notch isn't counted beside the notch, searched, read for homework or shown to the assistant. If you updated from a build that showed every account, the inboxes you had stay as they were; only accounts you link from now on wait to be added.
 
+### Links open where that inbox is signed in
+
+If you keep your accounts in separate Chrome profiles (Home and School, say), a link you click in an email opens in the profile that email's inbox is signed in to. A GitHub email that came to your home address opens in your Home profile, where you're signed in to GitHub; a Classroom link from your school inbox opens in School. **Open in Gmail**, a new message, and a planner task's link to its email or its Classroom page go the same way.
+
+- **How it finds the profile:** Chrome keeps a list of its profiles and the account each is signed in with. The notch reads that list (`Local State` in Chrome's own folder) and, from each profile's settings (`Preferences`), only the addresses signed in there. An inbox goes with the profile signed in with its address; failing that, one where that address is signed in on the web; if two fit, the one you used last. Nothing in those files is changed, and none of it leaves your Mac.
+- **Choosing it yourself:** **Settings → Mail accounts → Where links open** shows what was found for each inbox, and lets you pick a profile instead, or **Front window** for the old behaviour (whichever Chrome window is in front).
+- **When nothing fits** (no profile has that address, or Chrome has only one profile), the link opens in the front window as before. Links that don't belong to an inbox (bookmarks, links in the assistant's answers and agents' reports) do too.
+- It works with Google Chrome, and should with Brave and Edge, which keep profiles the same way. Chrome is asked by starting it with the profile and the page; a Chrome that's already running takes that over, so for a moment you may see a second Chrome icon in the Dock.
+
 **Read and unread are the notch's own.** Gmail itself is never changed; the notch keeps its own tally, saved on this Mac, so it holds through restarts and every update.
 
 - **Open an email** in the notch and it greys out and the unread count drops at once.
@@ -90,7 +99,7 @@ How the app finds a test build: GitHub's "latest release" link never points at o
 Click the gear at the top right of the open notch. Settings open inside the notch, with a section per topic down the left:
 
 - **General:** the theme (below), which tools are on the primary menu and in what order, Notch at the top or Mail tab, resetting panel sizes, and **Show the Tour**.
-- **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox; how much mail is kept on this Mac, and how many emails to keep in full.
+- **Mail accounts:** which inboxes show in the notch and in what order; per account, Primary or Whole inbox, and which browser profile its [links open in](#links-open-where-that-inbox-is-signed-in); how much mail is kept on this Mac, and how many emails to keep in full.
 - **Assistant:** who answers (below), which Claude model, and a switch for each thing it may see and do: look things up on the web, your timetable, your planner, your assignments and marks, your bookmarks, handing jobs to agents, and your newest emails and notes. Then your saved [chats](#your-chats), the [usage](#usage) count and the daily cap for agents, [typing into your documents](#typing-into-your-documents) and the permission macOS wants for it, and the [agents](#agents): how many work at once, whether they use the web, the chime, and the folders they may read.
 - **Timetable:** school as one block or periods, hour blocks before and after school, weekends, Week A and Week B, and clearing every lesson for a new term.
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history, the shelf, and volume and brightness at the notch (with **Keep them beside the notch** and **Hide macOS's own pop-up**).
@@ -345,7 +354,7 @@ open "build/Notch Inbox.app"
 | `Levels.swift`, `SystemLevels.swift`, `MediaKeyTap.swift` | Volume and brightness: reading and setting them, deciding when to show them at the notch, and taking over their keys |
 | `Agents.swift`, `AgentGroups.swift`, `AgentRunner.swift`, `Views/AgentsView.swift`, `Views/AgentGroupsView.swift` | Agents: their jobs and groups, running each one with Claude Code and reading what it does, drawing reports, and the agent room |
 | `Keybinds.swift`, `Views/ShortcutsView.swift` | Shortcuts: what each key does, and changing them |
-| `BrowserOpener.swift` | Opens Gmail and links in Chrome rather than the default browser |
+| `BrowserOpener.swift`, `BrowserProfiles.swift`, `Views/LinkPlacesView.swift` | Opens Gmail and links in Chrome rather than the default browser, in the profile the inbox is signed in to: reading Chrome's list of profiles, matching an inbox to one, and the choice in Settings |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |
 | `NotchModel.swift` | State and actions: open, search, mark read and unread, reply; which inboxes show; where the tour is up to |

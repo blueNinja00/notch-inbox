@@ -221,6 +221,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         browserLink.onHistory = { [weak self] history in
             self?.receivedHistory(history)
         }
+        // Which browser profile each inbox's links open in: read now, and again when Settings shows them.
+        settings.onReadBrowserProfiles = { [weak self] in
+            self?.readBrowserProfiles()
+        }
+        readBrowserProfiles()
         settings.onFetchHistory = { [weak self] in
             self?.fetchHistory()
         }
@@ -311,6 +316,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Gmail opens in Chrome, where the accounts are signed in; the notch gets out of its way.
         model.onOpenURL = { [weak model] url in
             BrowserOpener.open(url)
+            model?.close()
+        }
+        // A page that belongs with an inbox opens in the browser profile that inbox is signed in to.
+        model.onOpenAccountURL = { [weak self, weak model] url, email in
+            let place = self?.settings.linkPlace(for: email) ?? .automatic
+            BrowserOpener.open(url, account: email, place: place) { browser, profiles in
+                self?.sawBrowserProfiles(browser, profiles)
+            }
             model?.close()
         }
         model.onInstallUpdate = { [weak self] in
@@ -920,6 +933,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.open(url)
         } else {
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    /// The browser's profiles were read: Settings shows them.
+    private func sawBrowserProfiles(_ browser: String, _ profiles: [BrowserProfile]) {
+        if settings.profileBrowser != browser {
+            settings.profileBrowser = browser
+        }
+        if settings.browserProfiles != profiles {
+            settings.browserProfiles = profiles
+        }
+    }
+
+    /// Reads the browser's profiles (its list of them, and the addresses signed in to each).
+    private func readBrowserProfiles() {
+        BrowserOpener.readProfiles { [weak self] browser, profiles in
+            self?.sawBrowserProfiles(browser, profiles)
         }
     }
 
@@ -1665,6 +1695,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let agentsDone = team.jobs.count - team.active.count
         let inChains = team.jobs.filter { $0.chain != nil }.count
         lines.append("Agents: \(team.working.count) working, \(team.queued.count) waiting, \(agentsDone) finished · up to \(settings.agentsAtOnce) at once · in chains: \(inChains)")
+        let linked = settings.accounts.filter { BrowserProfiles.target(for: $0.id, place: settings.linkPlace(for: $0.id), in: settings.browserProfiles) != nil }.count
+        lines.append("Browser profiles: \(settings.browserProfiles.count) in \(settings.profileBrowser.isEmpty ? "no browser that keeps them" : settings.profileBrowser)"
+                     + " · inboxes with a profile: \(linked) of \(settings.accounts.count) · choices made: \(settings.linkPlaces.count)")
         let pinnedReports = reports.library.reports.filter { $0.isPinned }.count
         lines.append("Library: \(reports.library.countLine), \(pinnedReports) pinned · recipes: \(recipes.book.recipes.count)")
         lines.append("Chats saved: \(assistant.chats.book.chats.count)")

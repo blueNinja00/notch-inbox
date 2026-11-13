@@ -27,10 +27,10 @@ final class AgentRunner {
 
     /// Hands out a job. It starts as soon as there's a free place.
     @discardableResult
-    func start(name: String, task: String, origin: AgentJob.Origin) -> AgentJob? {
+    func start(name: String, task: String, origin: AgentJob.Origin, chat: UUID? = nil) -> AgentJob? {
         guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var added: AgentJob?
-        store.change { added = $0.add(name: name, task: task, origin: origin) }
+        store.change { added = $0.add(name: name, task: task, origin: origin, chat: chat) }
         pump()
         return added
     }
@@ -38,10 +38,11 @@ final class AgentRunner {
     /// Hands a job to a chain: a researcher starts on it, and each of the others takes
     /// over as the one before finishes. `source` is the assignment it's for, if any.
     @discardableResult
-    func startChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin, source: UUID? = nil) -> AgentJob? {
+    func startChain(title: String, goal: String, kind: AgentChain.Kind, origin: AgentJob.Origin, source: UUID? = nil,
+                    chat: UUID? = nil) -> AgentJob? {
         guard !goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         var added: AgentJob?
-        store.change { added = $0.addChain(title: title, goal: goal, kind: kind, origin: origin, source: source) }
+        store.change { added = $0.addChain(title: title, goal: goal, kind: kind, origin: origin, source: source, chat: chat) }
         pump()
         return added
     }

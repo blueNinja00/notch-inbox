@@ -728,32 +728,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return StaffAgent.describe(self.agents.team, now: Date())
             },
             apply: { [weak self] json in
-                guard let self = self, let plan = StaffAgent.plan(from: json) else { return nil }
-                var changes: [String] = []
-                for job in StaffAgent.stops(in: plan, team: self.agents.team) {
-                    self.agentRunner.stop(job.id)
-                    changes.append("\(job.name) stopped")
-                }
-                for job in StaffAgent.jobs(in: plan) {
-                    if let kind = job.chain {
-                        // A researcher now; the others follow by themselves. A plan for an
-                        // assignment in your list gets its task sheet too (if the assistant
-                        // may see your assignments), and shows on that assignment.
-                        var goal = job.task
-                        var source: UUID?
-                        if Assistant.shared.allows(AssignmentAgent.tag),
-                           let item = StaffAgent.assignment(for: job, in: self.assignments.assignments) {
-                            goal = StaffAgent.planGoal(for: job, item: item, now: Date())
-                            source = item.id
-                        }
-                        if let started = self.agentRunner.startChain(title: job.name, goal: goal, kind: kind, origin: .chief, source: source) {
-                            changes.append("\(started.name) started (a chain: \(AgentChain.line(for: kind)))")
-                        }
-                    } else if let started = self.agentRunner.start(name: job.name, task: job.task, origin: .chief) {
-                        changes.append("\(started.name) started")
-                    }
-                }
-                return changes
+                // Handed out from the chat that's open: that's where the reports come back to.
+                self?.applyStaff(json, chat: Assistant.shared.chats.book.currentID)
             },
             heading: "In the Agents room",
             nothing: "(No agents needed starting.)")
@@ -797,7 +773,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self, Assistant.shared.allows(AssignmentAgent.tag) else { return "" }
             return AssignmentAgent.describe(self.assignments.assignments, now: Date())
         }
-        teamDesk.applyStaff = staff.apply
+        // (Agents started from the team chat report there, not to one of your chats.)
+        teamDesk.applyStaff = { [weak self] json in
+            self?.applyStaff(json, chat: nil)
+        }
         agentRunner.desk = teamDesk
 
         agentRunner.onFinished = { [weak self] job in
@@ -817,9 +796,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// An agent finished or couldn't: a chime, if that's on. (Not for one you stopped, and
-    /// not for a stage of a chain that the next agent is carrying on from.)
+    /// What the assistant asked of its agents: stop these, start those. `chat` is the chat
+    /// it asked from, where the new agents' reports go when they finish.
+    private func applyStaff(_ json: String, chat: UUID?) -> [String]? {
+        guard let plan = StaffAgent.plan(from: json) else { return nil }
+        let reportsTo = settings.agentsReportBack ? chat : nil
+        var changes: [String] = []
+        for job in StaffAgent.stops(in: plan, team: agents.team) {
+            agentRunner.stop(job.id)
+            changes.append("\(job.name) stopped")
+        }
+        for job in StaffAgent.jobs(in: plan) {
+            if let kind = job.chain {
+                // A researcher now; the others follow by themselves. A plan for an
+                // assignment in your list gets its task sheet too (if the assistant
+                // may see your assignments), and shows on that assignment.
+                var goal = job.task
+                var source: UUID?
+                if Assistant.shared.allows(AssignmentAgent.tag),
+                   let item = StaffAgent.assignment(for: job, in: assignments.assignments) {
+                    goal = StaffAgent.planGoal(for: job, item: item, now: Date())
+                    source = item.id
+                }
+                if let started = agentRunner.startChain(title: job.name, goal: goal, kind: kind, origin: .chief, source: source, chat: reportsTo) {
+                    changes.append("\(started.name) started (a chain: \(AgentChain.line(for: kind)))")
+                }
+            } else if let started = agentRunner.start(name: job.name, task: job.task, origin: .chief, chat: reportsTo) {
+                changes.append("\(started.name) started")
+            }
+        }
+        return changes
+    }
+
+    /// An agent finished or couldn't. If the assistant handed its job out from a chat, its
+    /// report goes back to that chat. And a chime, if that's on. (Neither for one you
+    /// stopped, nor for a stage of a chain that the next agent is carrying on from.)
     private func agentFinished(_ job: AgentJob) {
+        if settings.agentsReportBack, AgentDelivery.reports(job) {
+            let watched = models.contains { $0.tool == .assistant && ($0.level == .lanes || $0.level == .detail) }
+            Assistant.shared.deliver(AgentDelivery.message(for: job, team: agents.team), from: job.id, to: job.chat, watched: watched)
+        }
         guard settings.agentsChime, job.status == .done || job.status == .failed, !job.isHandingOn else { return }
         NSSound(named: NSSound.Name(job.status == .done ? "Glass" : "Basso"))?.play()
     }

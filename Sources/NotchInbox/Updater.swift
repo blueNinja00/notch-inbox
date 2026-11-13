@@ -135,9 +135,9 @@ final class Updater: ObservableObject {
     /// With test builds wanted. They aren't GitHub's "latest release", so github.com is
     /// asked whether each build after the newest one known has a page yet, one at a time,
     /// until a few in a row don't. (Still not the API: see `check`.)
-    private func look(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool) {
+    private func look(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool, known: Int? = nil) {
         guard let build = search.next else {
-            finishLooking(search, released: released, said: said, userInitiated: userInitiated)
+            finishLooking(search, released: released, said: said, userInitiated: userInitiated, known: known)
             return
         }
         var request = URLRequest(url: ReleaseFeed.page(build: build, site: site, repository: Updater.repository))
@@ -150,37 +150,39 @@ final class Updater: ObservableObject {
             DispatchQueue.main.async {
                 var after = search
                 after.saw(build, status: status)
-                self.look(after, released: released, said: said, userInitiated: userInitiated)
+                self.look(after, released: released, said: said, userInitiated: userInitiated, known: known)
             }
         }.resume()
     }
 
-    private func finishLooking(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool) {
-        testSeen = search.newest > released ? search.newest : nil
+    /// `known` is set when this was the backstop's own search, which starts from a build
+    /// GitHub named but that hasn't been seen: if it turned nothing up, the newest build
+    /// there is stays the one that was known before.
+    private func finishLooking(_ search: BuildSearch, released: Int, said: String, userInitiated: Bool, known: Int? = nil) {
+        let newest = search.foundNewer ? search.newest : (known ?? search.newest)
+        testSeen = newest > released ? newest : nil
         let told = said + "; test builds: " + search.summary
-        // A safety net: now and then (and whenever you ask), GitHub's API lists the builds,
-        // in case more of them in a row failed to publish than the search steps over.
+        // A backstop: now and then (and whenever you ask), GitHub's API is asked for the
+        // number of the newest build made, in case more builds in a row failed to publish
+        // than the search steps over. If that's a build not found yet, it's looked for.
         let due = userInitiated || Date().timeIntervalSince(lastListed) > Updater.listInterval
-        guard !search.foundNewer, due else {
+        guard known == nil, !search.foundNewer, !search.stopped, due, let url = ReleaseFeed.runsAddress(api: api, repository: Updater.repository) else {
             offerNewest(released: released, said: told)
             return
         }
         lastListed = Date()
-        var address = URLComponents(url: api.appendingPathComponent("repos/\(Updater.repository)/releases"), resolvingAgainstBaseURL: false)
-        address?.queryItems = [URLQueryItem(name: "per_page", value: "10")]
-        guard let url = address?.url else {
-            offerNewest(released: released, said: told)
-            return
-        }
         URLSession.shared.dataTask(with: apiRequest(url)) { [self] data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let listed = data.flatMap { ReleaseFeed.newestListed($0, assetName: Updater.assetName) }
+            let made = data.flatMap { ReleaseFeed.newestRun($0) }
             DispatchQueue.main.async {
-                if let listed = listed, listed > max(released, self.testSeen ?? 0) {
-                    self.testSeen = listed
+                let list = made.map { "newest made is build \($0)" } ?? "HTTP \(status)"
+                if let made = made, made > search.newest {
+                    // Its page says whether it's really there; then the search goes on from it.
+                    self.look(BuildSearch(after: made - 1), released: released, said: told + "; GitHub's runs: " + list, userInitiated: userInitiated,
+                              known: search.newest)
+                } else {
+                    self.offerNewest(released: released, said: told + "; GitHub's runs: " + list)
                 }
-                let list = listed.map { "newest is build \($0)" } ?? "HTTP \(status)"
-                self.offerNewest(released: released, said: told + "; GitHub's list: " + list)
             }
         }.resume()
     }

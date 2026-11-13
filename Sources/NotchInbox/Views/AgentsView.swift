@@ -525,7 +525,17 @@ struct TeamBubble: View {
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(Theme.tertiary)
             }
-            AgentWords(text: message.text, colour: mine ? Theme.text : Theme.body)
+            if mine {
+                // Your own words are shown as you typed them.
+                Text(message.text)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text)
+                    .lineSpacing(2.5)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                MarkdownBlocks(text: message.text, fills: false)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -877,14 +887,9 @@ struct AgentReportText: View {
 
     var body: some View {
         if !report.isEmpty {
-            let lines = AgentReport.lines(report)
             VStack(alignment: .leading, spacing: 4) {
                 AgentCaption(text: finished ? "Its report" : "What it's writing")
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(lines) { line in
-                        AgentReportLine(line: line)
-                    }
-                }
+                MarkdownBlocks(text: report, lazily: true)
                 if AgentReport.isCut(report) {
                     Text("There's more: Copy has the whole report.")
                         .font(.system(size: 11))
@@ -892,83 +897,6 @@ struct AgentReportText: View {
                 }
             }
         }
-    }
-}
-
-struct AgentReportLine: View {
-    let line: AgentReport.Line
-
-    var body: some View {
-        switch line.kind {
-        case .heading(let level):
-            AgentWords(text: line.text, size: level <= 1 ? 15 : (level == 2 ? 14 : 13), weight: .bold, colour: Theme.text)
-                .padding(.top, 5)
-        case .bullet(let indent):
-            AgentListLine(mark: "•", text: line.text, indent: indent)
-        case .numbered(let number, let indent):
-            AgentListLine(mark: number, text: line.text, indent: indent)
-        case .quote:
-            HStack(alignment: .top, spacing: 8) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Theme.tertiary)
-                    .frame(width: 2)
-                AgentWords(text: line.text, colour: Theme.secondary)
-            }
-        case .code:
-            Text(line.text.isEmpty ? " " : line.text)
-                .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(Theme.text2)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        case .row(let header):
-            AgentWords(text: line.text, weight: header ? .semibold : .regular, colour: header ? Theme.text2 : Theme.body)
-        case .rule:
-            Rectangle()
-                .fill(Theme.hairline)
-                .frame(height: 1)
-                .padding(.vertical, 4)
-        case .body:
-            AgentWords(text: line.text)
-        case .gap:
-            Color.clear
-                .frame(height: 4)
-        }
-    }
-}
-
-/// A bullet or a numbered line, hanging from its mark.
-struct AgentListLine: View {
-    let mark: String
-    let text: String
-    let indent: Int
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(mark)
-                .font(.system(size: 12.5, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.tertiary)
-            AgentWords(text: text)
-        }
-        .padding(.leading, CGFloat(indent) * 14)
-    }
-}
-
-/// A line of an agent's words, with its bold, italics, code and links drawn.
-struct AgentWords: View {
-    let text: String
-    var size: CGFloat = 12.5
-    var weight: Font.Weight = .regular
-    var colour: Color = Theme.body
-
-    var body: some View {
-        Text(ChatBubble.formatted(text))
-            .font(.system(size: size, weight: weight))
-            .foregroundStyle(colour)
-            .lineSpacing(2.5)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

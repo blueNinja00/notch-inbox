@@ -109,6 +109,32 @@ enum ReleaseFeed {
         return builds.max()
     }
 
+    private struct Runs: Decodable {
+        struct Run: Decodable {
+            let runNumber: Int
+            let conclusion: String?
+        }
+
+        let workflowRuns: [Run]
+    }
+
+    /// The newest build there is, from GitHub's list of the times the "Build and release"
+    /// workflow has run: a build's number is the number of the run that made it. (GitHub's
+    /// list of releases isn't in date order, so the newest build can be far down it.)
+    static func newestRun(_ data: Data) -> Int? {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let runs = try? decoder.decode(Runs.self, from: data) else { return nil }
+        return runs.workflowRuns.filter { $0.conclusion == "success" && $0.runNumber > 0 }.map { $0.runNumber }.max()
+    }
+
+    /// Where that list is asked for: the newest run that succeeded.
+    static func runsAddress(api: URL, repository: String) -> URL? {
+        var address = URLComponents(url: api.appendingPathComponent("repos/\(repository)/actions/workflows/release.yml/runs"), resolvingAgainstBaseURL: false)
+        address?.queryItems = [URLQueryItem(name: "per_page", value: "1"), URLQueryItem(name: "status", value: "success")]
+        return address?.url
+    }
+
     /// A build to offer, and whether it's a test build.
     struct Offer: Equatable {
         let build: Int

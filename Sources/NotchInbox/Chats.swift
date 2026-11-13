@@ -14,16 +14,19 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var failed = false
     /// Text from one of your documents that went with this question.
     var attachment: DocumentSelection?
+    /// The agent whose report this is, when the app put it in the chat as the agent finished.
+    var report: UUID?
 
-    init(role: Role, raw: String, failed: Bool = false, attachment: DocumentSelection? = nil) {
+    init(role: Role, raw: String, failed: Bool = false, attachment: DocumentSelection? = nil, report: UUID? = nil) {
         self.role = role
         self.raw = raw
         self.failed = failed
         self.attachment = attachment
+        self.report = report
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, role, raw, failed, attachment
+        case id, role, raw, failed, attachment, report
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +36,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         raw = try values.decodeIfPresent(String.self, forKey: .raw) ?? ""
         failed = try values.decodeIfPresent(Bool.self, forKey: .failed) ?? false
         attachment = try? values.decodeIfPresent(DocumentSelection.self, forKey: .attachment)
+        report = try? values.decodeIfPresent(UUID.self, forKey: .report)
     }
 
     /// Without reasoning or a block asking for a change (the app makes those).
@@ -43,6 +47,34 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     /// What the assistant is sent: your question, with any text you attached.
     var sent: String {
         attachment.map { DocumentText.attached(text, $0) } ?? text
+    }
+
+    /// A chat as the assistant is sent it, ending with the question being asked now. An
+    /// agent's report that the app put in the chat isn't something the assistant said, so
+    /// it goes along with your next message, marked as information.
+    static func history(_ messages: [ChatMessage], then question: String) -> [(role: Role, text: String, failed: Bool)] {
+        var out: [(role: Role, text: String, failed: Bool)] = []
+        var reports: [String] = []
+        func withReports(_ text: String) -> String {
+            guard !reports.isEmpty else { return text }
+            // Only the newest few: an old report is in the Agents room if it's wanted.
+            let handed = reports.suffix(3).joined(separator: "\n\n")
+            reports = []
+            return handed + "\n\n" + text
+        }
+        for message in messages {
+            if message.report != nil {
+                if !message.failed {
+                    reports.append(AgentDelivery.resent(message.text))
+                }
+            } else if message.role == .user {
+                out.append((role: .user, text: withReports(message.sent), failed: false))
+            } else {
+                out.append((role: message.role, text: message.sent, failed: message.failed))
+            }
+        }
+        out.append((role: .user, text: withReports(question), failed: false))
+        return out
     }
 }
 
@@ -55,6 +87,8 @@ struct Chat: Identifiable, Equatable, Codable {
     /// When something was last said in it.
     var updated: Date
     var messages: [ChatMessage] = []
+    /// An agent's report arrived in it while another chat was open, and it hasn't been opened since.
+    var hasNews = false
 
     init(now: Date) {
         created = now
@@ -62,7 +96,7 @@ struct Chat: Identifiable, Equatable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, created, updated, messages
+        case id, title, created, updated, messages, hasNews
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +106,7 @@ struct Chat: Identifiable, Equatable, Codable {
         created = try values.decodeIfPresent(Date.self, forKey: .created) ?? Date(timeIntervalSince1970: 0)
         updated = try values.decodeIfPresent(Date.self, forKey: .updated) ?? created
         messages = try values.decodeIfPresent([ChatMessage].self, forKey: .messages) ?? []
+        hasNews = (try? values.decodeIfPresent(Bool.self, forKey: .hasNews)) ?? false
     }
 
     var isEmpty: Bool { messages.isEmpty }
@@ -175,6 +210,28 @@ struct ChatBook: Equatable, Codable {
         let left = currentID
         currentID = id
         chats.removeAll { $0.isEmpty && $0.id == left }
+        if let index = chats.firstIndex(where: { $0.id == id }) {
+            chats[index].hasNews = false
+        }
+        return true
+    }
+
+    /// Whether a chat is one of the others: it exists, and it isn't the open one. (A report
+    /// for a chat that's gone, or for none, lands in the open chat.)
+    func isElsewhere(_ id: UUID?) -> Bool {
+        guard let id = id else { return false }
+        return id != currentID && chat(id) != nil
+    }
+
+    /// Puts a message the app made (an agent's report) into a chat that isn't the open
+    /// one, and marks that chat as having news. False if there's no such chat, or it's
+    /// the open one (which the assistant keeps itself).
+    @discardableResult
+    mutating func deliver(_ message: ChatMessage, to id: UUID, now: Date) -> Bool {
+        guard id != currentID, let index = chats.firstIndex(where: { $0.id == id }) else { return false }
+        chats[index].messages = Array((chats[index].messages + [message]).suffix(ChatBook.mostMessages))
+        chats[index].updated = now
+        chats[index].hasNews = true
         return true
     }
 

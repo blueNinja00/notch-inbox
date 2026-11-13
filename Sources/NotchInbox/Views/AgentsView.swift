@@ -39,13 +39,18 @@ struct AgentsView: View {
                 AgentTower(model: model, team: team)
                     .frame(width: expanded ? 320 : 290)
                 Group {
-                    if model.teamChatOpen, let room = model.teamStore {
+                    if model.agentsPage == .teamChat, let room = model.teamStore {
                         TeamChatView(model: model, store: room, on: settings.agentsTeamChat)
+                    } else if model.agentsPage == .library, let reports = model.reportsStore {
+                        ReportLibraryView(model: model, store: reports)
+                    } else if model.agentsPage == .recipes, let recipes = model.recipesStore {
+                        RecipesView(model: model, store: recipes, assistant: assistant)
                     } else if let job = open {
                         AgentDetail(model: model, job: job, floor: team.floor(of: job.id), team: team)
                             .id(job.id)
                     } else {
-                        AgentsWelcome(model: model, assistant: assistant, settings: settings)
+                        AgentsWelcome(model: model, assistant: assistant, settings: settings,
+                                      recipes: model.recipesStore?.book.ordered ?? [])
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -197,13 +202,17 @@ struct AgentTower: View {
                 TeamChatRow(store: room, selected: model.teamChatOpen, open: { model.openTeamChat() })
                     .padding(EdgeInsets(top: 6, leading: 6, bottom: 0, trailing: 6))
             }
+            if let reports = model.reportsStore {
+                AgentShelfTabs(model: model, reports: reports)
+                    .padding(EdgeInsets(top: 5, leading: 6, bottom: 0, trailing: 6))
+            }
             if jobs.isEmpty {
                 AgentTowerEmpty()
             } else {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         ForEach(jobs) { job in
-                            AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen && !model.teamChatOpen,
+                            AgentFloorRow(job: job, floor: team.floor(of: job.id), selected: job.id == model.agentOpen && model.agentsPage == .agent,
                                           open: { model.showAgent(job.id) })
                                 .contextMenu {
                                     AgentMenu(model: model, job: job, held: held.contains(job.id), canCarryOn: team.canCarryOn(job.id))
@@ -257,7 +266,7 @@ struct AgentTowerFoot: View {
                 .foregroundStyle(Theme.tertiary)
             Spacer(minLength: 4)
             SmallPill(title: "Clear", symbol: "xmark", action: clear)
-                .help("Take the finished agents out of the room. The files they saved stay in their folders.")
+                .help("Take the finished agents out of the room. Their reports stay in the Library, and the files they saved in their folders.")
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
@@ -402,6 +411,9 @@ struct AgentMenu: View {
         }
         if !job.folder.isEmpty {
             Button("Show Its Folder") { model.onShowAgentFolder?(job.id) }
+        }
+        if Recipe.canSave(job) {
+            Button("Save Its Job as a Recipe") { model.saveRecipe(from: job.id) }
         }
         if !job.isActive && !held {
             Divider()
@@ -750,11 +762,15 @@ struct AgentActions: View {
                     .help(job.chain == nil ? "Give the same job to a new agent" : "Do this stage again with a new agent. The chain carries on from it.")
             }
             if !job.folder.isEmpty {
-                SmallPill(title: "Folder", symbol: "folder", action: { model.onShowAgentFolder?(job.id) })
-                    .help("Open this agent's folder in Finder")
+                IconButton(symbol: "folder", label: "Open this agent's folder in Finder", size: 26,
+                           action: { model.onShowAgentFolder?(job.id) })
+            }
+            if Recipe.canSave(job) {
+                IconButton(symbol: "text.book.closed", label: "Save this job as a recipe, to run again", size: 26,
+                           action: { model.saveRecipe(from: job.id) })
             }
             if !job.isActive && !held {
-                IconButton(symbol: "trash", label: "Take this agent out of the room (its files stay in its folder)", size: 26,
+                IconButton(symbol: "trash", label: "Take this agent out of the room (its report stays in the Library, and its files in its folder)", size: 26,
                            action: { model.removeAgent(job.id) })
             }
         }
@@ -907,6 +923,8 @@ struct AgentsWelcome: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var assistant: Assistant
     @ObservedObject var settings: AppSettings
+    /// Your recipes, the ones you ran last first.
+    var recipes: [Recipe] = []
 
     var body: some View {
         let tools = assistant.engine == .claudeCode
@@ -935,7 +953,7 @@ struct AgentsWelcome: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if needsSetup {
                     PillButton(title: "Set Up \(assistant.engine.name) First", prominent: true, action: { model.openAssistant() })
-                } else {
+                } else if recipes.isEmpty {
                     AgentCaption(text: "Jobs to start from")
                         .padding(.top, 2)
                     HStack(spacing: 6) {
@@ -944,12 +962,41 @@ struct AgentsWelcome: View {
                                 .help(example.job)
                         }
                     }
+                } else {
+                    AgentCaption(text: "Recipes to start from")
+                        .padding(.top, 2)
+                    AgentsWelcomeRecipes(model: model, recipes: recipes)
                 }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollIndicators(.hidden)
+    }
+}
+
+/// On the welcome: your first few recipes, each one click from being filled in and run.
+struct AgentsWelcomeRecipes: View {
+    @ObservedObject var model: NotchModel
+    let recipes: [Recipe]
+    /// How many are offered here; the Recipes page has them all.
+    static let most = 5
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(recipes.prefix(AgentsWelcomeRecipes.most)) { recipe in
+                    SmallPill(title: recipe.title, symbol: recipe.chain ? "link" : "text.book.closed",
+                              action: { model.showRecipe(recipe.id) })
+                        .help(recipe.line)
+                }
+                if recipes.count > AgentsWelcomeRecipes.most {
+                    SmallPill(title: "All \(recipes.count)", symbol: "ellipsis", action: { model.openRecipes() })
+                        .help("See all your recipes")
+                }
+            }
+        }
+        .scrollIndicators(.never)
     }
 }
 
@@ -977,12 +1024,21 @@ struct AgentJobField: View {
                 .padding(.vertical, 8)
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surface))
             if !model.teamChatOpen {
+                if AgentJobField.canKeep(model.agentDraft) && model.recipesStore != nil {
+                    IconButton(symbol: "text.book.closed", label: "Save this job as a recipe, to run again (it isn't started)", size: 32,
+                               action: { model.saveDraftAsRecipe() })
+                }
                 ChainToggle(on: $model.agentDraftChain)
             }
             IconButton(symbol: "arrow.up", label: AgentJobField.sendLabel(teamChat: model.teamChatOpen, chain: model.agentDraftChain), size: 32,
                        tint: Theme.text, action: start)
         }
         .onAppear { typing = true }
+    }
+
+    /// Whether there's enough typed to be worth keeping as a recipe.
+    static func canKeep(_ draft: String) -> Bool {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8
     }
 
     static func prompt(teamChat: Bool, chain: Bool) -> String {

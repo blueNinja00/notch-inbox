@@ -12,6 +12,8 @@ enum TimetableAgent {
         struct Entry: Decodable, Equatable {
             var day: String
             var start: String
+            /// For a class or activity with its own times: when it ends.
+            var end: String?
             var subject: String?
             var room: String?
             var teacher: String?
@@ -40,7 +42,9 @@ enum TimetableAgent {
     in exactly this form (the app makes the changes and hides the block):
     <timetable>{"set":[{"day":"Tue","start":"17:00","subject":"Soccer training","room":"Oval","teacher":"Coach Sam"}],"clear":[{"day":"Wed","start":"18:00"}]}</timetable>
     - "day": Mon, Tue, Wed, Thu, Fri, Sat or Sun; several separated by commas ("Mon, Wed"); or "weekdays", "weekend" or "every day".
-    - "start": the 24-hour start time of a row of the timetable, e.g. "17:00".
+    - "start": the 24-hour start time of a row of the timetable, e.g. "17:00". For a class or activity that doesn't \
+    fit a row's times, give its own: "start":"17:15","end":"18:00". It goes in the row its start falls in, and runs \
+    at those times.
     - "subject" is the class or activity, "room" is where, "teacher" is who with. Leave out what you don't know.
     - You can also use "before" (hour blocks before school, 0 to 4), "after" (hour blocks after school, 0 to 8), \
     "weekends" (true or false), "school": {"start":"08:30","end":"15:30"} (when school is one block), and \
@@ -75,8 +79,11 @@ enum TimetableAgent {
             for day in 0..<table.dayCount {
                 for entry in table.day(day, week: week) {
                     guard let lesson = entry.lesson, !lesson.isEmpty else { continue }
+                    let times = lesson.times(in: entry.period)
+                    let when = lesson.hasOwnTimes ? "\(clock(times.start))–\(clock(times.end)) (its own times, in the \(clock(entry.period.start)) row)"
+                                                  : clock(entry.period.start)
                     var line = (table.twoWeeks ? "\(Timetable.weekName(week)) " : "")
-                        + "\(Timetable.shortDayNames[day]) \(clock(entry.period.start)) \(lesson.subject.trimmingCharacters(in: .whitespaces))"
+                        + "\(Timetable.shortDayNames[day]) \(when) \(lesson.subject.trimmingCharacters(in: .whitespaces))"
                     if !lesson.room.isEmpty { line += ", where: \(lesson.room)" }
                     if !lesson.teacher.isEmpty { line += ", with: \(lesson.teacher)" }
                     filled.append(line)
@@ -149,12 +156,21 @@ enum TimetableAgent {
             for slot in slots(for: entry, in: &table, now: now, calendar: calendar) {
                 let existing = table.lesson(at: slot.slot)
                 let sameSubject = existing.map { Timetable.subjectKey($0.subject) == Timetable.subjectKey(subject) || subject.isEmpty } ?? false
-                let lesson = Timetable.Lesson(subject: subject.isEmpty ? (existing?.subject ?? "") : subject,
+                var lesson = Timetable.Lesson(subject: subject.isEmpty ? (existing?.subject ?? "") : subject,
                                               room: entry.room ?? (sameSubject ? existing?.room ?? "" : ""),
                                               teacher: entry.teacher ?? (sameSubject ? existing?.teacher ?? "" : ""))
+                // Its own times, if it was given some; otherwise the ones it had, if it's the same class.
+                if let row = table.period(slot.slot.period), let own = ownTimes(for: entry, in: row) {
+                    lesson.start = own.start
+                    lesson.end = own.end
+                } else if sameSubject, existing?.hasOwnTimes == true {
+                    lesson.start = existing?.start
+                    lesson.end = existing?.end
+                }
                 guard !lesson.isEmpty, lesson != existing else { continue }
                 table.setLesson(lesson, at: slot.slot)
-                changes.append("\(slot.label): \(lesson.subject)" + (lesson.room.isEmpty ? "" : " (\(lesson.room))"))
+                let when = lesson.hasOwnTimes ? " (\(ClockTime.short(lesson.start ?? 0))–\(ClockTime.short(lesson.end ?? 0)))" : ""
+                changes.append("\(slot.label): \(lesson.subject)" + (lesson.room.isEmpty ? "" : " (\(lesson.room))") + when)
             }
         }
         table.tidy()
@@ -189,6 +205,18 @@ enum TimetableAgent {
             }
         }
         return result
+    }
+
+    /// The times an entry gives a class of its own: when it doesn't start on its row's start,
+    /// or ends at another time than its row. nil when it fits its row, or the times don't
+    /// make sense.
+    static func ownTimes(for entry: Plan.Entry, in row: Timetable.Period) -> (start: Int, end: Int)? {
+        guard let start = clockMinutes(entry.start) ?? ClockTime.parse(entry.start) else { return nil }
+        let end = entry.end.flatMap { clockMinutes($0) ?? ClockTime.parse($0) }
+        guard start != row.start || (end != nil && end != row.end) else { return nil }
+        let finish = end ?? row.end
+        guard Timetable.validTimes(start: start, end: finish) else { return nil }
+        return (start, finish)
     }
 
     /// "17:00" or "6:00" read as 24-hour time.

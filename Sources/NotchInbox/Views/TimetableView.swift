@@ -131,6 +131,8 @@ struct TimetableGrid: View {
                 ? TimetableGrid.planned(planner.planner, table: table, rows: rows, now: now, daily: settings.studyMinutesADay,
                                         steps: model.assignmentsStore?.assignments.planTasks() ?? [])
                 : [:]
+            // Classes with their own times that run into the rows around them.
+            let overflow = table.overflow(week: model.timetableWeek)
 
             GeometryReader { area in
                 let heights = rowHeights(rows: rows, height: area.size.height)
@@ -152,7 +154,7 @@ struct TimetableGrid: View {
                                     }
                                     TimetableRow(model: model, table: table, period: period, today: today, minute: minute,
                                                  labelWidth: labelWidth, classHeight: heights.classHeight * TimetableGrid.weight(period),
-                                                 breakHeight: heights.breakHeight, gap: gap, planned: planned)
+                                                 breakHeight: heights.breakHeight, gap: gap, planned: planned, overflow: overflow)
                                         .id(period.id)
                                 }
                             }
@@ -245,6 +247,8 @@ struct TimetableRow: View {
     let gap: CGFloat
     /// Study sessions planned into this week's empty slots, keyed "day-row".
     var planned: [String: String] = [:]
+    /// Classes with their own times running into this row's empty slots, keyed the same way.
+    var overflow: [String: String] = [:]
 
     var body: some View {
         let isNow = today != nil && period.contains(minute)
@@ -268,16 +272,20 @@ struct TimetableRow: View {
     private func cell(day: Int) -> LessonCell {
         let slot = Timetable.Slot(week: model.timetableWeek, day: day, period: period.id)
         let lesson = table.lesson(at: slot)
+        // When it runs: its own times, if it has them.
+        let times = lesson?.times(in: period) ?? (period.start, period.end)
         var isPast = false
         if let today = today {
-            isPast = day < today || (day == today && period.end <= minute)
+            isPast = day < today || (day == today && times.end <= minute)
         }
+        let key = "\(day)-\(period.id.uuidString)"
         return LessonCell(lesson: lesson,
                           colour: Theme.subject(table.colour(for: lesson?.subject ?? "")),
                           height: classHeight,
                           isActivity: period.isActivity,
-                          planned: lesson == nil ? planned["\(day)-\(period.id.uuidString)"] : nil,
-                          isNow: day == today && period.contains(minute),
+                          planned: lesson == nil ? planned[key] : nil,
+                          overflow: lesson == nil ? overflow[key] : nil,
+                          isNow: day == today && times.start <= minute && minute < times.end,
                           isPast: isPast,
                           selected: model.timetableEdit == .lesson(slot),
                           edit: { model.editLesson(day: day, period: period.id) })
@@ -429,6 +437,8 @@ struct LessonCell: View {
     var isActivity = false
     /// Homework or revision the planner has fitted into this empty slot.
     var planned: String? = nil
+    /// A class with its own times from another row that runs into this empty slot.
+    var overflow: String? = nil
     let isNow: Bool
     let isPast: Bool
     let selected: Bool
@@ -438,8 +448,10 @@ struct LessonCell: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
         let subject = lesson?.subject.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let details = lesson.map { Timetable.Lesson(subject: "", room: $0.room.trimmingCharacters(in: .whitespaces),
-                                                    teacher: $0.teacher.trimmingCharacters(in: .whitespaces)).details } ?? ""
+        let place = lesson.map { Timetable.Lesson(subject: "", room: $0.room.trimmingCharacters(in: .whitespaces),
+                                                  teacher: $0.teacher.trimmingCharacters(in: .whitespaces)).details } ?? ""
+        let own = lesson?.ownTimesLabel ?? ""
+        let details = [own, place].filter { !$0.isEmpty }.joined(separator: " · ")
         let filled = lesson != nil
 
         Button(action: edit) {
@@ -455,9 +467,12 @@ struct LessonCell: View {
                     .clipShape(shape)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(subject.isEmpty ? "No subject" : subject)
+                        // (Too short for a second line: its own times go after its name.)
+                        (Text(subject.isEmpty ? "No subject" : subject)
+                            .foregroundColor(subject.isEmpty ? Theme.tertiary : Theme.text)
+                            + Text(height < 36 && !own.isEmpty ? "  " + own : "")
+                            .foregroundColor(colour))
                             .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(subject.isEmpty ? Theme.tertiary : Theme.text)
                         if !details.isEmpty && height >= 36 {
                             Text(details)
                                 .font(.system(size: 11, weight: .medium))
@@ -477,6 +492,17 @@ struct LessonCell: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Theme.tertiary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let overflow = overflow {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.right")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text(overflow)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(Theme.tertiary)
+                        .padding(.horizontal, 7)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     } else if let planned = planned {
                         HStack(spacing: 4) {
                             Image(systemName: "book")
@@ -512,11 +538,12 @@ struct LessonCell: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(LessonCell.hint(filled: filled, isActivity: isActivity, planned: planned))
+        .help(LessonCell.hint(filled: filled, isActivity: isActivity, planned: planned, overflow: overflow))
     }
 
-    static func hint(filled: Bool, isActivity: Bool, planned: String?) -> String {
+    static func hint(filled: Bool, isActivity: Bool, planned: String?, overflow: String? = nil) -> String {
         if filled { return isActivity ? "Edit this activity" : "Edit this lesson" }
+        if let overflow = overflow { return "\(overflow) runs into this time. Click to put something else here." }
         if let planned = planned { return "Planned for study: \(planned). Click to put something else here." }
         return isActivity ? "Add an activity" : "Add a lesson"
     }
@@ -600,6 +627,9 @@ struct LessonEditor: View {
                     .onSubmit { model.timetableEdit = nil }
             }
 
+            if lesson != nil {
+                LessonTimes(model: model, store: store, slot: slot)
+            }
             if !subject.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(0..<Timetable.colourCount, id: \.self) { index in
@@ -666,6 +696,106 @@ struct LessonEditor: View {
             table.setLesson(lesson, at: slot)
         }
         focused = .room
+    }
+}
+
+/// In a lesson's side panel: whether it runs at its row's times or its own (piano from 5:15
+/// to 6:00 in the 5 pm hour block). Own times are saved as they're typed, once they make
+/// sense; if they start in another row, it offers to move the lesson there.
+struct LessonTimes: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var store: TimetableStore
+    let slot: Timetable.Slot
+    @State var own = false
+    @State var start = ""
+    @State var end = ""
+    @State var loaded = false
+
+    var body: some View {
+        let table = store.timetable
+        let period = table.period(slot.period)
+        let problem = Timetable.timesProblem(start: start, end: end)
+        let better = table.betterRow(for: slot)
+
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: $own) {
+                Text(period.map { "Its own times (the row is \($0.times))" } ?? "Its own times")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.body)
+            }
+            .toggleStyle(.checkbox)
+            .help("For a class or activity that doesn't start or finish with its row")
+            .onChange(of: own) { on in
+                guard loaded else { return }
+                if on {
+                    save()
+                } else {
+                    store.change { $0.setTimes(start: nil, end: nil, at: slot) }
+                    fill(from: period)
+                }
+            }
+            if own {
+                HStack(spacing: 8) {
+                    EditorField(label: "Starts") {
+                        TextField("5:15 pm", text: $start)
+                            .onChange(of: start) { _ in save() }
+                    }
+                    EditorField(label: "Ends") {
+                        TextField("6:00 pm", text: $end)
+                            .onChange(of: end) { _ in save() }
+                    }
+                }
+                if let problem = problem {
+                    Text(problem)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color(hex: 0xFFB340))
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let row = better {
+                    HStack(spacing: 6) {
+                        Text("It starts in the \(ClockTime.hour(row.start)) row.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        SmallPill(title: "Move It There", symbol: "arrow.up.and.down", action: { move(to: row.id) })
+                    }
+                }
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        let table = store.timetable
+        let lesson = table.lesson(at: slot)
+        if let lesson = lesson, lesson.hasOwnTimes, let from = lesson.start, let to = lesson.end {
+            own = true
+            start = ClockTime.long(from)
+            end = ClockTime.long(to)
+        } else {
+            own = false
+            fill(from: table.period(slot.period))
+        }
+        DispatchQueue.main.async { loaded = true }
+    }
+
+    /// The row's times, as a start for typing your own.
+    private func fill(from period: Timetable.Period?) {
+        guard let period = period else { return }
+        start = ClockTime.long(period.start)
+        end = ClockTime.long(period.end)
+    }
+
+    /// Saves as you type, once the times make sense.
+    private func save() {
+        guard loaded, own, let from = ClockTime.parse(start), let to = ClockTime.parse(end), Timetable.validTimes(start: from, end: to) else { return }
+        store.change { $0.setTimes(start: from, end: to, at: slot) }
+    }
+
+    /// Moves the lesson to the row its times start in, and edits it there.
+    private func move(to row: UUID) {
+        store.change { $0.moveLesson(from: slot, to: row) }
+        model.editLesson(day: slot.day, period: row)
     }
 }
 
@@ -947,12 +1077,12 @@ struct TimetableToolTile: View {
                     if let now = now {
                         if let lesson = now.lesson, !lesson.subject.trimmingCharacters(in: .whitespaces).isEmpty {
                             ClassLine(label: "Now", colour: Theme.subject(table.colour(for: lesson.subject)),
-                                      subject: lesson.subject, detail: [lesson.room, "until \(ClockTime.short(now.period.end))"]
+                                      subject: lesson.subject, detail: [lesson.room, "until \(ClockTime.short(now.end))"]
                                           .filter { !$0.isEmpty }.joined(separator: " · "))
                         } else {
                             ClassLine(label: "Now", colour: Theme.tertiary,
                                       subject: now.period.isBreak ? now.period.name : "Free",
-                                      detail: "until \(ClockTime.short(now.period.end))")
+                                      detail: "until \(ClockTime.short(now.end))")
                         }
                     }
                     if let next = next, let lesson = next.moment.lesson {

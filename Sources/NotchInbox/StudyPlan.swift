@@ -56,12 +56,13 @@ enum StudyPlanner {
             guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
             let dayIndex = Timetable.dayIndex(of: date, calendar: calendar)
             let week = timetable.week(of: date, calendar: calendar)
+            // Classes and activities take the times they run: their own, if they have them.
+            let entries = timetable.entries(day: dayIndex, week: week)
             func busy(_ from: Int, _ to: Int) -> Bool {
-                rows.contains { row in
-                    guard row.start < to, row.end > from else { return false }
-                    if row.isBreak { return dayIndex < 5 && !row.isActivity }
-                    return timetable.lesson(at: Timetable.Slot(week: week, day: dayIndex, period: row.id)) != nil
+                if dayIndex < 5 && rows.contains(where: { $0.isBreak && !$0.isActivity && $0.start < to && $0.end > from }) {
+                    return true
                 }
+                return entries.contains { $0.start < to && $0.end > from }
             }
             // School days: from when school ends. Weekends: through the day.
             var hour = dayIndex < 5 ? timetable.schoolEnd : weekendStart

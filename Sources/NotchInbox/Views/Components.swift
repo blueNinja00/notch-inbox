@@ -227,6 +227,9 @@ struct InboxMenu: View {
         if !model.isSample {
             Divider()
             Button("Open This Inbox in Gmail") { model.openAccountInGmail(account.id) }
+            if let email = account.email, !email.isEmpty {
+                LinkPlaceMenu(settings: AppSettings.shared, email: email)
+            }
         }
         if model.accounts.count > 1 {
             Divider()

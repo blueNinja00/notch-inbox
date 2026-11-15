@@ -273,7 +273,7 @@ struct TimetableRow: View {
         let slot = Timetable.Slot(week: model.timetableWeek, day: day, period: period.id)
         let lesson = table.lesson(at: slot)
         // When it runs: its own times, if it has them.
-        let times = lesson?.times(in: period) ?? (period.start, period.end)
+        let times: (start: Int, end: Int) = lesson?.times(in: period) ?? (start: period.start, end: period.end)
         var isPast = false
         if let today = today {
             isPast = day < today || (day == today && times.end <= minute)

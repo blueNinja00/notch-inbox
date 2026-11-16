@@ -94,7 +94,7 @@ enum PlannerLook {
         let name = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return Theme.tertiary }
         let matched = Planner.subject(in: name, among: table.classes) ?? name
-        return Theme.subject(table.colour(for: matched))
+        return Theme.subject(matched, in: table)
     }
 
     /// Red once it's overdue, amber on the day, grey otherwise.
@@ -773,7 +773,7 @@ struct SubjectChips: View {
                         Button(action: { pick(name) }) {
                             HStack(spacing: 5) {
                                 Circle()
-                                    .fill(Theme.subject(table.colour(for: name)))
+                                    .fill(Theme.subject(name, in: table))
                                     .frame(width: 6, height: 6)
                                 Text(name)
                                     .font(.system(size: 11, weight: .semibold))

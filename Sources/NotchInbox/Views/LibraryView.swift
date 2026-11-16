@@ -8,7 +8,7 @@ enum LibraryLook {
     /// A subject's colour: the one it has in your timetable.
     static func tint(_ subject: String, table: Timetable?) -> Color {
         guard let table = table else { return Theme.tertiary }
-        return Theme.subject(table.colour(for: subject))
+        return Theme.subject(subject, in: table)
     }
 
     static func symbol(_ report: LibraryReport) -> String {

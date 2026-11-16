@@ -169,6 +169,9 @@ struct Timetable: Codable, Equatable {
     private(set) var events: [Event]
     /// Each subject's colour (lowercased name → place in the palette), so all its classes match.
     private(set) var subjectColours: [String: Int]
+    /// A colour of your own for a subject (lowercased name → RGB, like 0x5E9EFF), picked
+    /// instead of one from the palette.
+    private(set) var customColours: [String: UInt32] = [:]
     var twoWeeks: Bool
     /// A Monday of a Week A.
     var weekA: Date
@@ -184,6 +187,9 @@ struct Timetable: Codable, Equatable {
     static let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     static let shortDayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     static let colourCount = 8
+    /// The palette subjects get their colours from: bright enough to read on black, distinct
+    /// side by side.
+    static let palette: [UInt32] = [0x5E9EFF, 0x3DD6A3, 0xFFB547, 0xFF6B6B, 0xB18CFF, 0xFF7AC6, 0x56CFE1, 0xA6D85A]
     /// The day runs from 6 am to 10 pm to start with.
     static let standardStart = 6 * 60
     static let standardEnd = 22 * 60
@@ -250,7 +256,7 @@ struct Timetable: Codable, Equatable {
     // MARK: Saving, and older timetables
 
     private enum CodingKeys: String, CodingKey {
-        case periods, events, subjectColours, twoWeeks, weekA, weekends, dayStart, dayEnd, layout
+        case periods, events, subjectColours, customColours, twoWeeks, weekA, weekends, dayStart, dayEnd, layout
         // Before build 50: classes in slots, and hour blocks around school.
         case lessons, beforeSchool, afterSchool
     }
@@ -272,6 +278,7 @@ struct Timetable: Codable, Equatable {
         let savedPeriods = try values.decode([Period].self, forKey: .periods)
         periods = savedPeriods.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
         subjectColours = (try? values.decodeIfPresent([String: Int].self, forKey: .subjectColours)) ?? [:]
+        customColours = ((try? values.decodeIfPresent([String: UInt32].self, forKey: .customColours)) ?? [:]).mapValues(SubjectColour.readable)
         twoWeeks = (try? values.decodeIfPresent(Bool.self, forKey: .twoWeeks)) ?? false
         weekA = try values.decode(Date.self, forKey: .weekA)
         weekends = (try? values.decodeIfPresent(Bool.self, forKey: .weekends)) ?? false
@@ -303,6 +310,9 @@ struct Timetable: Codable, Equatable {
         try values.encode(periods, forKey: .periods)
         try values.encode(events, forKey: .events)
         try values.encode(subjectColours, forKey: .subjectColours)
+        if !customColours.isEmpty {
+            try values.encode(customColours, forKey: .customColours)
+        }
         try values.encode(twoWeeks, forKey: .twoWeeks)
         try values.encode(weekA, forKey: .weekA)
         try values.encode(weekends, forKey: .weekends)
@@ -541,6 +551,7 @@ struct Timetable: Codable, Equatable {
         }
         let inUse = Set(events.map { Timetable.subjectKey($0.subject) })
         subjectColours = subjectColours.filter { inUse.contains($0.key) }
+        customColours = customColours.filter { inUse.contains($0.key) }
     }
 
     /// Every subject (and activity) on the timetable, A to Z, as you first typed it.
@@ -579,10 +590,30 @@ struct Timetable: Codable, Equatable {
         return name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF } % Timetable.colourCount
     }
 
+    /// A colour from the palette, for every class of the subject (and no colour of your own).
     mutating func setColour(_ colour: Int, for subject: String) {
         let name = Timetable.subjectKey(subject)
         guard !name.isEmpty else { return }
         subjectColours[name] = ((colour % Timetable.colourCount) + Timetable.colourCount) % Timetable.colourCount
+        customColours[name] = nil
+    }
+
+    /// The colour you picked for a subject yourself, if you did.
+    func customColour(for subject: String) -> UInt32? {
+        customColours[Timetable.subjectKey(subject)]
+    }
+
+    /// Any colour for every class of a subject. One too dark to read on black is lifted.
+    mutating func setCustomColour(_ rgb: UInt32, for subject: String) {
+        let name = Timetable.subjectKey(subject)
+        guard !name.isEmpty else { return }
+        customColours[name] = SubjectColour.readable(rgb)
+    }
+
+    /// The colour a subject's classes are drawn in: yours if you picked one, otherwise its
+    /// palette colour.
+    func rgb(for subject: String) -> UInt32 {
+        customColour(for: subject) ?? Timetable.palette[colour(for: subject) % Timetable.palette.count]
     }
 
     /// The colour fewest subjects have.
@@ -600,6 +631,7 @@ struct Timetable: Codable, Equatable {
     mutating func clearLessons() {
         events = []
         subjectColours = [:]
+        customColours = [:]
     }
 
     /// Why times typed for a class can't be saved, or nil if they can.
@@ -748,6 +780,7 @@ struct Timetable: Codable, Equatable {
         events = kept
         let inUse = Set(kept.map { Timetable.subjectKey($0.subject) })
         subjectColours = subjectColours.filter { inUse.contains($0.key) }
+        customColours = customColours.filter { inUse.contains($0.key) }
     }
 
     private func matches(_ day: [Period]) -> Bool {
@@ -944,5 +977,75 @@ final class TimetableStore: ObservableObject {
         } catch {
             NSLog("Notch Inbox: couldn't save the timetable: \(error.localizedDescription)")
         }
+    }
+}
+
+/// Colours as the picker works with them: hue, strength and brightness, each 0 to 1, and
+/// hex codes like #5E9EFF.
+enum SubjectColour {
+    /// Colours are kept at least this bright, so classes stay readable on the notch's black.
+    static let darkest = 0.3
+
+    static func rgb(hue: Double, saturation: Double, brightness: Double) -> UInt32 {
+        let h = (hue - hue.rounded(.down)) * 6
+        let s = min(max(saturation, 0), 1)
+        let v = min(max(brightness, 0), 1)
+        let sector = Int(h) % 6
+        let f = h - Double(Int(h))
+        let p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f))
+        let (r, g, b): (Double, Double, Double)
+        switch sector {
+        case 0: (r, g, b) = (v, t, p)
+        case 1: (r, g, b) = (q, v, p)
+        case 2: (r, g, b) = (p, v, t)
+        case 3: (r, g, b) = (p, q, v)
+        case 4: (r, g, b) = (t, p, v)
+        default: (r, g, b) = (v, p, q)
+        }
+        func byte(_ x: Double) -> UInt32 { UInt32((x * 255).rounded()) }
+        return byte(r) << 16 | byte(g) << 8 | byte(b)
+    }
+
+    static func hsb(_ rgb: UInt32) -> (hue: Double, saturation: Double, brightness: Double) {
+        let r = Double((rgb >> 16) & 0xFF) / 255, g = Double((rgb >> 8) & 0xFF) / 255, b = Double(rgb & 0xFF) / 255
+        let most = max(r, g, b), least = min(r, g, b), range = most - least
+        var hue = 0.0
+        if range > 0 {
+            if most == r {
+                hue = ((g - b) / range).truncatingRemainder(dividingBy: 6)
+            } else if most == g {
+                hue = (b - r) / range + 2
+            } else {
+                hue = (r - g) / range + 4
+            }
+            hue /= 6
+            if hue < 0 { hue += 1 }
+        }
+        return (hue, most == 0 ? 0 : range / most, most)
+    }
+
+    /// The colour, at least bright enough to read on black.
+    static func readable(_ rgb: UInt32) -> UInt32 {
+        let colour = rgb & 0xFFFFFF
+        let (h, s, b) = hsb(colour)
+        return b >= darkest ? colour : self.rgb(hue: h, saturation: s, brightness: darkest)
+    }
+
+    /// "#5E9EFF".
+    static func text(_ rgb: UInt32) -> String {
+        "#" + String(format: "%06X", rgb & 0xFFFFFF)
+    }
+
+    /// A typed hex code: "#5e9eff", "5E9EFF" or "#5AF". Nil if it isn't one.
+    static func parse(_ typed: String) -> UInt32? {
+        var hex = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") {
+            hex.removeFirst()
+        }
+        if hex.count == 3 {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        guard hex.count == 6, hex.allSatisfy(\.isHexDigit) else { return nil }
+        return UInt32(hex, radix: 16)
     }
 }

@@ -14,7 +14,7 @@ struct LinkPlaceSettings: View {
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(Theme.text2)
             SettingsDetail(text: BrowserProfiles.about(browser: settings.profileBrowser, profiles: profiles.count))
-            if profiles.count > 1 {
+            if !profiles.isEmpty {
                 ForEach(settings.accounts) { account in
                     LinkPlaceRow(account: account.id, place: settings.linkPlace(for: account.id), profiles: profiles,
                                  choose: { settings.setLinkPlace($0, for: account.id) })
@@ -24,6 +24,34 @@ struct LinkPlaceSettings: View {
         // (The browser's profiles are read again whenever this shows, in case one was added.)
         .onAppear {
             settings.onReadBrowserProfiles?()
+        }
+    }
+}
+
+/// Right-click an inbox in Mail → Open Links In: the same choice as in Settings, for that
+/// inbox. Automatic says which profile it found.
+struct LinkPlaceMenu: View {
+    @ObservedObject var settings: AppSettings
+    let email: String
+
+    var body: some View {
+        let profiles = settings.browserProfiles
+        let place = settings.linkPlace(for: email)
+        let choices = BrowserProfiles.choices(profiles)
+
+        if !profiles.isEmpty {
+            Menu("Open Links In") {
+                ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                    Toggle(isOn: Binding(
+                        get: { place == choice.value },
+                        set: { on in
+                            if on { settings.setLinkPlace(choice.value, for: email) }
+                        }
+                    )) {
+                        Text(BrowserProfiles.menuTitle(choice, email: email, profiles: profiles))
+                    }
+                }
+            }
         }
     }
 }
@@ -59,15 +87,6 @@ struct LinkPlaceRow: View {
 
     /// Automatic, each of the browser's profiles by name, and the window in front.
     static func options(_ profiles: [BrowserProfile]) -> [ChoiceSegments<LinkPlace>.Option] {
-        var options = [ChoiceSegments<LinkPlace>.Option(value: .automatic, title: "Automatic",
-                                                        help: "The profile this address is signed in to, found from the browser's own list")]
-        for profile in profiles {
-            options.append(ChoiceSegments<LinkPlace>.Option(value: .profile(profile.directory),
-                                                            title: BrowserProfiles.title(of: profile, among: profiles),
-                                                            help: BrowserProfiles.help(for: profile)))
-        }
-        options.append(ChoiceSegments<LinkPlace>.Option(value: .front, title: "Front window",
-                                                        help: "Whichever browser window is in front, whatever its profile"))
-        return options
+        BrowserProfiles.choices(profiles).map { ChoiceSegments<LinkPlace>.Option(value: $0.value, title: $0.title, help: $0.help) }
     }
 }

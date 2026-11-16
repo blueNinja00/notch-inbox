@@ -96,15 +96,44 @@ struct Timetable: Codable, Equatable {
         var subject: String
         var room: String
         var teacher: String
+        /// Its own times, for a class or activity that doesn't fit its row (piano from 5:15
+        /// to 6:00 in the 5 pm hour block), in minutes after midnight. nil: its row's times.
+        var start: Int?
+        var end: Int?
 
-        init(subject: String, room: String = "", teacher: String = "") {
+        init(subject: String, room: String = "", teacher: String = "", start: Int? = nil, end: Int? = nil) {
             self.subject = subject
             self.room = room
             self.teacher = teacher
+            self.start = start
+            self.end = end
         }
 
+        /// Nothing typed in it. (Times by themselves don't make a lesson.)
         var isEmpty: Bool {
             [subject, room, teacher].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        }
+
+        /// Whether it runs at its own times rather than its row's.
+        var hasOwnTimes: Bool {
+            if let start = start, let end = end {
+                return Timetable.validTimes(start: start, end: end)
+            }
+            return false
+        }
+
+        /// "5:15–6:00" for a class with its own times; "" for one on its row's times.
+        var ownTimesLabel: String {
+            guard hasOwnTimes, let start = start, let end = end else { return "" }
+            return "\(ClockTime.short(start))–\(ClockTime.short(end))"
+        }
+
+        /// When it runs: its own times, or else those of the row it's in.
+        func times(in period: Period) -> (start: Int, end: Int) {
+            if hasOwnTimes, let start = start, let end = end {
+                return (start, end)
+            }
+            return (period.start, period.end)
         }
 
         /// "B12 · Ms Lee", or whichever of the two there is.
@@ -354,9 +383,14 @@ struct Timetable: Codable, Equatable {
     mutating func tidy() {
         var tidied: [String: Lesson] = [:]
         for (key, lesson) in lessons {
-            let clean = Lesson(subject: lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines),
+            var clean = Lesson(subject: lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines),
                                room: lesson.room.trimmingCharacters(in: .whitespacesAndNewlines),
                                teacher: lesson.teacher.trimmingCharacters(in: .whitespacesAndNewlines))
+            // Its own times stay, if they make sense.
+            if lesson.hasOwnTimes {
+                clean.start = lesson.start
+                clean.end = lesson.end
+            }
             if !clean.isEmpty {
                 tidied[key] = clean
             }
@@ -421,6 +455,132 @@ struct Timetable: Codable, Equatable {
     mutating func clearLessons() {
         lessons = [:]
         subjectColours = [:]
+    }
+
+    // MARK: Own times
+
+    /// The shortest a class or activity with its own times can be.
+    static let shortestOwn = 5
+
+    /// Whether times make sense for a class or activity: in the day, and at least five
+    /// minutes long.
+    static func validTimes(start: Int, end: Int) -> Bool {
+        start >= 0 && end <= 24 * 60 && end - start >= shortestOwn
+    }
+
+    /// When the lesson in a slot runs (its own times, or its row's), or the row's times if
+    /// it's empty. nil for a row that isn't there.
+    func times(at slot: Slot) -> (start: Int, end: Int)? {
+        guard let period = period(slot.period) else { return nil }
+        return lesson(at: slot)?.times(in: period) ?? (period.start, period.end)
+    }
+
+    /// Gives the lesson in a slot its own times, or with nil puts it back on its row's. Times
+    /// that are the row's own count as none. False if there's no lesson there, or the times
+    /// don't make sense.
+    @discardableResult
+    mutating func setTimes(start: Int?, end: Int?, at slot: Slot) -> Bool {
+        guard var lesson = lessons[key(slot)], let period = period(slot.period), !period.isBreak else { return false }
+        if let start = start, let end = end {
+            guard Timetable.validTimes(start: start, end: end) else { return false }
+            let same = start == period.start && end == period.end
+            lesson.start = same ? nil : start
+            lesson.end = same ? nil : end
+        } else if start == nil && end == nil {
+            lesson.start = nil
+            lesson.end = nil
+        } else {
+            return false
+        }
+        lessons[key(slot)] = lesson
+        return true
+    }
+
+    /// The row a time falls in (not a break): where a class starting then belongs.
+    func row(at minute: Int) -> Period? {
+        rows.first { !$0.isBreak && $0.contains(minute) }
+    }
+
+    /// Where the lesson in a slot belongs if its own times start outside its row: the row
+    /// they start in, if that's free on the same day. nil if it's where it should be.
+    func betterRow(for slot: Slot) -> Period? {
+        guard let lesson = lesson(at: slot), lesson.hasOwnTimes, let start = lesson.start,
+              let own = period(slot.period), !own.contains(start),
+              let row = row(at: start), row.id != slot.period,
+              self.lesson(at: Slot(week: slot.week, day: slot.day, period: row.id)) == nil else { return nil }
+        return row
+    }
+
+    /// Moves a lesson to another row on the same day, if nothing's there. Its own times go
+    /// with it (and stop being its own if they're the new row's).
+    @discardableResult
+    mutating func moveLesson(from slot: Slot, to period: UUID) -> Bool {
+        let target = Slot(week: slot.week, day: slot.day, period: period)
+        guard period != slot.period, let lesson = lesson(at: slot), self.lesson(at: target) == nil,
+              let row = self.period(period), !row.isBreak else { return false }
+        lessons[key(slot)] = nil
+        lessons[key(target)] = lesson
+        if lesson.hasOwnTimes {
+            setTimes(start: lesson.start, end: lesson.end, at: target)
+        }
+        return true
+    }
+
+    /// A class or activity on a day, with the times it runs.
+    struct Entry: Equatable {
+        let period: Period
+        let lesson: Lesson
+        let start: Int
+        let end: Int
+    }
+
+    /// What's on a day, in the order it happens.
+    func entries(day: Int, week: Int) -> [Entry] {
+        let found = rows.compactMap { period -> Entry? in
+            guard !period.isBreak, let lesson = lesson(at: Slot(week: week, day: day, period: period.id)) else { return nil }
+            let times = lesson.times(in: period)
+            return Entry(period: period, lesson: lesson, start: times.start, end: times.end)
+        }
+        return found.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
+    }
+
+    /// Why times typed for a class can't be its own, or nil if they can.
+    static func timesProblem(start: String, end: String) -> String? {
+        guard let from = ClockTime.parse(start), let to = ClockTime.parse(end) else {
+            return "Type times like 5:15 pm or 17:15."
+        }
+        if to <= from { return "It needs to end after it starts." }
+        if to - from < shortestOwn { return "It needs to be at least \(shortestOwn) minutes long." }
+        return nil
+    }
+
+    /// For each day of a week, the empty rows a class with its own times runs into, keyed
+    /// "day-row" (as the grid keys its slots).
+    func overflow(week: Int) -> [String: String] {
+        var result: [String: String] = [:]
+        for day in 0..<dayCount {
+            for (row, label) in overflow(day: day, week: week) {
+                result["\(day)-\(row.uuidString)"] = label
+            }
+        }
+        return result
+    }
+
+    /// The empty rows a class or activity with its own times runs into from the row it's in
+    /// (soccer from 3:30 to 5:00 in the 3:10 row runs into the 4:10 row), keyed by row: what
+    /// they show faintly, "Soccer 3:30–5:00".
+    func overflow(day: Int, week: Int) -> [UUID: String] {
+        var result: [UUID: String] = [:]
+        let all = rows
+        for entry in entries(day: day, week: week) where entry.lesson.hasOwnTimes {
+            let subject = entry.lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = "\(subject.isEmpty ? "Class" : subject) \(ClockTime.short(entry.start))–\(ClockTime.short(entry.end))"
+            for row in all where !row.isBreak && row.id != entry.period.id && row.start < entry.end && row.end > entry.start {
+                guard lesson(at: Slot(week: week, day: day, period: row.id)) == nil else { continue }
+                result[row.id] = result[row.id].map { $0 + ", " + label } ?? label
+            }
+        }
+        return result
     }
 
     // MARK: The school day
@@ -556,46 +716,65 @@ struct Timetable: Codable, Equatable {
         let lesson: Lesson?
         let day: Int
         let week: Int
+        /// When it runs: a class's own times, or its row's. (Free time runs until the row
+        /// ends, or until a class starts in it.)
+        let start: Int
+        let end: Int
+
+        init(period: Period, lesson: Lesson?, day: Int, week: Int, start: Int? = nil, end: Int? = nil) {
+            self.period = period
+            self.lesson = lesson
+            self.day = day
+            self.week = week
+            self.start = start ?? period.start
+            self.end = end ?? period.end
+        }
     }
 
     /// What's on now: a class, a break, or an activity (an hour block with nothing in it
-    /// doesn't count).
+    /// doesn't count). A class with its own times is on during those times, whichever row
+    /// it's in.
     func now(at date: Date = Date(), calendar: Calendar = .current) -> Moment? {
         guard let day = column(of: date, calendar: calendar) else { return nil }
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
         let week = self.week(of: date, calendar: calendar)
+        let entries = self.entries(day: day, week: week)
+        if let on = entries.last(where: { $0.start <= minute && minute < $0.end }) {
+            return Moment(period: on.period, lesson: on.lesson, day: day, week: week, start: on.start, end: on.end)
+        }
         guard let period = rows.first(where: { $0.contains(minute) }) else { return nil }
-        let lesson = period.isBreak ? nil : self.lesson(at: Slot(week: week, day: day, period: period.id))
         // An empty hour block, or anything empty at the weekend, isn't "on".
-        if lesson == nil && (period.isActivity || day >= 5) { return nil }
-        return Moment(period: period, lesson: lesson, day: day, week: week)
+        if period.isActivity || day >= 5 { return nil }
+        // A break, or a free period: until it ends, or a class starts in it.
+        let until = entries.first(where: { $0.start > minute && $0.start < period.end })?.start ?? period.end
+        return Moment(period: period, lesson: nil, day: day, week: week, start: period.start, end: until)
     }
 
     /// The next class or activity with something in it: later today, or on a coming day.
     func next(after date: Date = Date(), calendar: Calendar = .current) -> (moment: Moment, date: Date)? {
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
-        let rows = self.rows
         for offset in 0..<15 {
             guard let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: date)),
                   let column = column(of: day, calendar: calendar) else { continue }
             let week = self.week(of: day, calendar: calendar)
-            for period in rows where !period.isBreak && (offset > 0 || period.start > minute) {
-                if let lesson = lesson(at: Slot(week: week, day: column, period: period.id)) {
-                    let at = calendar.date(byAdding: .minute, value: period.start, to: day) ?? day
-                    return (Moment(period: period, lesson: lesson, day: column, week: week), at)
-                }
+            if let entry = entries(day: column, week: week).first(where: { offset > 0 || $0.start > minute }) {
+                let at = calendar.date(byAdding: .minute, value: entry.start, to: day) ?? day
+                return (Moment(period: entry.period, lesson: entry.lesson, day: column, week: week, start: entry.start, end: entry.end), at)
             }
         }
         return nil
     }
 
     /// "Monday (Week A): 8:00 am Maths in B12 with Ms Lee; 5:00 pm Soccer at Oval" for the assistant.
+    /// A class with its own times says when it ends: "5:15 pm to 6:00 pm Piano".
     func summary(of date: Date, calendar: Calendar = .current) -> String? {
         guard let column = column(of: date, calendar: calendar) else { return nil }
         let week = self.week(of: date, calendar: calendar)
-        let entries = day(column, week: week).compactMap { entry -> String? in
-            guard let lesson = entry.lesson, !lesson.subject.isEmpty else { return nil }
-            var line = "\(ClockTime.long(entry.period.start)) \(lesson.subject)"
+        let entries = self.entries(day: column, week: week).compactMap { entry -> String? in
+            let lesson = entry.lesson
+            guard !lesson.subject.isEmpty else { return nil }
+            let when = lesson.hasOwnTimes ? "\(ClockTime.long(entry.start)) to \(ClockTime.long(entry.end))" : ClockTime.long(entry.start)
+            var line = "\(when) \(lesson.subject)"
             if !lesson.room.isEmpty { line += (entry.period.isActivity ? " at " : " in ") + lesson.room }
             if !lesson.teacher.isEmpty { line += " with \(lesson.teacher)" }
             return line

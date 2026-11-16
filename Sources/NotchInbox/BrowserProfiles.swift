@@ -226,10 +226,38 @@ enum BrowserProfiles {
         if browser.isEmpty {
             return "A link in an email, and Open in Gmail, open in your browser's front window. Opening them in the profile an inbox is signed in to needs Google Chrome, Brave or Edge."
         }
-        if profiles <= 1 {
-            return "A link in an email, and Open in Gmail, open in \(browser). It has one profile on this Mac, so there's nothing to choose. If you add another (its Profiles menu), each inbox's links will open in the profile that inbox's address is signed in to."
+        if profiles == 0 {
+            return "A link in an email, and Open in Gmail, open in \(browser)'s front window. No \(browser) profiles were found on this Mac yet; once \(browser) has been opened, each inbox can choose one here."
         }
-        return "A link in an email, and Open in Gmail, open in the \(browser) profile that inbox's address is signed in to: a link in an email to your home address opens where you're signed in at home. Automatic finds the profile from \(browser)'s own list; pick one yourself if it finds the wrong one. To find them, the notch reads \(browser)'s list of profiles and the addresses signed in to each. That stays on this Mac."
+        if profiles == 1 {
+            return "A link in an email, and Open in Gmail, open in \(browser). It has one profile on this Mac, so every inbox opens there. Add a profile for each account (\(browser)'s Profiles menu) and each inbox's links can open in its own."
+        }
+        return "A link in an email, and Open in Gmail, open in the \(browser) profile that inbox's address is signed in to: a link in an email to your home address opens where you're signed in at home. Automatic finds the profile from \(browser)'s own list; choose one for an inbox below (or right-click the inbox in Mail → Open Links In). To find them, the notch reads \(browser)'s list of profiles and the addresses signed in to each. That stays on this Mac."
+    }
+
+    /// One of the places an inbox's links can open, as it's offered.
+    struct Choice: Equatable {
+        let value: LinkPlace
+        let title: String
+        let help: String
+    }
+
+    /// The places to choose from: Automatic, each profile by name, and the front window.
+    static func choices(_ profiles: [BrowserProfile]) -> [Choice] {
+        var choices = [Choice(value: .automatic, title: "Automatic", help: "The profile this address is signed in to, found from the browser's own list")]
+        for profile in profiles {
+            choices.append(Choice(value: .profile(profile.directory), title: title(of: profile, among: profiles), help: help(for: profile)))
+        }
+        choices.append(Choice(value: .front, title: "Front window", help: "Whichever browser window is in front, whatever its profile"))
+        return choices
+    }
+
+    /// A choice as the inbox's menu in Mail shows it. Automatic says what it found:
+    /// "Automatic (Home)", or "Automatic (front window)".
+    static func menuTitle(_ choice: Choice, email: String, profiles: [BrowserProfile]) -> String {
+        guard choice.value == .automatic else { return choice.title }
+        guard let found = profile(for: email, in: profiles) else { return "\(choice.title) (front window)" }
+        return "\(choice.title) (\(title(of: found, among: profiles)))"
     }
 
     /// A profile's tooltip in Settings: who's signed in there.

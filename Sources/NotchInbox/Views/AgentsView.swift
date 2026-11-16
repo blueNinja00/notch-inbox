@@ -833,7 +833,8 @@ struct AgentsWelcome: View {
     var recipes: [Recipe] = []
 
     var body: some View {
-        let tools = assistant.engine == .claudeCode
+        let tools = assistant.engine.agentTools
+        let web = assistant.engine.agentWeb(allowed: settings.agentsUseWeb, ollamaKey: assistant.ollamaKeyHint != nil)
         let needsSetup = !assistant.status.isReady && assistant.status != .checking
 
         ScrollView(.vertical) {
@@ -846,7 +847,7 @@ struct AgentsWelcome: View {
                     .foregroundStyle(Theme.body)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(AgentBrief.powers(tools: tools, web: tools && settings.agentsUseWeb, engine: assistant.engine.title,
+                Text(AgentBrief.powers(tools: tools, web: web, engine: assistant.engine.title,
                                        claude: assistant.engine.isClaude))
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.tertiary)

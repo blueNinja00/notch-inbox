@@ -524,8 +524,10 @@ enum AgentBrief {
     }
 
     /// An agent's instructions. `tools` says whether it can use the web and its folder
-    /// (Claude Code) or can only think and write (the other engines).
-    static func system(now: Date, timeZone: TimeZone = .current, tools: Bool, web: Bool, readFolders: [String] = [], teamChat: String? = nil) -> String {
+    /// (Claude Code, or Qwen with the app's tools) or can only think and write (Claude with
+    /// an API key). `qwen` names the app's tools instead of Claude Code's.
+    static func system(now: Date, timeZone: TimeZone = .current, tools: Bool, web: Bool, readFolders: [String] = [], teamChat: String? = nil,
+                       qwen: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = timeZone
         formatter.locale = Locale(identifier: "en_AU")
@@ -542,7 +544,14 @@ enum AgentBrief {
         \(RichText.howItsShown("Your report"))
         """
         if tools {
-            if web {
+            if web && qwen {
+                text += """
+
+
+                You can search the web (web_search) and read pages (web_fetch). Check facts against the pages themselves, prefer reliable \
+                sources, and give the link for anything you state from the web.
+                """
+            } else if web {
                 text += """
 
 
@@ -553,14 +562,24 @@ enum AgentBrief {
             } else {
                 text += "\n\nYou can't use the web for this job: work from what you know and say so where it matters."
             }
-            text += """
+            if qwen {
+                text += """
 
 
-            You have a folder of your own (the current directory). Save anything long there with Write (notes, a draft, a table), in Markdown \
-            unless asked otherwise, and name the files in your report. You can read and change your own files.
-            """
+                You have a folder of your own. Save anything long there with write_file, giving a file name like notes.md (notes, a draft, \
+                a table), in Markdown unless asked otherwise, and name the files in your report. list_files and read_file show you what's in it.
+                """
+            } else {
+                text += """
+
+
+                You have a folder of your own (the current directory). Save anything long there with Write (notes, a draft, a table), in Markdown \
+                unless asked otherwise, and name the files in your report. You can read and change your own files.
+                """
+            }
             if !readFolders.isEmpty {
-                text += " You may also read, but not change, these folders: " + readFolders.joined(separator: "; ") + "."
+                text += (qwen ? " You may also read (with list_files and read_file), but not change, these folders: " : " You may also read, but not change, these folders: ")
+                    + readFolders.joined(separator: "; ") + "."
             }
             text += " You can't run commands, and you can't see or change anything else on this Mac."
             if let chat = teamChat {
@@ -581,11 +600,14 @@ enum AgentBrief {
     /// What an agent can and can't do, in words, for the room's welcome.
     static func powers(tools: Bool, web: Bool, engine: String, claude: Bool) -> String {
         guard tools else {
-            return "With \(engine), an agent can only think and write: no web, and no files. For research, choose “Claude, with your Claude plan” in Settings → Assistant."
+            return "With \(engine), an agent can only think and write: no web, and no files. For research, choose “Claude, with your Claude plan” or “Qwen, on this Mac” in Settings → Assistant."
                 + (claude ? " The job you type is sent to Anthropic." : " Everything stays on this Mac.")
         }
-        let reach = web ? "search the web, read pages and save files" : "save files (the web is switched off for agents in Settings)"
-        return "An agent can \(reach) in a folder of its own, inside “Notch Agents” in your home folder. It can't run commands, and it can't see your mail, your notes or your other files unless you share a folder with it in Settings. The job you type is sent to Anthropic."
+        let off = claude ? "the web is switched off for agents in Settings" : "for the web, switch it on and add an Ollama key in Settings → Assistant"
+        let reach = web ? "search the web, read pages and save files" : "save files (\(off))"
+        let sent = claude ? " The job you type is sent to Anthropic."
+            : web ? " Qwen runs on this Mac; what it searches for and the pages it reads go through Ollama's web search." : " Everything stays on this Mac."
+        return "An agent can \(reach) in a folder of its own, inside “Notch Agents” in your home folder. It can't run commands, and it can't see your mail, your notes or your other files unless you share a folder with it in Settings." + sent
     }
 
     /// Jobs to start from: a click puts one in the box, to finish in your own words.

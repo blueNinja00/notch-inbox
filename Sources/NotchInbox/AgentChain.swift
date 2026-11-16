@@ -310,7 +310,8 @@ struct AgentChain: Codable, Equatable {
             return "\(engine) isn't set up yet. Click to set it up."
         }
         guard claude else {
-            return "Starts three agents on it, on this Mac. Without the web, they work from what \(engine) knows."
+            return web ? "Starts three agents on it, on this Mac. What they search the web for, and the pages they read, go through Ollama's web search."
+                       : "Starts three agents on it, on this Mac. Without the web, they work from what \(engine) knows."
         }
         let sent = "Starts three agents on it. This assignment's name, subject, due date, task sheet and notes are sent to Anthropic"
         if !tools {

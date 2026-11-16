@@ -143,6 +143,8 @@ final class Assistant: ObservableObject {
 
     /// "sk-ant-…a1b2" when an API key is saved.
     @Published private(set) var apiKeyHint: String?
+    /// Your Ollama key for Qwen agents' web searches, shown as "abc1234…wxyz", if one is saved.
+    @Published private(set) var ollamaKeyHint: String?
     /// Where Claude Code was found.
     @Published private(set) var claudePath: String?
 
@@ -181,6 +183,7 @@ final class Assistant: ObservableObject {
         usesWeb = defaults.object(forKey: Assistant.webKey) == nil ? true : defaults.bool(forKey: Assistant.webKey)
         abilitiesOff = Set(defaults.stringArray(forKey: Assistant.abilitiesOffKey) ?? [])
         apiKeyHint = APIKeyFile.read().map(APIKeyFile.hint(for:))
+        ollamaKeyHint = OllamaKeyFile.read().map(APIKeyFile.hint(for:))
         // The chat you were last in, as you left it.
         messages = chats.book.current?.messages ?? []
     }
@@ -269,6 +272,21 @@ final class Assistant: ObservableObject {
         checkSetup()
         return true
     }
+
+    /// Saves an Ollama key for Qwen agents' web searches. False if it doesn't look like one.
+    func saveOllamaKey(_ typed: String) -> Bool {
+        guard OllamaKeyFile.save(typed) else { return false }
+        ollamaKeyHint = OllamaKeyFile.read().map(APIKeyFile.hint(for:))
+        return true
+    }
+
+    func removeOllamaKey() {
+        OllamaKeyFile.delete()
+        ollamaKeyHint = nil
+    }
+
+    /// The Qwen model Ollama has, once it has been found (for agents).
+    var qwenModelName: String? { qwenModel }
 
     func removeAPIKey() {
         APIKeyFile.delete()

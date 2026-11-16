@@ -967,24 +967,33 @@ struct AgentSettings: View {
     @ObservedObject var settings: AppSettings
 
     var body: some View {
-        let tools = assistant.engine == .claudeCode
+        let engine = assistant.engine
+        let tools = engine.agentTools
+        let qwen = engine == .qwen
 
         SettingsHeading(title: "Agents",
-                        detail: tools
-                            ? "Separate Claudes that you, or the assistant, hand bigger jobs to. Each works in a folder of its own, and can't run commands or see your mail, notes or other files."
-                            : "Separate AIs that you, or the assistant, hand bigger jobs to. With \(assistant.engine.title), an agent can only think and write; the web and saved files need “Claude, with your Claude plan”.")
+                        detail: !tools
+                            ? "Separate AIs that you, or the assistant, hand bigger jobs to. With \(engine.title), an agent can only think and write; the web and saved files need “Claude, with your Claude plan” or “Qwen, on this Mac”."
+                            : qwen
+                            ? "Separate Qwens on this Mac that you, or the assistant, hand bigger jobs to. Each works in a folder of its own, and can't run commands or see your mail, notes or other files. They're slower than Claude, and each one working takes a share of this Mac's memory."
+                            : "Separate Claudes that you, or the assistant, hand bigger jobs to. Each works in a folder of its own, and can't run commands or see your mail, notes or other files.")
         SettingsRow(title: "Working at once", detail: "The rest wait their turn. More at once uses more of your plan.") {
             ChoiceSegments(options: AgentSettings.options, selected: settings.agentsAtOnce, choose: { settings.agentsAtOnce = $0 })
         }
         if tools {
             SettingsToggle(title: "Let agents use the web",
-                           detail: "They can search and read pages, and what they search for is sent to Anthropic. Off, they work from what they know.",
+                           detail: qwen
+                               ? "They can search and read pages through Ollama's web search, which needs a free key from your Ollama account (below). What they search for, and the pages they read, go through Ollama. Off, they work from what they know."
+                               : "They can search and read pages, and what they search for is sent to Anthropic. Off, they work from what they know.",
                            isOn: $settings.agentsUseWeb)
+            if qwen && settings.agentsUseWeb {
+                OllamaKeyEditor(assistant: assistant)
+            }
         }
         SettingsToggle(title: "Team chat",
                        detail: tools
-                           ? "Working agents share a chat: they post what they find, read each other's posts so they don't double up, and can ask the chief of staff. You can post there too, from the top of the agent room. The chief's answers there use a little more of your plan."
-                           : "A chat in the agent room where you and the chief of staff can talk. Agents can only join it with “Claude, with your Claude plan”.",
+                           ? "Working agents share a chat: they post what they find, read each other's posts so they don't double up, and can ask the chief of staff. You can post there too, from the top of the agent room." + (qwen ? "" : " The chief's answers there use a little more of your plan.")
+                           : "A chat in the agent room where you and the chief of staff can talk. Agents can only join it with “Claude, with your Claude plan” or “Qwen, on this Mac”.",
                        isOn: $settings.agentsTeamChat)
         SettingsToggle(title: "Send reports back to the chat",
                        detail: "When an agent the assistant started finishes, its report arrives in the chat you asked in, without your going to look. A chain reports once, at the end.",
@@ -1177,6 +1186,54 @@ struct APIKeyEditor: View {
             problem = nil
         } else {
             problem = "That doesn't look like an API key. Copy it again from the console."
+        }
+    }
+}
+
+/// The Ollama key Qwen agents search the web with.
+struct OllamaKeyEditor: View {
+    @ObservedObject var assistant: Assistant
+    @State var typed = ""
+    @State var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let hint = assistant.ollamaKeyHint {
+                HStack(spacing: 8) {
+                    StatusLine(state: .good, text: "Ollama key saved: \(hint)")
+                    Spacer(minLength: 8)
+                    PillButton(title: "Remove", action: { assistant.removeOllamaKey() })
+                }
+            } else {
+                StatusLine(state: .problem, text: "No Ollama key yet, so agents can't use the web")
+            }
+            HStack(spacing: 8) {
+                SecureField(assistant.ollamaKeyHint == nil ? "Paste your Ollama key" : "Paste a new key to replace it", text: $typed)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.raised))
+                    .onSubmit(save)
+                PillButton(title: "Save", prominent: true, action: save)
+            }
+            if let problem = problem {
+                Text(problem)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.text2)
+            }
+            SettingsDetail(text: "Sign in at ollama.com (free), then make a key under Settings → Keys. The key stays on this Mac, in a file only your account can read, and is only used for agents' web searches.")
+        }
+    }
+
+    private func save() {
+        guard !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if assistant.saveOllamaKey(typed) {
+            typed = ""
+            problem = nil
+        } else {
+            problem = "That doesn't look like a key. Copy it again from ollama.com."
         }
     }
 }

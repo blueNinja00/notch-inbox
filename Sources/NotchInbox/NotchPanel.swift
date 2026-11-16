@@ -184,7 +184,8 @@ final class NotchWindowController {
                 cancelPending()
             }
         case .peek:
-            if inside || model.homePinned {
+            // (Not while files are being dragged out of it: that would take the drag with it.)
+            if inside || model.homePinned || model.draggingFiles {
                 cancelPending()
             } else {
                 schedule(after: 0.2) { [weak self] in self?.model.unpeek() }
@@ -211,10 +212,20 @@ final class NotchWindowController {
                         option: flags.contains(.option), shift: flags.contains(.shift))
     }
 
+    /// Keys pressed while a shortcut is being set in Settings, when they came some other
+    /// way than a key press in the panel (the key that opens the notch goes to the app).
+    func record(_ combo: KeyCombo) {
+        guard let action = model.recordingKey else { return }
+        record(combo, for: action)
+    }
+
     /// While a shortcut is being set: Esc gives up, Delete takes its key off, and any
     /// other keys become its key if they can be one (if not, Settings says why and waits).
     private func record(_ event: NSEvent, for action: KeyAction) {
-        let combo = Self.combo(for: event)
+        record(Self.combo(for: event), for: action)
+    }
+
+    private func record(_ combo: KeyCombo, for action: KeyAction) {
         let bare = !combo.hasModifier && !combo.shift
         if combo.code == KeyCombo.escape && bare {
             model.recordingKey = nil
@@ -226,7 +237,7 @@ final class NotchWindowController {
             model.recordingKey = nil
             return
         }
-        if let problem = combo.problem {
+        if let problem = combo.problem(for: action) {
             model.keyNote = problem
             return
         }
@@ -391,6 +402,17 @@ final class NotchWindowController {
     private func refreshMousePassThrough() {
         guard let panel = panel else { return }
         panel.ignoresMouseEvents = !hotRect().contains(NSEvent.mouseLocation)
+    }
+
+    /// Opened with its key from another app: the panel takes the keyboard, so that the
+    /// notch's own shortcuts and Esc work straight away, without a click in it first.
+    /// (It's a panel that doesn't bring the app forward, so the app you were in stays in
+    /// front, and gets the keyboard back when the notch closes.)
+    func takeKeyboard() {
+        guard let panel = panel else { return }
+        DispatchQueue.main.async {
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
 
     /// If the reply box had keyboard focus, hand typing back to the app underneath.

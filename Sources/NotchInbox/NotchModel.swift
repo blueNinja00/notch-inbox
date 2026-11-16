@@ -795,6 +795,9 @@ final class NotchModel: ObservableObject {
         let team = agentsStore?.team
         let picked = team?.job(agentOpen)
         switch action {
+        case .openNotch:
+            // (The app opens and closes the notch for this key, from any app.)
+            return false
         case .goHome: goHome()
         case .goMail: open(.mail)
         case .goPlanner: open(.planner)
@@ -1520,6 +1523,9 @@ final class NotchModel: ObservableObject {
         level = .detail
     }
 
+    /// Files are being dragged out of the notch: it stays open until they're dropped.
+    var draggingFiles = false
+
     /// Click a class to edit it; click it again to stop.
     func editEvent(_ id: UUID) {
         timetableEdit = timetableEdit == .event(id) ? nil : .event(id)
@@ -1883,6 +1889,7 @@ final class NotchModel: ObservableObject {
     func close() {
         level = .rest
         recordingKey = nil
+        draggingFiles = false
         sentFrom = nil
         homePinned = false
         endSearch()

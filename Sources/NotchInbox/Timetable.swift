@@ -67,24 +67,31 @@ enum ClockTime {
     }
 }
 
-/// Your timetable: the school day's periods (classes and breaks) with an hour block for each
-/// hour before and after school, for extracurriculars, and what's on in each, Monday to
-/// Friday (or the whole week). It can run over two weeks (Week A and Week B).
+/// Your timetable: what's on each day, each class and activity at its own times (as many as
+/// you like, any length), Monday to Friday or the whole week, over one week or two (Week A
+/// and Week B). The school day's periods are kept as bell times: classes can be put on
+/// them with a click, and breaks (recess, lunch) show as bands across the school days.
 struct Timetable: Codable, Equatable {
+    /// One of the school day's bell times: a period, or a break.
     struct Period: Codable, Equatable, Identifiable {
         var id: UUID
         var name: String
         /// Minutes after midnight.
         var start: Int
         var end: Int
-        /// Recess, lunch and the like: shown as a slim row across every day.
+        /// Recess, lunch and the like: shown as a band across the school days.
         var isBreak: Bool
-        /// An hour before or after school, for extracurriculars. Worked out from the school
-        /// day, never saved.
-        var isActivity = false
 
         enum CodingKeys: String, CodingKey {
             case id, name, start, end, isBreak
+        }
+
+        init(id: UUID, name: String, start: Int, end: Int, isBreak: Bool) {
+            self.id = id
+            self.name = name
+            self.start = start
+            self.end = end
+            self.isBreak = isBreak
         }
 
         var times: String { "\(ClockTime.short(start))–\(ClockTime.short(end))" }
@@ -92,48 +99,20 @@ struct Timetable: Codable, Equatable {
         func contains(_ minute: Int) -> Bool { minute >= start && minute < end }
     }
 
+    /// What a class or activity is: its subject, where and who with.
     struct Lesson: Codable, Equatable {
         var subject: String
         var room: String
         var teacher: String
-        /// Its own times, for a class or activity that doesn't fit its row (piano from 5:15
-        /// to 6:00 in the 5 pm hour block), in minutes after midnight. nil: its row's times.
-        var start: Int?
-        var end: Int?
 
-        init(subject: String, room: String = "", teacher: String = "", start: Int? = nil, end: Int? = nil) {
+        init(subject: String, room: String = "", teacher: String = "") {
             self.subject = subject
             self.room = room
             self.teacher = teacher
-            self.start = start
-            self.end = end
         }
 
-        /// Nothing typed in it. (Times by themselves don't make a lesson.)
         var isEmpty: Bool {
             [subject, room, teacher].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        }
-
-        /// Whether it runs at its own times rather than its row's.
-        var hasOwnTimes: Bool {
-            if let start = start, let end = end {
-                return Timetable.validTimes(start: start, end: end)
-            }
-            return false
-        }
-
-        /// "5:15–6:00" for a class with its own times; "" for one on its row's times.
-        var ownTimesLabel: String {
-            guard hasOwnTimes, let start = start, let end = end else { return "" }
-            return "\(ClockTime.short(start))–\(ClockTime.short(end))"
-        }
-
-        /// When it runs: its own times, or else those of the row it's in.
-        func times(in period: Period) -> (start: Int, end: Int) {
-            if hasOwnTimes, let start = start, let end = end {
-                return (start, end)
-            }
-            return (period.start, period.end)
         }
 
         /// "B12 · Ms Lee", or whichever of the two there is.
@@ -142,43 +121,77 @@ struct Timetable: Codable, Equatable {
         }
     }
 
-    /// Where a lesson sits: week of the cycle (0 = A, 1 = B), day (0 = Monday … 6 = Sunday), period.
-    struct Slot: Hashable {
+    /// A class or activity on one day of the week, at its own times.
+    struct Event: Codable, Equatable, Identifiable {
+        var id: UUID
+        /// Week of the cycle: 0 = Week A (or every week, on a one-week timetable), 1 = Week B.
         var week: Int
+        /// 0 = Monday … 6 = Sunday.
         var day: Int
-        var period: UUID
+        /// Minutes after midnight.
+        var start: Int
+        var end: Int
+        var subject: String
+        var room: String
+        var teacher: String
+
+        init(id: UUID = UUID(), week: Int = 0, day: Int, start: Int, end: Int, subject: String, room: String = "", teacher: String = "") {
+            self.id = id
+            self.week = week
+            self.day = day
+            self.start = start
+            self.end = end
+            self.subject = subject
+            self.room = room
+            self.teacher = teacher
+        }
+
+        var lesson: Lesson {
+            get { Lesson(subject: subject, room: room, teacher: teacher) }
+            set {
+                subject = newValue.subject
+                room = newValue.room
+                teacher = newValue.teacher
+            }
+        }
+
+        var isEmpty: Bool { lesson.isEmpty }
+        var minutes: Int { end - start }
+        var times: String { "\(ClockTime.short(start))–\(ClockTime.short(end))" }
+
+        func contains(_ minute: Int) -> Bool { minute >= start && minute < end }
+        func overlaps(_ from: Int, _ to: Int) -> Bool { start < to && end > from }
     }
 
-    /// The school day's periods, in time order.
+    /// The school day's bell times (periods and breaks), in time order.
     private(set) var periods: [Period]
-    /// Keyed "week-day-period".
-    private(set) var lessons: [String: Lesson]
-    /// Each subject's colour (lowercased name → place in the palette), so all its lessons match.
+    /// Every class and activity.
+    private(set) var events: [Event]
+    /// Each subject's colour (lowercased name → place in the palette), so all its classes match.
     private(set) var subjectColours: [String: Int]
     var twoWeeks: Bool
     /// A Monday of a Week A.
     var weekA: Date
-    /// How many hour blocks come before school, ending when school starts.
-    private(set) var beforeSchool: Int
-    /// How many hour blocks come after school, starting when school ends.
-    private(set) var afterSchool: Int
     /// Saturday and Sunday too, for weekend activities.
     var weekends: Bool
-    /// The version of the day it was saved with. 2: school as one block in a 6 am to 10 pm day.
+    /// The part of the day the timetable shows, on the hour: 6 am to 10 pm to start with.
+    /// (It stretches to show anything you put outside it.)
+    private(set) var dayStart: Int
+    private(set) var dayEnd: Int
+    /// The version of the timetable it was saved with. 3: classes at their own times.
     private(set) var layout: Int
 
     static let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     static let shortDayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     static let colourCount = 8
-    static let standardBefore = 2
-    static let standardAfter = 6
     /// The day runs from 6 am to 10 pm to start with.
-    static let dayStart = 6 * 60
-    static let dayEnd = 22 * 60
-    static let currentLayout = 2
+    static let standardStart = 6 * 60
+    static let standardEnd = 22 * 60
+    static let currentLayout = 3
     static let schoolSubject = "School"
-    static let maxBefore = 4
-    static let maxAfter = 8
+    /// The shortest a class can be, and how its times snap when it's dragged.
+    static let shortest = 5
+    static let snap = 5
 
     static func weekName(_ week: Int) -> String { week == 1 ? "Week B" : "Week A" }
 
@@ -209,154 +222,299 @@ struct Timetable: Codable, Equatable {
         ]
     }
 
-    /// The day build 15 started everyone on (8:50 to 2:50).
-    private static let firstStandard: [(String, Int, Int, Bool)] = [
-        ("Period 1", 530, 590, false), ("Period 2", 590, 650, false), ("Recess", 650, 670, true),
-        ("Period 3", 670, 730, false), ("Period 4", 730, 790, false), ("Lunch", 790, 830, true),
-        ("Period 5", 830, 890, false),
-    ]
-
-    /// A new timetable: school as one block from 8 to 4, in a day from 6 am to 10 pm with an
-    /// hour block for each hour around school.
+    /// A new timetable: school as one block from 8 to 4 on weekdays, in a day shown from
+    /// 6 am to 10 pm.
     static func standard(now: Date = Date(), calendar: Calendar = .current) -> Timetable {
-        var table = Timetable(periods: schoolBlock(), lessons: [:], subjectColours: [:], twoWeeks: false,
-                              weekA: monday(of: now, calendar: calendar), beforeSchool: standardBefore,
-                              afterSchool: standardAfter, weekends: false)
+        var table = Timetable(periods: schoolBlock(), events: [], subjectColours: [:], twoWeeks: false,
+                              weekA: monday(of: now, calendar: calendar), weekends: false)
         table.fillSchool()
         return table
     }
 
-    init(periods: [Period], lessons: [String: Lesson], subjectColours: [String: Int], twoWeeks: Bool,
-         weekA: Date, beforeSchool: Int, afterSchool: Int, weekends: Bool, layout: Int = Timetable.currentLayout) {
-        self.periods = periods
-        self.lessons = lessons
+    init(periods: [Period], events: [Event] = [], subjectColours: [String: Int] = [:], twoWeeks: Bool = false,
+         weekA: Date, weekends: Bool = false, dayStart: Int = Timetable.standardStart, dayEnd: Int = Timetable.standardEnd) {
+        self.periods = periods.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        self.events = []
         self.subjectColours = subjectColours
         self.twoWeeks = twoWeeks
         self.weekA = weekA
-        self.beforeSchool = beforeSchool
-        self.afterSchool = afterSchool
         self.weekends = weekends
-        self.layout = layout
+        self.dayStart = Timetable.hourDown(dayStart)
+        self.dayEnd = max(Timetable.hourUp(dayEnd), Timetable.hourDown(dayStart) + 60)
+        self.layout = Timetable.currentLayout
+        for event in events {
+            add(event)
+        }
     }
 
-    /// Reads a saved timetable. One from builds 15 to 17 moves to the new day: if its school
-    /// day was still the one it started with, school becomes one block from 8 to 4; either
-    /// way the hour blocks then run from 6 am to 10 pm.
+    // MARK: Saving, and older timetables
+
+    private enum CodingKeys: String, CodingKey {
+        case periods, events, subjectColours, twoWeeks, weekA, weekends, dayStart, dayEnd, layout
+        // Before build 50: classes in slots, and hour blocks around school.
+        case lessons, beforeSchool, afterSchool
+    }
+
+    /// A class as timetables before build 50 kept it: in a slot, perhaps with its own times.
+    private struct OldLesson: Decodable {
+        var subject: String
+        var room: String?
+        var teacher: String?
+        var start: Int?
+        var end: Int?
+    }
+
+    /// Reads a saved timetable. One from before build 50 had its classes in slots (a period,
+    /// or an hour block before or after school): each becomes a class at its slot's times
+    /// (or the times it had of its own), and the day shown is the one its rows covered.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        periods = try values.decode([Period].self, forKey: .periods)
-        lessons = try values.decode([String: Lesson].self, forKey: .lessons)
-        subjectColours = try values.decode([String: Int].self, forKey: .subjectColours)
-        twoWeeks = try values.decode(Bool.self, forKey: .twoWeeks)
+        let savedPeriods = try values.decode([Period].self, forKey: .periods)
+        periods = savedPeriods.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        subjectColours = (try? values.decodeIfPresent([String: Int].self, forKey: .subjectColours)) ?? [:]
+        twoWeeks = (try? values.decodeIfPresent(Bool.self, forKey: .twoWeeks)) ?? false
         weekA = try values.decode(Date.self, forKey: .weekA)
-        weekends = try values.decodeIfPresent(Bool.self, forKey: .weekends) ?? false
-        beforeSchool = try values.decodeIfPresent(Int.self, forKey: .beforeSchool) ?? Timetable.standardBefore
-        afterSchool = try values.decodeIfPresent(Int.self, forKey: .afterSchool) ?? Timetable.standardAfter
-        layout = try values.decodeIfPresent(Int.self, forKey: .layout) ?? 0
-        if layout < Timetable.currentLayout {
-            if matches(Timetable.firstStandard) || matches(Timetable.schoolPeriods()) {
-                useSchoolBlock()
+        weekends = (try? values.decodeIfPresent(Bool.self, forKey: .weekends)) ?? false
+        layout = (try? values.decodeIfPresent(Int.self, forKey: .layout)) ?? 0
+        dayStart = (try? values.decodeIfPresent(Int.self, forKey: .dayStart)) ?? Timetable.standardStart
+        dayEnd = (try? values.decodeIfPresent(Int.self, forKey: .dayEnd)) ?? Timetable.standardEnd
+        events = []
+        if layout >= 3 {
+            let saved = (try? values.decodeIfPresent([Event].self, forKey: .events)) ?? []
+            events = saved.filter { Timetable.validTimes(start: $0.start, end: $0.end) && (0..<7).contains($0.day) }
+        } else {
+            let lessons = (try? values.decodeIfPresent([String: OldLesson].self, forKey: .lessons)) ?? [:]
+            let before = (try? values.decodeIfPresent(Int.self, forKey: .beforeSchool)) ?? 2
+            let after = (try? values.decodeIfPresent(Int.self, forKey: .afterSchool)) ?? 6
+            upgrade(lessons: lessons, before: before, after: after)
+            // The first builds' timetables had their hour blocks fill the day from 6 am to 10 pm.
+            if layout < 2 {
+                dayStart = Timetable.standardStart
+                dayEnd = Timetable.standardEnd
             }
-            spanDay()
             layout = Timetable.currentLayout
         }
+        dayStart = Timetable.hourDown(max(0, min(dayStart, 23 * 60)))
+        dayEnd = max(Timetable.hourUp(min(dayEnd, 24 * 60)), dayStart + 60)
     }
 
-    private func matches(_ day: [(String, Int, Int, Bool)]) -> Bool {
-        periods.count == day.count && zip(periods, day).allSatisfy { period, other in
-            period.name == other.0 && period.start == other.1 && period.end == other.2 && period.isBreak == other.3
-        }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(periods, forKey: .periods)
+        try values.encode(events, forKey: .events)
+        try values.encode(subjectColours, forKey: .subjectColours)
+        try values.encode(twoWeeks, forKey: .twoWeeks)
+        try values.encode(weekA, forKey: .weekA)
+        try values.encode(weekends, forKey: .weekends)
+        try values.encode(dayStart, forKey: .dayStart)
+        try values.encode(dayEnd, forKey: .dayEnd)
+        try values.encode(layout, forKey: .layout)
     }
 
-    private func matches(_ day: [Period]) -> Bool {
-        matches(day.map { ($0.name, $0.start, $0.end, $0.isBreak) })
-    }
-
-    /// School is one block (rather than periods).
-    var schoolIsOneBlock: Bool { periods.count == 1 }
-
-    /// Hour blocks for every hour from 6 am to school, and from school to 10 pm.
-    mutating func spanDay() {
-        setBlocks(before: max(0, schoolStart - Timetable.dayStart) / 60, after: max(0, Timetable.dayEnd - schoolEnd) / 60)
-    }
-
-    /// "School" in the school block on every weekday that has nothing else in it.
-    mutating func fillSchool() {
-        guard schoolIsOneBlock, let school = periods.first else { return }
-        for week in 0...1 {
-            for day in 0..<5 {
-                let key = "\(week)-\(day)-\(school.id.uuidString)"
-                if lessons[key] == nil {
-                    lessons[key] = Lesson(subject: Timetable.schoolSubject)
-                }
-            }
-        }
-        let name = Timetable.subjectKey(Timetable.schoolSubject)
-        if subjectColours[name] == nil {
-            subjectColours[name] = freshColour()
-        }
-    }
-
-    var isEmpty: Bool { lessons.isEmpty }
-
-    /// When school starts and ends: the first and last period.
-    var schoolStart: Int { periods.first?.start ?? 8 * 60 }
-    var schoolEnd: Int { periods.map { $0.end }.max() ?? 16 * 60 }
-
-    /// Hour blocks before school have IDs that stay the same when school times change, so
-    /// what you put in them stays put: 1 is the hour just before school, 2 the one before that.
+    /// The fixed ID of an hour block before or after school, as timetables before build 50
+    /// kept them: 1 is the hour just before (or after) school, 2 the one before (after) that.
     static func blockID(before: Bool, number: Int) -> UUID {
         UUID(uuidString: String(format: "%08X-0000-4000-8000-%012X", before ? 0xB10C_BEF0 : 0xB10C_AF7E, number))!
     }
 
-    /// Every row of the day, earliest first: hour blocks before school, the school day, hour
-    /// blocks after.
-    var rows: [Period] {
-        var rows: [Period] = []
-        let before = min(beforeSchool, schoolStart / 60)
-        if before > 0 {
-            for number in stride(from: before, through: 1, by: -1) {
-                let start = schoolStart - number * 60
-                rows.append(Period(id: Timetable.blockID(before: true, number: number), name: "Before school",
-                                   start: start, end: start + 60, isBreak: false, isActivity: true))
-            }
+    /// Turns the slots of a timetable from before build 50 into classes at their times.
+    private mutating func upgrade(lessons: [String: OldLesson], before: Int, after: Int) {
+        let start = periods.first?.start ?? 8 * 60
+        let end = periods.map { $0.end }.max() ?? 16 * 60
+        // Where each slot was: the periods, and the hour blocks around them (all of them,
+        // so that a class in a block that was hidden still has its times).
+        var rows: [UUID: (start: Int, end: Int)] = [:]
+        for period in periods where !period.isBreak {
+            rows[period.id] = (period.start, period.end)
         }
-        rows += periods
-        let after = min(afterSchool, (24 * 60 - schoolEnd) / 60)
-        if after > 0 {
-            for number in 1...after {
-                let start = schoolEnd + (number - 1) * 60
-                rows.append(Period(id: Timetable.blockID(before: false, number: number), name: "After school",
-                                   start: start, end: start + 60, isBreak: false, isActivity: true))
-            }
+        for number in 1...8 {
+            rows[Timetable.blockID(before: true, number: number)] = (start - number * 60, start - number * 60 + 60)
+            rows[Timetable.blockID(before: false, number: number)] = (end + (number - 1) * 60, end + number * 60)
         }
-        return rows
+        for (key, old) in lessons.sorted(by: { $0.key < $1.key }) {
+            let parts = key.split(separator: "-", maxSplits: 2).map(String.init)
+            guard parts.count == 3, let week = Int(parts[0]), let day = Int(parts[1]), let id = UUID(uuidString: parts[2]),
+                  let row = rows[id], (0..<7).contains(day), row.start >= 0, row.end <= 24 * 60 else { continue }
+            var from = row.start
+            var to = row.end
+            if let own = old.start, let ownEnd = old.end, Timetable.validTimes(start: own, end: ownEnd) {
+                from = own
+                to = ownEnd
+            }
+            let event = Event(week: week == 1 ? 1 : 0, day: day, start: from, end: to, subject: old.subject,
+                              room: old.room ?? "", teacher: old.teacher ?? "")
+            guard !event.isEmpty else { continue }
+            events.append(event)
+        }
+        // The day shown: what the hour blocks covered.
+        dayStart = Timetable.hourDown(max(0, start - min(before, 8) * 60))
+        dayEnd = Timetable.hourUp(min(24 * 60, end + min(after, 8) * 60))
+        if dayEnd <= dayStart {
+            dayStart = Timetable.standardStart
+            dayEnd = Timetable.standardEnd
+        }
     }
 
-    func period(_ id: UUID?) -> Period? {
+    // MARK: The day shown
+
+    static func hourDown(_ minute: Int) -> Int { max(0, minute / 60 * 60) }
+    static func hourUp(_ minute: Int) -> Int { min(24 * 60, (minute + 59) / 60 * 60) }
+
+    /// Chooses the part of the day shown, on the hour (it's never less than an hour).
+    mutating func setDay(start: Int? = nil, end: Int? = nil) {
+        if let start = start {
+            dayStart = Timetable.hourDown(max(0, min(start, 23 * 60)))
+        }
+        if let end = end {
+            dayEnd = Timetable.hourUp(max(60, min(end, 24 * 60)))
+        }
+        if dayEnd <= dayStart {
+            if end != nil {
+                dayStart = dayEnd - 60
+            } else {
+                dayEnd = dayStart + 60
+            }
+        }
+    }
+
+    /// What the timetable shows: the day you chose, stretched to take in every class (and
+    /// the school day).
+    var shownStart: Int {
+        Timetable.hourDown(([dayStart, schoolStart] + events.map { $0.start }).min() ?? dayStart)
+    }
+
+    var shownEnd: Int {
+        Timetable.hourUp(([dayEnd, schoolEnd] + events.map { $0.end }).max() ?? dayEnd)
+    }
+
+    // MARK: Classes
+
+    /// Whether times make sense for a class: in the day, and at least five minutes long.
+    static func validTimes(start: Int, end: Int) -> Bool {
+        start >= 0 && end <= 24 * 60 && end - start >= shortest
+    }
+
+    /// The week a class is kept in: Week B only on a two-week timetable.
+    private func weekKey(_ week: Int) -> Int { twoWeeks && week == 1 ? 1 : 0 }
+
+    var isEmpty: Bool { events.isEmpty }
+
+    func event(_ id: UUID?) -> Event? {
         guard let id = id else { return nil }
-        return rows.first { $0.id == id }
+        return events.first { $0.id == id }
     }
 
-    /// How many hour blocks before and after school (0 to 4 before, 0 to 8 after). What's
-    /// in a block you take away is kept, and comes back if you add it again.
-    mutating func setBlocks(before: Int? = nil, after: Int? = nil) {
-        if let before = before {
-            beforeSchool = max(0, min(Timetable.maxBefore, before))
+    /// A day's classes and activities in the order they happen, for the week showing.
+    func events(day: Int, week: Int) -> [Event] {
+        let wanted = weekKey(week)
+        return events.filter { $0.day == day && $0.week == wanted }
+            .sorted { ($0.start, $0.end, $0.subject) < ($1.start, $1.end, $1.subject) }
+    }
+
+    /// Adds a class. Refused (nil) if its times or day make no sense. A new subject gets its
+    /// own colour.
+    @discardableResult
+    mutating func add(_ event: Event) -> Event? {
+        guard Timetable.validTimes(start: event.start, end: event.end), (0..<7).contains(event.day) else { return nil }
+        var added = event
+        added.week = weekKey(event.week)
+        events.append(added)
+        colourNew(added.subject)
+        return added
+    }
+
+    /// A new class on a day, at the times given. (nil if they make no sense.)
+    @discardableResult
+    mutating func addEvent(day: Int, week: Int = 0, start: Int, end: Int, lesson: Lesson = Lesson(subject: "")) -> Event? {
+        add(Event(week: week, day: day, start: start, end: end, subject: lesson.subject, room: lesson.room, teacher: lesson.teacher))
+    }
+
+    /// Saves a class as changed, as typed so far (spaces are trimmed once you've finished,
+    /// by `tidy()`). Refused if its times or day make no sense.
+    @discardableResult
+    mutating func update(_ event: Event) -> Bool {
+        guard Timetable.validTimes(start: event.start, end: event.end), (0..<7).contains(event.day),
+              let index = events.firstIndex(where: { $0.id == event.id }) else { return false }
+        var saved = event
+        saved.week = weekKey(event.week)
+        events[index] = saved
+        colourNew(saved.subject)
+        return true
+    }
+
+    /// Changes one class, if it's there.
+    @discardableResult
+    mutating func change(_ id: UUID, _ edit: (inout Event) -> Void) -> Bool {
+        guard var event = event(id) else { return false }
+        edit(&event)
+        return update(event)
+    }
+
+    mutating func removeEvent(_ id: UUID) {
+        events.removeAll { $0.id == id }
+    }
+
+    /// Moves a class to another day and start, keeping how long it is. It stays inside the
+    /// day (and on a day the timetable has).
+    @discardableResult
+    mutating func move(_ id: UUID, day: Int, start: Int) -> Bool {
+        guard let event = event(id) else { return false }
+        let length = event.minutes
+        let from = max(0, min(start, 24 * 60 - length))
+        let column = max(0, min(day, dayCount - 1))
+        return change(id) { moved in
+            moved.day = column
+            moved.start = from
+            moved.end = from + length
         }
-        if let after = after {
-            afterSchool = max(0, min(Timetable.maxAfter, after))
+    }
+
+    /// Changes when a class ends (it's at least five minutes long, and ends by midnight).
+    @discardableResult
+    mutating func resize(_ id: UUID, end: Int) -> Bool {
+        guard let event = event(id) else { return false }
+        let to = max(event.start + Timetable.shortest, min(end, 24 * 60))
+        return change(id) { $0.end = to }
+    }
+
+    /// The same class on other days: the same subject at the same times in the same week.
+    func twins(of id: UUID) -> [Event] {
+        guard let event = event(id) else { return [] }
+        let name = Timetable.subjectKey(event.subject)
+        return events.filter { other in
+            other.id != id && other.week == event.week && other.start == event.start && other.end == event.end
+                && Timetable.subjectKey(other.subject) == name
         }
     }
 
-    // MARK: Lessons
-
-    private func key(_ slot: Slot) -> String {
-        "\(twoWeeks ? slot.week : 0)-\(slot.day)-\(slot.period.uuidString)"
+    /// The days a class is on: its own, and those its twins are on.
+    func days(of id: UUID) -> Set<Int> {
+        guard let event = event(id) else { return [] }
+        return Set([event.day] + twins(of: id).map { $0.day })
     }
 
-    func lesson(at slot: Slot) -> Lesson? {
-        lessons[key(slot)]
+    /// Puts the same class on another day too, or takes it off that day. (Its own day
+    /// can't be taken off this way.)
+    mutating func repeatOn(_ id: UUID, day: Int, _ on: Bool) {
+        guard let event = event(id), day != event.day, (0..<7).contains(day) else { return }
+        let there = twins(of: id).filter { $0.day == day }
+        if on {
+            guard there.isEmpty else { return }
+            add(Event(week: event.week, day: day, start: event.start, end: event.end, subject: event.subject, room: event.room, teacher: event.teacher))
+        } else {
+            let gone = Set(there.map { $0.id })
+            events.removeAll { gone.contains($0.id) }
+        }
+    }
+
+    /// Times for a new class put at a minute of a day: the period it falls in on a school
+    /// day, or else an hour from that quarter hour.
+    func newTimes(day: Int, at minute: Int) -> (start: Int, end: Int) {
+        if day < 5, let period = periods.first(where: { !$0.isBreak && $0.contains(minute) }), !schoolIsOneBlock {
+            return (period.start, period.end)
+        }
+        let start = max(0, min(minute / 15 * 15, 24 * 60 - 60))
+        return (start, start + 60)
     }
 
     /// A subject's name for matching: "  maths " and "Maths" are the same subject.
@@ -364,47 +522,32 @@ struct Timetable: Codable, Equatable {
         subject.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    /// Puts a lesson in a slot (nil or blank clears it), as typed so far. A new subject gets
-    /// its own colour. `tidy()` trims it once you've finished editing.
-    mutating func setLesson(_ lesson: Lesson?, at slot: Slot) {
-        guard let lesson = lesson, !lesson.isEmpty else {
-            lessons[key(slot)] = nil
-            return
-        }
-        lessons[key(slot)] = lesson
-        let name = Timetable.subjectKey(lesson.subject)
+    private mutating func colourNew(_ subject: String) {
+        let name = Timetable.subjectKey(subject)
         if !name.isEmpty && subjectColours[name] == nil {
             subjectColours[name] = freshColour()
         }
     }
 
-    /// After editing: spaces trimmed, blank lessons gone, and colours kept only for subjects
-    /// still on the timetable.
+    /// After editing: spaces trimmed, classes left blank gone, and colours kept only for
+    /// subjects still on the timetable.
     mutating func tidy() {
-        var tidied: [String: Lesson] = [:]
-        for (key, lesson) in lessons {
-            var clean = Lesson(subject: lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines),
-                               room: lesson.room.trimmingCharacters(in: .whitespacesAndNewlines),
-                               teacher: lesson.teacher.trimmingCharacters(in: .whitespacesAndNewlines))
-            // Its own times stay, if they make sense.
-            if lesson.hasOwnTimes {
-                clean.start = lesson.start
-                clean.end = lesson.end
-            }
-            if !clean.isEmpty {
-                tidied[key] = clean
-            }
+        events = events.compactMap { event in
+            var clean = event
+            clean.subject = event.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            clean.room = event.room.trimmingCharacters(in: .whitespacesAndNewlines)
+            clean.teacher = event.teacher.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : clean
         }
-        lessons = tidied
-        let inUse = Set(tidied.values.map { Timetable.subjectKey($0.subject) })
+        let inUse = Set(events.map { Timetable.subjectKey($0.subject) })
         subjectColours = subjectColours.filter { inUse.contains($0.key) }
     }
 
     /// Every subject (and activity) on the timetable, A to Z, as you first typed it.
     var subjects: [String] {
         var seen: [String: String] = [:]
-        for lesson in lessons.values {
-            let subject = lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        for event in events {
+            let subject = event.subject.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !subject.isEmpty else { continue }
             let name = subject.lowercased()
             if seen[name] == nil || subject < seen[name]! {
@@ -419,10 +562,11 @@ struct Timetable: Codable, Equatable {
         subjects.filter { Timetable.subjectKey($0) != Timetable.subjectKey(Timetable.schoolSubject) }
     }
 
-    /// The room and teacher another lesson of this subject has, to fill in for you.
+    /// The room and teacher another class of this subject has, to fill in for you.
     func usual(for subject: String) -> Lesson? {
         let name = Timetable.subjectKey(subject)
-        let matches = lessons.sorted { $0.key < $1.key }.map { $0.value }.filter { Timetable.subjectKey($0.subject) == name }
+        let matches = events.sorted { ($0.week, $0.day, $0.start) < ($1.week, $1.day, $1.start) }
+            .filter { Timetable.subjectKey($0.subject) == name }.map { $0.lesson }
         return matches.first { !$0.room.isEmpty || !$0.teacher.isEmpty } ?? matches.first
     }
 
@@ -443,7 +587,7 @@ struct Timetable: Codable, Equatable {
 
     /// The colour fewest subjects have.
     private func freshColour() -> Int {
-        let inUse = Set(lessons.values.map { Timetable.subjectKey($0.subject) })
+        let inUse = Set(events.map { Timetable.subjectKey($0.subject) })
         var counts = Array(repeating: 0, count: Timetable.colourCount)
         for (name, colour) in subjectColours where inUse.contains(name) && counts.indices.contains(colour) {
             counts[colour] += 1
@@ -452,141 +596,84 @@ struct Timetable: Codable, Equatable {
         return counts.firstIndex(of: fewest) ?? 0
     }
 
+    /// Clears every class, for a new term. The bell times stay.
     mutating func clearLessons() {
-        lessons = [:]
+        events = []
         subjectColours = [:]
     }
 
-    // MARK: Own times
-
-    /// The shortest a class or activity with its own times can be.
-    static let shortestOwn = 5
-
-    /// Whether times make sense for a class or activity: in the day, and at least five
-    /// minutes long.
-    static func validTimes(start: Int, end: Int) -> Bool {
-        start >= 0 && end <= 24 * 60 && end - start >= shortestOwn
-    }
-
-    /// When the lesson in a slot runs (its own times, or its row's), or the row's times if
-    /// it's empty. nil for a row that isn't there.
-    func times(at slot: Slot) -> (start: Int, end: Int)? {
-        guard let period = period(slot.period) else { return nil }
-        return lesson(at: slot)?.times(in: period) ?? (period.start, period.end)
-    }
-
-    /// Gives the lesson in a slot its own times, or with nil puts it back on its row's. Times
-    /// that are the row's own count as none. False if there's no lesson there, or the times
-    /// don't make sense.
-    @discardableResult
-    mutating func setTimes(start: Int?, end: Int?, at slot: Slot) -> Bool {
-        guard var lesson = lessons[key(slot)], let period = period(slot.period), !period.isBreak else { return false }
-        if let start = start, let end = end {
-            guard Timetable.validTimes(start: start, end: end) else { return false }
-            let same = start == period.start && end == period.end
-            lesson.start = same ? nil : start
-            lesson.end = same ? nil : end
-        } else if start == nil && end == nil {
-            lesson.start = nil
-            lesson.end = nil
-        } else {
-            return false
-        }
-        lessons[key(slot)] = lesson
-        return true
-    }
-
-    /// The row a time falls in (not a break): where a class starting then belongs.
-    func row(at minute: Int) -> Period? {
-        rows.first { !$0.isBreak && $0.contains(minute) }
-    }
-
-    /// Where the lesson in a slot belongs if its own times start outside its row: the row
-    /// they start in, if that's free on the same day. nil if it's where it should be.
-    func betterRow(for slot: Slot) -> Period? {
-        guard let lesson = lesson(at: slot), lesson.hasOwnTimes, let start = lesson.start,
-              let own = period(slot.period), !own.contains(start),
-              let row = row(at: start), row.id != slot.period,
-              self.lesson(at: Slot(week: slot.week, day: slot.day, period: row.id)) == nil else { return nil }
-        return row
-    }
-
-    /// Moves a lesson to another row on the same day, if nothing's there. Its own times go
-    /// with it (and stop being its own if they're the new row's).
-    @discardableResult
-    mutating func moveLesson(from slot: Slot, to period: UUID) -> Bool {
-        let target = Slot(week: slot.week, day: slot.day, period: period)
-        guard period != slot.period, let lesson = lesson(at: slot), self.lesson(at: target) == nil,
-              let row = self.period(period), !row.isBreak else { return false }
-        lessons[key(slot)] = nil
-        lessons[key(target)] = lesson
-        if lesson.hasOwnTimes {
-            setTimes(start: lesson.start, end: lesson.end, at: target)
-        }
-        return true
-    }
-
-    /// A class or activity on a day, with the times it runs.
-    struct Entry: Equatable {
-        let period: Period
-        let lesson: Lesson
-        let start: Int
-        let end: Int
-    }
-
-    /// What's on a day, in the order it happens.
-    func entries(day: Int, week: Int) -> [Entry] {
-        let found = rows.compactMap { period -> Entry? in
-            guard !period.isBreak, let lesson = lesson(at: Slot(week: week, day: day, period: period.id)) else { return nil }
-            let times = lesson.times(in: period)
-            return Entry(period: period, lesson: lesson, start: times.start, end: times.end)
-        }
-        return found.sorted { $0.start != $1.start ? $0.start < $1.start : $0.end < $1.end }
-    }
-
-    /// Why times typed for a class can't be its own, or nil if they can.
+    /// Why times typed for a class can't be saved, or nil if they can.
     static func timesProblem(start: String, end: String) -> String? {
         guard let from = ClockTime.parse(start), let to = ClockTime.parse(end) else {
             return "Type times like 5:15 pm or 17:15."
         }
         if to <= from { return "It needs to end after it starts." }
-        if to - from < shortestOwn { return "It needs to be at least \(shortestOwn) minutes long." }
+        if to - from < shortest { return "It needs to be at least \(shortest) minutes long." }
         return nil
     }
 
-    /// For each day of a week, the empty rows a class with its own times runs into, keyed
-    /// "day-row" (as the grid keys its slots).
-    func overflow(week: Int) -> [String: String] {
-        var result: [String: String] = [:]
-        for day in 0..<dayCount {
-            for (row, label) in overflow(day: day, week: week) {
-                result["\(day)-\(row.uuidString)"] = label
+    /// How classes that overlap on a day sit side by side: for each, its lane and how many
+    /// lanes its cluster of overlapping classes has.
+    static func lanes(_ events: [Event]) -> [UUID: (lane: Int, of: Int)] {
+        let sorted = events.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        var result: [UUID: (lane: Int, of: Int)] = [:]
+        var cluster: [(id: UUID, lane: Int)] = []
+        var laneEnds: [Int] = []
+        var clusterEnd = -1
+        func finish() {
+            for member in cluster {
+                result[member.id] = (member.lane, max(1, laneEnds.count))
             }
+            cluster = []
+            laneEnds = []
         }
+        for event in sorted {
+            if event.start >= clusterEnd {
+                finish()
+            }
+            if let free = laneEnds.firstIndex(where: { $0 <= event.start }) {
+                laneEnds[free] = event.end
+                cluster.append((event.id, free))
+            } else {
+                laneEnds.append(event.end)
+                cluster.append((event.id, laneEnds.count - 1))
+            }
+            clusterEnd = max(clusterEnd, event.end)
+        }
+        finish()
         return result
     }
 
-    /// The empty rows a class or activity with its own times runs into from the row it's in
-    /// (soccer from 3:30 to 5:00 in the 3:10 row runs into the 4:10 row), keyed by row: what
-    /// they show faintly, "Soccer 3:30–5:00".
-    func overflow(day: Int, week: Int) -> [UUID: String] {
-        var result: [UUID: String] = [:]
-        let all = rows
-        for entry in entries(day: day, week: week) where entry.lesson.hasOwnTimes {
-            let subject = entry.lesson.subject.trimmingCharacters(in: .whitespacesAndNewlines)
-            let label = "\(subject.isEmpty ? "Class" : subject) \(ClockTime.short(entry.start))–\(ClockTime.short(entry.end))"
-            for row in all where !row.isBreak && row.id != entry.period.id && row.start < entry.end && row.end > entry.start {
-                guard lesson(at: Slot(week: week, day: day, period: row.id)) == nil else { continue }
-                result[row.id] = result[row.id].map { $0 + ", " + label } ?? label
-            }
-        }
-        return result
+    // MARK: The school day (bell times)
+
+    /// School is one block (rather than periods).
+    var schoolIsOneBlock: Bool { periods.count == 1 }
+
+    /// When school starts and ends: the first and last period.
+    var schoolStart: Int { periods.first?.start ?? 8 * 60 }
+    var schoolEnd: Int { periods.map { $0.end }.max() ?? 16 * 60 }
+
+    func period(_ id: UUID?) -> Period? {
+        guard let id = id else { return nil }
+        return periods.first { $0.id == id }
     }
 
-    // MARK: The school day
+    /// The school day's breaks.
+    var breaks: [Period] { periods.filter { $0.isBreak } }
 
-    /// A new period at the end of the school day, an hour long (the hour blocks after school
-    /// move along).
+    /// "School" from the school block's start to its end on every weekday that doesn't
+    /// already have a class at exactly those times.
+    mutating func fillSchool() {
+        guard schoolIsOneBlock, let school = periods.first else { return }
+        for week in 0...1 {
+            for day in 0..<5 where !events.contains(where: { $0.week == week && $0.day == day && $0.start == school.start && $0.end == school.end }) {
+                events.append(Event(week: week, day: day, start: school.start, end: school.end, subject: Timetable.schoolSubject))
+            }
+        }
+        colourNew(Timetable.schoolSubject)
+    }
+
+    /// A new period at the end of the school day, an hour long.
     @discardableResult
     mutating func addPeriod() -> UUID {
         let start = periods.last?.end ?? 9 * 60
@@ -598,59 +685,75 @@ struct Timetable: Codable, Equatable {
         return period.id
     }
 
-    /// Saves a period's new name, times or kind. Times that end before they start are refused,
-    /// and so are hour blocks, which follow the school day.
+    /// Saves a period's new name, times or kind. Times that end before they start are
+    /// refused. Classes that were on the period's old times move with it.
     @discardableResult
     mutating func updatePeriod(_ period: Period) -> Bool {
         guard period.end > period.start, (0..<24 * 60).contains(period.start), period.end <= 24 * 60,
               let index = periods.firstIndex(where: { $0.id == period.id }) else { return false }
+        let old = periods[index]
         var saved = period
-        saved.isActivity = false
         saved.name = period.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if saved.name.isEmpty {
-            saved.name = periods[index].name
+            saved.name = old.name
         }
         periods[index] = saved
         sortPeriods()
+        if old.start != saved.start || old.end != saved.end {
+            for i in events.indices where events[i].start == old.start && events[i].end == old.end {
+                events[i].start = saved.start
+                events[i].end = saved.end
+            }
+        }
         return true
     }
 
-    /// Takes a period out of the school day, with the lessons in it.
+    /// Takes a period out of the school day, with the classes on its times.
     mutating func removePeriod(_ id: UUID) {
-        guard periods.contains(where: { $0.id == id }) else { return }
+        guard let period = period(id) else { return }
         periods.removeAll { $0.id == id }
-        let suffix = "-" + id.uuidString
-        lessons = lessons.filter { !$0.key.hasSuffix(suffix) }
+        events.removeAll { $0.start == period.start && $0.end == period.end }
     }
 
-    /// School as one block from 8 to 4 (what's in a block called School is kept).
+    /// School as one block from 8 to 4. Classes on the old periods' times go, unless a
+    /// period was called School.
     mutating func useSchoolBlock() {
         replaceSchool(with: Timetable.schoolBlock())
         fillSchool()
     }
 
-    /// School as seven periods, recess and lunch, from 8 to 4. Lessons in a period of the same
-    /// name are kept.
+    /// School as seven periods, recess and lunch, from 8 to 4. Classes on a period's times
+    /// move to the new period of the same name; the rest of the old school day goes.
     mutating func useSchoolPeriods() {
         replaceSchool(with: Timetable.schoolPeriods())
     }
 
-    /// New school periods; lessons move to the period with the same name, the rest go.
+    /// New bell times. Classes on an old period's times move to the new period with the
+    /// same name, or go; everything else (activities) stays.
     private mutating func replaceSchool(with fresh: [Period]) {
         let old = periods
-        var moved: [String: Lesson] = [:]
-        for (key, lesson) in lessons {
-            guard let period = old.first(where: { key.hasSuffix("-" + $0.id.uuidString) }) else {
-                moved[key] = lesson // an hour block's
+        var kept: [Event] = []
+        for event in events {
+            guard let period = old.first(where: { $0.start == event.start && $0.end == event.end }) else {
+                kept.append(event)
                 continue
             }
             guard let match = fresh.first(where: { $0.name.lowercased() == period.name.lowercased() }) else { continue }
-            moved[String(key.dropLast(period.id.uuidString.count)) + match.id.uuidString] = lesson
+            var moved = event
+            moved.start = match.start
+            moved.end = match.end
+            kept.append(moved)
         }
-        periods = fresh
-        lessons = moved
-        let inUse = Set(moved.values.map { Timetable.subjectKey($0.subject) })
+        periods = fresh.sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        events = kept
+        let inUse = Set(kept.map { Timetable.subjectKey($0.subject) })
         subjectColours = subjectColours.filter { inUse.contains($0.key) }
+    }
+
+    private func matches(_ day: [Period]) -> Bool {
+        periods.count == day.count && zip(periods, day).allSatisfy { period, other in
+            period.name == other.name && period.start == other.start && period.end == other.end && period.isBreak == other.isBreak
+        }
     }
 
     /// School is one block from 8 to 4, as a new timetable starts.
@@ -704,84 +807,80 @@ struct Timetable: Codable, Equatable {
         calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
     }
 
-    /// A day's rows with what's on in each.
-    func day(_ day: Int, week: Int) -> [(period: Period, lesson: Lesson?)] {
-        rows.map { period in
-            (period: period, lesson: period.isBreak ? nil : lesson(at: Slot(week: week, day: day, period: period.id)))
-        }
-    }
+    // MARK: Now and next
 
+    /// What's on at a moment: a class, or on a school day a break or free time.
     struct Moment: Equatable {
-        let period: Period
-        let lesson: Lesson?
+        /// The class or activity that's on (nil for a break or free time).
+        let event: Event?
+        /// The bell time it falls in, if any: the break, or the period that's free.
+        let period: Period?
         let day: Int
         let week: Int
-        /// When it runs: a class's own times, or its row's. (Free time runs until the row
-        /// ends, or until a class starts in it.)
+        /// When it runs. Free time runs until its period ends, or a class starts.
         let start: Int
         let end: Int
 
-        init(period: Period, lesson: Lesson?, day: Int, week: Int, start: Int? = nil, end: Int? = nil) {
-            self.period = period
-            self.lesson = lesson
-            self.day = day
-            self.week = week
-            self.start = start ?? period.start
-            self.end = end ?? period.end
+        var lesson: Lesson? { event?.lesson }
+        var isBreak: Bool { event == nil && period?.isBreak == true }
+        /// What it's called: the class, the break, or "Free".
+        var name: String {
+            if let event = event {
+                let subject = event.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+                return subject.isEmpty ? "Class" : subject
+            }
+            return isBreak ? (period?.name ?? "Break") : "Free"
         }
     }
 
-    /// What's on now: a class, a break, or an activity (an hour block with nothing in it
-    /// doesn't count). A class with its own times is on during those times, whichever row
-    /// it's in.
+    /// What's on now: a class or activity (of two that overlap, the one that started last),
+    /// or on a school day during school hours a break or free time. Nothing late at night,
+    /// in a gap after school, or at the weekend with nothing on.
     func now(at date: Date = Date(), calendar: Calendar = .current) -> Moment? {
         guard let day = column(of: date, calendar: calendar) else { return nil }
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
         let week = self.week(of: date, calendar: calendar)
-        let entries = self.entries(day: day, week: week)
-        if let on = entries.last(where: { $0.start <= minute && minute < $0.end }) {
-            return Moment(period: on.period, lesson: on.lesson, day: day, week: week, start: on.start, end: on.end)
+        let today = events(day: day, week: week)
+        if let on = today.last(where: { $0.contains(minute) }) {
+            return Moment(event: on, period: periods.first { $0.contains(minute) }, day: day, week: week, start: on.start, end: on.end)
         }
-        guard let period = rows.first(where: { $0.contains(minute) }) else { return nil }
-        // An empty hour block, or anything empty at the weekend, isn't "on".
-        if period.isActivity || day >= 5 { return nil }
-        // A break, or a free period: until it ends, or a class starts in it.
-        let until = entries.first(where: { $0.start > minute && $0.start < period.end })?.start ?? period.end
-        return Moment(period: period, lesson: nil, day: day, week: week, start: period.start, end: until)
+        guard day < 5, let period = periods.first(where: { $0.contains(minute) }) else { return nil }
+        let until = today.first(where: { $0.start > minute && $0.start < period.end })?.start ?? period.end
+        return Moment(event: nil, period: period, day: day, week: week, start: period.start, end: until)
     }
 
-    /// The next class or activity with something in it: later today, or on a coming day.
+    /// The next class or activity: later today, or on a coming day.
     func next(after date: Date = Date(), calendar: Calendar = .current) -> (moment: Moment, date: Date)? {
         let minute = Timetable.minuteOfDay(date, calendar: calendar)
         for offset in 0..<15 {
             guard let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: date)),
                   let column = column(of: day, calendar: calendar) else { continue }
             let week = self.week(of: day, calendar: calendar)
-            if let entry = entries(day: column, week: week).first(where: { offset > 0 || $0.start > minute }) {
-                let at = calendar.date(byAdding: .minute, value: entry.start, to: day) ?? day
-                return (Moment(period: entry.period, lesson: entry.lesson, day: column, week: week, start: entry.start, end: entry.end), at)
+            if let event = events(day: column, week: week).first(where: { offset > 0 || $0.start > minute }) {
+                let at = calendar.date(byAdding: .minute, value: event.start, to: day) ?? day
+                return (Moment(event: event, period: nil, day: column, week: week, start: event.start, end: event.end), at)
             }
         }
         return nil
     }
 
-    /// "Monday (Week A): 8:00 am Maths in B12 with Ms Lee; 5:00 pm Soccer at Oval" for the assistant.
-    /// A class with its own times says when it ends: "5:15 pm to 6:00 pm Piano".
+    /// "Monday (Week A): 8:00 am to 9:00 am Maths in B12 with Ms Lee; 5:15 pm to 6:00 pm
+    /// Piano at Studio" for the assistant. (Outside school hours a place is "at", not "in".)
     func summary(of date: Date, calendar: Calendar = .current) -> String? {
         guard let column = column(of: date, calendar: calendar) else { return nil }
         let week = self.week(of: date, calendar: calendar)
-        let entries = self.entries(day: column, week: week).compactMap { entry -> String? in
-            let lesson = entry.lesson
-            guard !lesson.subject.isEmpty else { return nil }
-            let when = lesson.hasOwnTimes ? "\(ClockTime.long(entry.start)) to \(ClockTime.long(entry.end))" : ClockTime.long(entry.start)
-            var line = "\(when) \(lesson.subject)"
-            if !lesson.room.isEmpty { line += (entry.period.isActivity ? " at " : " in ") + lesson.room }
-            if !lesson.teacher.isEmpty { line += " with \(lesson.teacher)" }
+        let lines = events(day: column, week: week).compactMap { event -> String? in
+            let subject = event.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !subject.isEmpty else { return nil }
+            var line = "\(ClockTime.long(event.start)) to \(ClockTime.long(event.end)) \(subject)"
+            let inSchool = column < 5 && event.start >= schoolStart && event.start < schoolEnd
+            if !event.room.isEmpty { line += (inSchool ? " in " : " at ") + event.room }
+            if !event.teacher.isEmpty { line += " with \(event.teacher)" }
             return line
         }
-        guard !entries.isEmpty else { return nil }
+        guard !lines.isEmpty else { return nil }
         let name = Timetable.dayNames[column] + (twoWeeks ? " (\(Timetable.weekName(week)))" : "")
-        return "\(name): " + entries.joined(separator: "; ")
+        return "\(name): " + lines.joined(separator: "; ")
     }
 }
 

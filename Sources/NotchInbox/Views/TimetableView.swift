@@ -1,8 +1,10 @@
+import AppKit
 import SwiftUI
 
-/// Your week at school: periods down the side, Monday to Friday across, every lesson in its
-/// subject's colour. Click a lesson (or an empty slot) to edit it in the side panel, or a
-/// period's name to change its times. Today and the class on now are lit up.
+/// Your week as a calendar: the hours down the side, Monday to Friday across, every class and
+/// activity at its own times in its subject's colour. Click any time to add one, click one
+/// to edit it in the side panel, drag it to move it, or click a bell time to change it.
+/// Today and the class on now are lit up.
 struct TimetableView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
@@ -44,13 +46,13 @@ struct TimetableView: View {
             }
 
             HStack(spacing: 10) {
-                TimetableGrid(model: model, store: store, planner: planner, settings: settings, expanded: expanded)
+                WeekCalendar(model: model, store: store, planner: planner, settings: settings, expanded: expanded)
                 if let edit = model.timetableEdit {
                     Group {
                         switch edit {
-                        case .lesson(let slot):
-                            LessonEditor(model: model, store: store, slot: slot)
-                                .id("lesson-\(slot.week)-\(slot.day)-\(slot.period.uuidString)")
+                        case .event(let id):
+                            EventEditor(model: model, store: store, id: id)
+                                .id("event-\(id.uuidString)")
                         case .period(let id):
                             PeriodEditor(model: model, store: store, periodID: id)
                                 .id("period-\(id.uuidString)")
@@ -104,11 +106,16 @@ struct WeekSwitch: View {
     }
 }
 
-// MARK: The grid
+// MARK: The week
 
-struct TimetableGrid: View {
+/// The week as a calendar: the hours down the left (with the school day's bell times),
+/// a column for each day, and every class and activity at its own times. Click any time
+/// to add one there; click one to edit it; drag it to move it, or its bottom edge to make
+/// it longer or shorter. Classes at the same time sit side by side.
+struct WeekCalendar: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var store: TimetableStore
+    /// For the study sessions planned into free time.
     @ObservedObject var planner: PlannerStore
     @ObservedObject var settings: AppSettings
     let expanded: Bool
@@ -125,170 +132,769 @@ struct TimetableGrid: View {
             let showingThisWeek = table.week(of: now, calendar: calendar) == model.timetableWeek
             let today = showingThisWeek ? table.column(of: now, calendar: calendar) : nil
             let minute = Timetable.minuteOfDay(now, calendar: calendar)
-            let rows = table.rows
-            // Homework and revision planned into this week's free slots.
+            // Homework and revision planned into this week's free time.
             let planned = showingThisWeek && settings.plansStudy
-                ? TimetableGrid.planned(planner.planner, table: table, rows: rows, now: now, daily: settings.studyMinutesADay,
-                                        steps: model.assignmentsStore?.assignments.planTasks() ?? [])
+                ? WeekCalendar.planned(planner.planner, table: table, now: now, daily: settings.studyMinutesADay,
+                                       steps: model.assignmentsStore?.assignments.planTasks() ?? [])
                 : [:]
-            // Classes with their own times that run into the rows around them.
-            let overflow = table.overflow(week: model.timetableWeek)
 
             GeometryReader { area in
-                let heights = rowHeights(rows: rows, height: area.size.height)
-                let labelWidth: CGFloat = expanded ? 92 : 78
+                let labelWidth: CGFloat = expanded ? 78 : 66
+                let layout = WeekCalendar.Layout(table: table, width: area.size.width, height: area.size.height - header - gap,
+                                                 labelWidth: labelWidth, gap: gap, expanded: expanded)
 
                 VStack(spacing: gap) {
                     DayHeader(days: table.dayCount, today: today,
                               monday: showingThisWeek ? Timetable.monday(of: now, calendar: calendar) : nil,
                               labelWidth: labelWidth, gap: gap)
                         .frame(height: header)
-
                     ScrollViewReader { scroller in
                         ScrollView(.vertical) {
-                            VStack(spacing: gap) {
-                                ForEach(Array(rows.enumerated()), id: \.element.id) { index, period in
-                                    if index > 0 && rows[index - 1].isActivity != period.isActivity {
-                                        SectionLine(label: period.isActivity ? "After school" : "School")
-                                            .frame(height: sectionHeight)
-                                    }
-                                    TimetableRow(model: model, table: table, period: period, today: today, minute: minute,
-                                                 labelWidth: labelWidth, classHeight: heights.classHeight * TimetableGrid.weight(period),
-                                                 breakHeight: heights.breakHeight, gap: gap, planned: planned, overflow: overflow)
-                                        .id(period.id)
+                            HStack(alignment: .top, spacing: gap) {
+                                TimeAxis(model: model, table: table, layout: layout)
+                                ForEach(0..<table.dayCount, id: \.self) { day in
+                                    DayColumn(model: model, store: store, table: table, day: day, layout: layout,
+                                              events: table.events(day: day, week: model.timetableWeek),
+                                              planned: planned[day] ?? [],
+                                              today: today, minute: minute)
                                 }
                             }
                         }
-                        .scrollIndicators(heights.scrolls ? .automatic : .never)
-                        .scrollDisabled(!heights.scrolls)
+                        .scrollIndicators(layout.scrolls ? .automatic : .never)
                         .onAppear {
-                            // Long days scroll: start where you are in the day (or at the start of school).
-                            guard heights.scrolls, let target = scrollTarget(rows: rows, minute: today == nil ? nil : minute) else { return }
+                            // A long day scrolls: start an hour before now, or at the start of school.
+                            guard layout.scrolls else { return }
+                            let target = WeekCalendar.firstHour(table: table, minute: today == nil ? nil : minute)
                             DispatchQueue.main.async {
                                 scroller.scrollTo(target, anchor: .top)
                             }
                         }
                     }
                 }
+                .overlay {
+                    if table.isEmpty {
+                        WeekCalendarHint()
+                    }
+                }
             }
         }
     }
 
-    /// What's planned for this week's slots, keyed "day-row": the study sessions the planner
-    /// fitted into free time, to show (faintly) in the slots they'd use.
-    static func planned(_ planner: Planner, table: Timetable, rows: [Timetable.Period], now: Date, daily: Int,
-                        steps: [PlannerTask] = [], calendar: Calendar = .current) -> [String: String] {
+    /// The sizes everything is drawn at: how tall a minute is, and how wide a day.
+    struct Layout {
+        let start: Int
+        let end: Int
+        let scale: CGFloat
+        let columnWidth: CGFloat
+        let gap: CGFloat
+        let labelWidth: CGFloat
+        let height: CGFloat
+        let scrolls: Bool
+
+        init(table: Timetable, width: CGFloat, height: CGFloat, labelWidth: CGFloat, gap: CGFloat, expanded: Bool) {
+            start = table.shownStart
+            end = table.shownEnd
+            let days = CGFloat(max(1, table.dayCount))
+            columnWidth = max(40, (width - labelWidth - gap * days) / days)
+            // The school day (and an hour) fits on screen, within reason; the rest scrolls.
+            let school = CGFloat(max(240, table.schoolEnd - table.schoolStart + 60))
+            scale = min(expanded ? 2.2 : 1.6, max(0.55, height / school))
+            self.gap = gap
+            self.labelWidth = labelWidth
+            self.height = CGFloat(end - start) * scale
+            scrolls = self.height > height + 1
+        }
+
+        func y(_ minute: Int) -> CGFloat { CGFloat(minute - start) * scale }
+        func minute(at y: CGFloat) -> Int { start + Int((y / scale).rounded(.down)) }
+        var step: CGFloat { columnWidth + gap }
+    }
+
+    /// The hour to show at the top: the one before now, or the start of school.
+    static func firstHour(table: Timetable, minute: Int?) -> Int {
+        let first = table.shownStart / 60
+        let last = max(first, table.shownEnd / 60 - 1)
+        let wanted = minute.map { $0 / 60 - 1 } ?? table.schoolStart / 60
+        return max(first, min(last, wanted))
+    }
+
+    /// A study session planned into free time this week.
+    struct Planned: Identifiable {
+        let id: Int
+        let start: Int
+        let end: Int
+        let title: String
+    }
+
+    /// This week's study sessions, by day (0 is Monday).
+    static func planned(_ planner: Planner, table: Timetable, now: Date, daily: Int, steps: [PlannerTask] = [],
+                        calendar: Calendar = .current) -> [Int: [Planned]] {
         let sessions = StudyPlanner.plan(tasks: planner.tasks + steps, exams: planner.exams, timetable: table, now: now,
                                          calendar: calendar, daily: daily)
         let monday = Timetable.monday(of: now, calendar: calendar)
-        var result: [String: String] = [:]
-        for session in sessions {
+        var result: [Int: [Planned]] = [:]
+        for (index, session) in sessions.enumerated() {
             let day = calendar.dateComponents([.day], from: monday, to: calendar.startOfDay(for: session.start)).day ?? -1
             guard (0..<table.dayCount).contains(day) else { continue }
             let start = Timetable.minuteOfDay(session.start, calendar: calendar)
-            let end = start + session.minutes
-            for row in rows where !row.isBreak && row.start < end && row.end > start {
-                let key = "\(day)-\(row.id.uuidString)"
-                if let already = result[key] {
-                    if !already.contains(session.title) { result[key] = already + ", " + session.title }
-                } else {
-                    result[key] = session.title
-                }
-            }
+            result[day, default: []].append(Planned(id: index, start: start, end: start + session.minutes, title: session.title))
         }
         return result
     }
+}
 
-    /// The row to show at the top: the one before what's on now, or the start of school.
-    private func scrollTarget(rows: [Timetable.Period], minute: Int?) -> UUID? {
-        if let minute = minute, let current = rows.firstIndex(where: { $0.end > minute }) {
-            return rows[max(0, current - 1)].id
+/// On an empty timetable: how to fill it in.
+struct WeekCalendarHint: View {
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("Click any time on a day to add a class or activity")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+            Text("Drag it to move it, or its bottom edge to change when it ends. Or ask the assistant.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.tertiary)
         }
-        return rows.first(where: { !$0.isActivity })?.id ?? rows.first?.id
-    }
-
-    private let sectionHeight: CGFloat = 12
-
-    /// How tall a row is next to an hour-long one: longer stretches (school as one block) are
-    /// taller, up to a little over twice.
-    static func weight(_ period: Timetable.Period) -> CGFloat {
-        let hours = CGFloat(period.end - period.start) / 60
-        return min(2.2, max(1, hours / 2))
-    }
-
-    /// Classes and hour blocks share the height left after the slim break rows; long days scroll.
-    private func rowHeights(rows: [Timetable.Period], height: CGFloat) -> (classHeight: CGFloat, breakHeight: CGFloat, scrolls: Bool) {
-        let breaks = CGFloat(rows.filter { $0.isBreak }.count)
-        let classes = max(1, rows.filter { !$0.isBreak }.reduce(CGFloat(0)) { $0 + TimetableGrid.weight($1) })
-        var sections: CGFloat = 0
-        for (index, row) in rows.enumerated() where index > 0 && rows[index - 1].isActivity != row.isActivity {
-            sections += 1
-        }
-        let breakHeight: CGFloat = expanded ? 22 : 18
-        let rowsHeight = height - header - gap
-        let gaps = CGFloat(max(0, rows.count - 1) + Int(sections)) * gap
-        let fitted = (rowsHeight - gaps - breaks * breakHeight - sections * sectionHeight) / classes
-        let minimum: CGFloat = 34
-        return (max(minimum, min(fitted, 120)), breakHeight, fitted < minimum)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.surface.opacity(0.92)))
+        .allowsHitTesting(false)
     }
 }
 
-/// One period across the week: a slim band for a break, or the period's name and a lesson
-/// for each day.
-struct TimetableRow: View {
+/// Down the left: the hours, and the school day's bell times by name. Click a bell time to
+/// change it.
+struct TimeAxis: View {
     @ObservedObject var model: NotchModel
     let table: Timetable
-    let period: Timetable.Period
-    let today: Int?
-    let minute: Int
-    let labelWidth: CGFloat
-    let classHeight: CGFloat
-    let breakHeight: CGFloat
-    let gap: CGFloat
-    /// Study sessions planned into this week's empty slots, keyed "day-row".
-    var planned: [String: String] = [:]
-    /// Classes with their own times running into this row's empty slots, keyed the same way.
-    var overflow: [String: String] = [:]
+    let layout: WeekCalendar.Layout
 
     var body: some View {
-        let isNow = today != nil && period.contains(minute)
-        let editingPeriod = model.timetableEdit == .period(period.id)
-
-        if period.isBreak {
-            BreakRow(period: period, isNow: isNow, selected: editingPeriod, edit: { model.editPeriod(period.id) })
-                .frame(height: breakHeight)
-        } else {
-            HStack(spacing: gap) {
-                PeriodLabel(period: period, isNow: isNow, selected: editingPeriod, edit: { model.editPeriod(period.id) })
-                    .frame(width: labelWidth)
-                ForEach(0..<table.dayCount, id: \.self) { day in
-                    cell(day: day)
+        VStack(spacing: 0) {
+            // One row an hour, to scroll to.
+            ForEach(layout.start / 60 ..< max(layout.start / 60 + 1, layout.end / 60), id: \.self) { hour in
+                Color.clear
+                    .frame(width: layout.labelWidth, height: 60 * layout.scale)
+                    .id(hour)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                ForEach(TimeAxis.hours(table: table, layout: layout), id: \.self) { minute in
+                    Text(ClockTime.hour(minute))
+                        .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
+                        .offset(x: 4, y: layout.y(minute) + 1)
+                }
+                ForEach(table.periods) { period in
+                    BellLabel(period: period, height: CGFloat(period.end - period.start) * layout.scale, width: layout.labelWidth,
+                              selected: model.timetableEdit == .period(period.id), edit: { model.editPeriod(period.id) })
+                        .offset(y: layout.y(period.start))
                 }
             }
-            .frame(height: classHeight)
         }
     }
 
-    private func cell(day: Int) -> LessonCell {
-        let slot = Timetable.Slot(week: model.timetableWeek, day: day, period: period.id)
-        let lesson = table.lesson(at: slot)
-        // When it runs: its own times, if it has them.
-        let times: (start: Int, end: Int) = lesson?.times(in: period) ?? (start: period.start, end: period.end)
+    /// The hours labelled: every hour shown, except inside the school day (its bell times
+    /// are labelled there instead).
+    static func hours(table: Timetable, layout: WeekCalendar.Layout) -> [Int] {
+        stride(from: layout.start, to: layout.end, by: 60).filter { minute in
+            !(minute >= table.schoolStart && minute < table.schoolEnd)
+        }
+    }
+}
+
+/// A bell time's name (and times, if there's room) beside the hours. Click to change it.
+struct BellLabel: View {
+    let period: Timetable.Period
+    let height: CGFloat
+    let width: CGFloat
+    let selected: Bool
+    let edit: () -> Void
+    @State var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if height >= 11 {
+                Text(period.name)
+                    .font(.system(size: period.isBreak ? 10 : 11, weight: .semibold))
+                    .foregroundStyle(period.isBreak ? Theme.tertiary : Theme.text2)
+            }
+            if height >= 26 {
+                Text(period.times)
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Theme.tertiary)
+            }
+        }
+        .lineLimit(1)
+        .padding(.leading, 4)
+        .frame(width: width, height: max(1, height), alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(selected || hovering ? Theme.hover.opacity(0.6) : Color.clear))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: edit)
+        .onHover { hovering = $0 }
+        .help("Change \(period.name)'s name or times")
+    }
+}
+
+/// Lines across a day: one on each hour.
+struct HourLines: Shape {
+    let hours: Int
+    let step: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard hours > 0 else { return path }
+        for index in 0...hours {
+            let y = CGFloat(index) * step
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: rect.width, y: y))
+        }
+        return path
+    }
+}
+
+/// One day: its classes and activities at their times, the school day's breaks as bands,
+/// study planned into free time (faintly), and on today a line at the time it is now.
+/// Click an empty time to add a class there.
+struct DayColumn: View {
+    @ObservedObject var model: NotchModel
+    let store: TimetableStore
+    let table: Timetable
+    let day: Int
+    let layout: WeekCalendar.Layout
+    let events: [Timetable.Event]
+    let planned: [WeekCalendar.Planned]
+    let today: Int?
+    let minute: Int
+
+    var body: some View {
+        let lanes = Timetable.lanes(events)
+        let isToday = day == today
+
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.white.opacity(isToday ? 0.035 : 0.018))
+            HourLines(hours: (layout.end - layout.start) / 60, step: 60 * layout.scale)
+                .stroke(Color.white.opacity(0.055), lineWidth: 1)
+            // Click an empty time to add a class there.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 1, coordinateSpace: .local) { point in
+                    model.addEvent(day: day, at: layout.minute(at: point.y))
+                }
+                .help("Click to add a class or activity at that time")
+            if day < 5 {
+                ForEach(table.breaks) { period in
+                    BreakBand(period: period, height: CGFloat(period.end - period.start) * layout.scale)
+                        .offset(y: layout.y(period.start))
+                }
+            }
+            ForEach(planned) { session in
+                PlannedBlock(title: session.title, height: CGFloat(session.end - session.start) * layout.scale)
+                    .frame(width: layout.columnWidth)
+                    .offset(y: layout.y(session.start))
+            }
+            ForEach(events) { event in
+                block(event, lane: lanes[event.id] ?? (lane: 0, of: 1), isToday: isToday)
+            }
+            if isToday && minute >= layout.start && minute < layout.end {
+                NowLine(width: layout.columnWidth)
+                    .offset(y: layout.y(minute) - 3)
+            }
+        }
+        .frame(width: layout.columnWidth, height: layout.height)
+    }
+
+    private func block(_ event: Timetable.Event, lane: (lane: Int, of: Int), isToday: Bool) -> some View {
+        let laneWidth = layout.columnWidth / CGFloat(max(1, lane.of))
         var isPast = false
         if let today = today {
-            isPast = day < today || (day == today && times.end <= minute)
+            isPast = day < today || (isToday && event.end <= minute)
         }
-        let key = "\(day)-\(period.id.uuidString)"
-        return LessonCell(lesson: lesson,
-                          colour: Theme.subject(table.colour(for: lesson?.subject ?? "")),
-                          height: classHeight,
-                          isActivity: period.isActivity,
-                          planned: lesson == nil ? planned[key] : nil,
-                          overflow: lesson == nil ? overflow[key] : nil,
-                          isNow: day == today && times.start <= minute && minute < times.end,
-                          isPast: isPast,
-                          selected: model.timetableEdit == .lesson(slot),
-                          edit: { model.editLesson(day: day, period: period.id) })
+        return EventBlock(event: event, colour: Theme.subject(table.colour(for: event.subject)),
+                          width: max(10, laneWidth - 2), height: max(14, CGFloat(event.minutes) * layout.scale), layout: layout,
+                          isNow: isToday && event.contains(minute), isPast: isPast,
+                          selected: model.timetableEdit == .event(event.id),
+                          open: { model.editEvent(event.id) },
+                          move: { days, minutes in
+                              store.change { $0.move(event.id, day: event.day + days, start: event.start + minutes) }
+                          },
+                          resize: { minutes in
+                              store.change { $0.resize(event.id, end: event.end + minutes) }
+                          })
+            .offset(x: laneWidth * CGFloat(lane.lane), y: layout.y(event.start))
+    }
+}
+
+/// Recess, lunch: a faint band across a school day.
+struct BreakBand: View {
+    let period: Timetable.Period
+    let height: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.05))
+            .frame(height: max(1, height))
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Study the planner fitted into free time: a dashed outline with what it's for.
+struct PlannedBlock: View {
+    let title: String
+    let height: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        HStack(spacing: 4) {
+            Image(systemName: "book")
+                .font(.system(size: 9.5, weight: .semibold))
+            if height >= 14 {
+                Text(title)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(Theme.tertiary)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: max(8, height))
+        .overlay(shape.strokeBorder(Color.white.opacity(0.13), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+        .allowsHitTesting(false)
+        .help("Planned for study: \(title)")
+    }
+}
+
+/// The time it is now, across today.
+struct NowLine: View {
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(Theme.accent)
+                .frame(width: 6, height: 6)
+            Rectangle()
+                .fill(Theme.accent)
+                .frame(height: 1.5)
+        }
+        .frame(width: width, height: 6)
+        .allowsHitTesting(false)
+    }
+}
+
+/// One class or activity: its subject's colour, its name, its times and where. Click it to
+/// edit it; drag it to move it (to another time, or another day); drag its bottom edge to
+/// change when it ends. Times snap to five minutes.
+struct EventBlock: View {
+    let event: Timetable.Event
+    let colour: Color
+    let width: CGFloat
+    let height: CGFloat
+    let layout: WeekCalendar.Layout
+    let isNow: Bool
+    let isPast: Bool
+    let selected: Bool
+    let open: () -> Void
+    /// Moved by so many days and minutes.
+    let move: (Int, Int) -> Void
+    /// Made longer (or shorter) by so many minutes.
+    let resize: (Int) -> Void
+    @State var drag: CGSize = .zero
+    @State var stretch: CGFloat = 0
+    @State var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let moved = EventBlock.snapped(drag.height, scale: layout.scale)
+        let longer = EventBlock.snapped(stretch, scale: layout.scale)
+        let start = event.start + moved
+        let end = max(event.start + Timetable.shortest, event.end + longer) + moved
+        let busy = drag != .zero || stretch != 0
+        let shown = max(14, height + CGFloat(longer) * layout.scale)
+
+        ZStack(alignment: .topLeading) {
+            shape.fill(colour.opacity(isNow ? 0.36 : (hovering || selected || busy ? 0.3 : 0.22)))
+            HStack(spacing: 0) {
+                colour.frame(width: 3)
+                Spacer(minLength: 0)
+            }
+            .clipShape(shape)
+            EventLabel(subject: event.subject, times: "\(ClockTime.short(start))–\(ClockTime.short(end))", room: event.room,
+                       colour: colour, height: shown)
+            // The bottom edge: drag it to change when it ends.
+            Color.clear
+                .frame(height: min(7, shown / 3))
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                    .onChanged { value in stretch = value.translation.height }
+                    .onEnded { value in
+                        let minutes = EventBlock.snapped(value.translation.height, scale: layout.scale)
+                        stretch = 0
+                        if minutes != 0 { resize(minutes) }
+                    })
+                .onHover { inside in
+                    if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() }
+                }
+        }
+        .frame(width: width, height: shown)
+        .overlay(shape.strokeBorder(selected ? Theme.accent : (isNow ? colour : Color.clear), lineWidth: selected ? 1.5 : 1.2))
+        .shadow(color: busy ? Color.black.opacity(0.35) : (isNow ? colour.opacity(0.45) : Color.clear), radius: busy ? 6 : 8)
+        .opacity(isPast && !selected && !busy ? 0.5 : 1)
+        .contentShape(shape)
+        .onTapGesture(perform: open)
+        .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
+            .onChanged { value in drag = value.translation }
+            .onEnded { value in
+                let days = Int((value.translation.width / layout.step).rounded())
+                let minutes = EventBlock.snapped(value.translation.height, scale: layout.scale)
+                drag = .zero
+                if days != 0 || minutes != 0 { move(days, minutes) }
+            })
+        .offset(x: CGFloat(Int((drag.width / layout.step).rounded())) * layout.step, y: CGFloat(moved) * layout.scale)
+        .zIndex(busy ? 2 : (selected ? 1 : 0))
+        .onHover { hovering = $0 }
+        .help("\(event.subject.isEmpty ? "Class" : event.subject), \(event.times). Click to edit; drag to move.")
+    }
+
+    /// A drag of so many points as minutes, to the nearest five.
+    static func snapped(_ points: CGFloat, scale: CGFloat) -> Int {
+        guard scale > 0 else { return 0 }
+        let minutes = Double(points / scale)
+        return Int((minutes / Double(Timetable.snap)).rounded()) * Timetable.snap
+    }
+}
+
+/// A class's words: its name, then its times and where, as room allows.
+struct EventLabel: View {
+    let subject: String
+    let times: String
+    let room: String
+    let colour: Color
+    let height: CGFloat
+
+    var body: some View {
+        let name = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(alignment: .leading, spacing: 1) {
+            if height >= 30 {
+                Text(name.isEmpty ? "New class" : name)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(name.isEmpty ? Theme.tertiary : Theme.text)
+                Text(room.isEmpty ? times : "\(times) · \(room)")
+                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(colour.opacity(0.95))
+            } else {
+                (Text(name.isEmpty ? "New class" : name).foregroundColor(name.isEmpty ? Theme.tertiary : Theme.text)
+                    + Text("  " + times).foregroundColor(colour))
+                    .font(.system(size: 11, weight: .semibold))
+            }
+        }
+        .lineLimit(1)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .padding(.top, height >= 30 ? 5 : 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: height >= 30 ? .topLeading : .leading)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: Editing
+
+/// The side panel for one class or activity: what it is, where and with whom, when it
+/// starts and ends (or which bell time it's on), the other days it's on, and its colour.
+/// Everything saves as you type.
+struct EventEditor: View {
+    @ObservedObject var model: NotchModel
+    @ObservedObject var store: TimetableStore
+    let id: UUID
+    @FocusState private var focused: Field?
+
+    enum Field {
+        case subject
+        case room
+        case teacher
+    }
+
+    init(model: NotchModel, store: TimetableStore, id: UUID) {
+        self.model = model
+        self.store = store
+        self.id = id
+    }
+
+    var body: some View {
+        if let event = store.timetable.event(id) {
+            form(event)
+        } else {
+            // (It was deleted, or tidied away.)
+            Color.clear
+                .onAppear { model.timetableEdit = nil }
+        }
+    }
+
+    @ViewBuilder
+    private func form(_ event: Timetable.Event) -> some View {
+        let table = store.timetable
+        let subject = event.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suggestions = table.subjects.filter { name in
+            name.lowercased() != subject.lowercased() && (subject.isEmpty || name.lowercased().hasPrefix(subject.lowercased()))
+        }
+        let outside = event.start < table.schoolStart || event.start >= table.schoolEnd || event.day >= 5
+
+        VStack(alignment: .leading, spacing: 9) {
+            EditorHeader(title: Timetable.dayNames[event.day],
+                         detail: event.times + (table.twoWeeks ? " · \(Timetable.weekName(event.week))" : ""),
+                         close: { model.timetableEdit = nil })
+            EditorField(label: outside ? "Activity" : "Subject") {
+                TextField(outside ? "e.g. Soccer training" : "e.g. Maths", text: binding(\.subject))
+                    .focused($focused, equals: .subject)
+                    .onSubmit { focused = .room }
+            }
+            if !suggestions.isEmpty {
+                SubjectSuggestions(names: Array(suggestions.prefix(8)), table: table, pick: pick)
+            }
+            EditorField(label: outside ? "Where" : "Room") {
+                TextField(outside ? "e.g. Oval" : "e.g. B12", text: binding(\.room))
+                    .focused($focused, equals: .room)
+                    .onSubmit { focused = .teacher }
+            }
+            EditorField(label: outside ? "With" : "Teacher") {
+                TextField(outside ? "e.g. Coach Sam" : "e.g. Ms Lee", text: binding(\.teacher))
+                    .focused($focused, equals: .teacher)
+                    .onSubmit { model.timetableEdit = nil }
+            }
+            EventTimes(store: store, id: id)
+            EventDays(store: store, id: id)
+            if !subject.isEmpty {
+                SubjectColours(store: store, subject: subject)
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                PillButton(title: "Delete", action: {
+                    store.change { $0.removeEvent(id) }
+                    model.timetableEdit = nil
+                })
+                Spacer(minLength: 0)
+                PillButton(title: "Done", prominent: true, action: { model.timetableEdit = nil })
+            }
+        }
+        .padding(12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
+        .onAppear {
+            if subject.isEmpty { focused = .subject }
+        }
+    }
+
+    /// Edits one part of the class, saving as you type.
+    private func binding(_ part: WritableKeyPath<Timetable.Event, String>) -> Binding<String> {
+        Binding(
+            get: { store.timetable.event(id)?[keyPath: part] ?? "" },
+            set: { typed in
+                store.change { table in
+                    table.change(id) { $0[keyPath: part] = typed }
+                }
+            }
+        )
+    }
+
+    /// A subject you've used before, with its usual room and teacher.
+    private func pick(_ subject: String) {
+        store.change { table in
+            let usual = table.usual(for: subject)
+            table.change(id) { event in
+                event.subject = subject
+                if event.room.trimmingCharacters(in: .whitespaces).isEmpty {
+                    event.room = usual?.room ?? ""
+                }
+                if event.teacher.trimmingCharacters(in: .whitespaces).isEmpty {
+                    event.teacher = usual?.teacher ?? ""
+                }
+            }
+        }
+        focused = .room
+    }
+}
+
+/// Subjects you've used before, as chips in their colours.
+struct SubjectSuggestions: View {
+    let names: [String]
+    let table: Timetable
+    let pick: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 5) {
+                ForEach(names, id: \.self) { name in
+                    PinChip(title: name, tint: Theme.subject(table.colour(for: name)), selected: false, action: { pick(name) })
+                }
+            }
+        }
+        .scrollIndicators(.never)
+    }
+}
+
+/// A subject's colour, for every class of it.
+struct SubjectColours: View {
+    @ObservedObject var store: TimetableStore
+    let subject: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<Timetable.colourCount, id: \.self) { index in
+                let chosen = store.timetable.colour(for: subject) == index
+                Circle()
+                    .fill(Theme.subject(index))
+                    .frame(width: 16, height: 16)
+                    .overlay(Circle().strokeBorder(Theme.text, lineWidth: chosen ? 2 : 0).padding(-3))
+                    .frame(width: 20, height: 20)
+                    .contentShape(Circle())
+                    .onTapGesture { store.change { $0.setColour(index, for: subject) } }
+                    .help("Colour for every \(subject) class")
+            }
+        }
+        .padding(.leading, 2)
+    }
+}
+
+/// When a class starts and ends: typed (saved once they make sense), or one of the school
+/// day's bell times with a click.
+struct EventTimes: View {
+    @ObservedObject var store: TimetableStore
+    let id: UUID
+    @State var start = ""
+    @State var end = ""
+    @State var loaded = false
+
+    var body: some View {
+        let table = store.timetable
+        let event = table.event(id)
+        let problem = loaded ? Timetable.timesProblem(start: start, end: end) : nil
+        let bells = table.periods.filter { !$0.isBreak }
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                EditorField(label: "Starts") {
+                    TextField("5:15 pm", text: $start)
+                        .onChange(of: start) { _ in save() }
+                }
+                EditorField(label: "Ends") {
+                    TextField("6:00 pm", text: $end)
+                        .onChange(of: end) { _ in save() }
+                }
+            }
+            if let problem = problem {
+                Text(problem)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color(hex: 0xFFB340))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !bells.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 5) {
+                        ForEach(bells) { period in
+                            PinChip(title: period.name, selected: event?.start == period.start && event?.end == period.end,
+                                    action: { use(period) })
+                                .help("\(period.name): \(period.times)")
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+            }
+        }
+        .onAppear(perform: load)
+        // Dragged in the timetable while this is open: the times follow.
+        .onChange(of: event.map { "\($0.start)-\($0.end)" } ?? "") { _ in
+            refresh()
+        }
+    }
+
+    private func load() {
+        refresh()
+        DispatchQueue.main.async { loaded = true }
+    }
+
+    /// Shows the times saved, unless what's typed already means them.
+    private func refresh() {
+        guard let event = store.timetable.event(id) else { return }
+        if ClockTime.parse(start) != event.start || ClockTime.parse(end) != event.end {
+            start = ClockTime.long(event.start)
+            end = ClockTime.long(event.end)
+        }
+    }
+
+    /// Saves as you type, once the times make sense.
+    private func save() {
+        guard loaded, let from = ClockTime.parse(start), let to = ClockTime.parse(end), Timetable.validTimes(start: from, end: to),
+              let event = store.timetable.event(id), event.start != from || event.end != to else { return }
+        store.change { table in
+            table.change(id) { changed in
+                changed.start = from
+                changed.end = to
+            }
+        }
+    }
+
+    /// Puts the class on a bell time.
+    private func use(_ period: Timetable.Period) {
+        store.change { table in
+            table.change(id) { changed in
+                changed.start = period.start
+                changed.end = period.end
+            }
+        }
+        start = ClockTime.long(period.start)
+        end = ClockTime.long(period.end)
+    }
+}
+
+/// The days a class is on: click another day to put the same class there too (same
+/// times, same room), or click it again to take it off.
+struct EventDays: View {
+    @ObservedObject var store: TimetableStore
+    let id: UUID
+
+    var body: some View {
+        let table = store.timetable
+        let on = table.days(of: id)
+        let own = table.event(id)?.day
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text("On")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Theme.tertiary)
+            HStack(spacing: 4) {
+                ForEach(0..<table.dayCount, id: \.self) { day in
+                    PinChip(title: Timetable.shortDayNames[day], selected: on.contains(day), action: {
+                        guard day != own else { return }
+                        store.change { $0.repeatOn(id, day: day, !on.contains(day)) }
+                    })
+                    .help(day == own ? "The day this one's on" : (on.contains(day) ? "Take it off \(Timetable.dayNames[day])" : "Put it on \(Timetable.dayNames[day]) too"))
+                }
+            }
+        }
+    }
+}
+
+/// A hairline with a small label, between parts of a list (the Planner uses it).
+struct SectionLine: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label.uppercased())
+                .font(.system(size: 8.5, weight: .heavy))
+                .tracking(0.8)
+                .foregroundStyle(Theme.tertiary)
+                .fixedSize()
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+        }
+        .padding(.leading, 8)
     }
 }
 
@@ -326,479 +932,6 @@ struct DayHeader: View {
     }
 }
 
-/// A period's name and times, down the left. Click to change them.
-struct PeriodLabel: View {
-    let period: Timetable.Period
-    let isNow: Bool
-    let selected: Bool
-    let edit: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        Button(action: edit) {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 5) {
-                    if isNow {
-                        Circle()
-                            .fill(Theme.accent)
-                            .frame(width: 5, height: 5)
-                    }
-                    Text(period.isActivity ? ClockTime.hour(period.start) : period.name)
-                        .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(isNow ? Theme.text : (period.isActivity ? Theme.secondary : Theme.text2))
-                        .lineLimit(1)
-                }
-                Text(period.isActivity ? period.name : period.times)
-                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.tertiary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(selected ? Theme.raised : (hovering ? Theme.surface : Color.clear)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(period.isActivity ? "Hour blocks before and after school" : "Change \(period.name)'s name or times")
-    }
-}
-
-/// Where school starts or ends: a hairline with a small label.
-struct SectionLine: View {
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label.uppercased())
-                .font(.system(size: 8.5, weight: .heavy))
-                .tracking(0.8)
-                .foregroundStyle(Theme.tertiary)
-                .fixedSize()
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 1)
-        }
-        .padding(.leading, 8)
-    }
-}
-
-/// Recess, lunch: a slim band across the whole week.
-struct BreakRow: View {
-    let period: Timetable.Period
-    let isNow: Bool
-    let selected: Bool
-    let edit: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        Button(action: edit) {
-            HStack(spacing: 8) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 1)
-                HStack(spacing: 6) {
-                    if isNow {
-                        Circle()
-                            .fill(Theme.accent)
-                            .frame(width: 5, height: 5)
-                    }
-                    Text(period.name)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(isNow ? Theme.text : Theme.secondary)
-                    Text(period.times)
-                        .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Theme.tertiary)
-                }
-                .lineLimit(1)
-                .fixedSize()
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 1)
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Capsule().fill(selected ? Theme.raised : (hovering ? Theme.surface : Color.clear)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help("Change \(period.name)'s name or times")
-    }
-}
-
-/// One lesson: its subject's colour, the subject, then room and teacher if there's room.
-/// Empty slots show a faint outline and a + when you point at them.
-struct LessonCell: View {
-    let lesson: Timetable.Lesson?
-    let colour: Color
-    let height: CGFloat
-    var isActivity = false
-    /// Homework or revision the planner has fitted into this empty slot.
-    var planned: String? = nil
-    /// A class with its own times from another row that runs into this empty slot.
-    var overflow: String? = nil
-    let isNow: Bool
-    let isPast: Bool
-    let selected: Bool
-    let edit: () -> Void
-    @State var hovering = false
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
-        let subject = lesson?.subject.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let place = lesson.map { Timetable.Lesson(subject: "", room: $0.room.trimmingCharacters(in: .whitespaces),
-                                                  teacher: $0.teacher.trimmingCharacters(in: .whitespaces)).details } ?? ""
-        let own = lesson?.ownTimesLabel ?? ""
-        let details = [own, place].filter { !$0.isEmpty }.joined(separator: " · ")
-        let filled = lesson != nil
-
-        Button(action: edit) {
-            ZStack(alignment: .topLeading) {
-                if filled {
-                    shape.fill(colour.opacity(isNow ? 0.32 : (hovering || selected ? 0.24 : 0.17)))
-                    // The subject's colour as a stripe down the left.
-                    HStack(spacing: 0) {
-                        colour
-                            .frame(width: 3)
-                        Spacer(minLength: 0)
-                    }
-                    .clipShape(shape)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        // (Too short for a second line: its own times go after its name.)
-                        (Text(subject.isEmpty ? "No subject" : subject)
-                            .foregroundColor(subject.isEmpty ? Theme.tertiary : Theme.text)
-                            + Text(height < 36 && !own.isEmpty ? "  " + own : "")
-                            .foregroundColor(colour))
-                            .font(.system(size: 12.5, weight: .semibold))
-                        if !details.isEmpty && height >= 36 {
-                            Text(details)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(colour.opacity(0.95))
-                        }
-                    }
-                    .lineLimit(1)
-                    .padding(.leading, 10)
-                    .padding(.trailing, 6)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: height >= 50 ? .topLeading : .leading)
-                    .padding(.top, height >= 50 ? 7 : 0)
-                } else {
-                    shape.strokeBorder(Color.white.opacity(hovering || selected ? 0.22 : (planned != nil ? 0.13 : (isActivity ? 0.045 : 0.07))),
-                                       style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    if hovering || selected {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.tertiary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if let overflow = overflow {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.right")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text(overflow)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(Theme.tertiary)
-                        .padding(.horizontal, 7)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    } else if let planned = planned {
-                        HStack(spacing: 4) {
-                            Image(systemName: "book")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text(planned)
-                                .font(.system(size: 11, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(Theme.tertiary)
-                        .padding(.horizontal, 7)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    }
-                }
-
-                if isNow && filled && height >= 36 {
-                    Text("NOW")
-                        .font(.system(size: 8.5, weight: .heavy))
-                        .tracking(0.6)
-                        .foregroundStyle(Theme.onAccent)
-                        .padding(.horizontal, 5)
-                        .frame(height: 13)
-                        .background(Capsule().fill(colour))
-                        .padding(5)
-                        .frame(maxWidth: .infinity, alignment: .topTrailing)
-                }
-            }
-            .overlay(
-                shape.strokeBorder(selected ? Theme.accent : (isNow ? colour : Color.clear), lineWidth: selected ? 1.5 : 1.2)
-            )
-            .shadow(color: isNow ? colour.opacity(0.45) : Color.clear, radius: 8)
-            .opacity(isPast && !selected ? 0.5 : 1)
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(LessonCell.hint(filled: filled, isActivity: isActivity, planned: planned, overflow: overflow))
-    }
-
-    static func hint(filled: Bool, isActivity: Bool, planned: String?, overflow: String? = nil) -> String {
-        if filled { return isActivity ? "Edit this activity" : "Edit this lesson" }
-        if let overflow = overflow { return "\(overflow) runs into this time. Click to put something else here." }
-        if let planned = planned { return "Planned for study: \(planned). Click to put something else here." }
-        return isActivity ? "Add an activity" : "Add a lesson"
-    }
-}
-
-// MARK: Editing
-
-/// The side panel for one lesson: subject, room, teacher and the subject's colour.
-struct LessonEditor: View {
-    @ObservedObject var model: NotchModel
-    @ObservedObject var store: TimetableStore
-    let slot: Timetable.Slot
-    @FocusState private var focused: Field?
-
-    enum Field {
-        case subject
-        case room
-        case teacher
-    }
-
-    init(model: NotchModel, store: TimetableStore, slot: Timetable.Slot) {
-        self.model = model
-        self.store = store
-        self.slot = slot
-    }
-
-    var body: some View {
-        let table = store.timetable
-        let lesson = table.lesson(at: slot)
-        let period = table.period(slot.period)
-        let isActivity = period?.isActivity ?? false
-        let subject = lesson?.subject.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let suggestions = table.subjects.filter { name in
-            name.lowercased() != subject.lowercased() && (subject.isEmpty || name.lowercased().hasPrefix(subject.lowercased()))
-        }
-
-        VStack(alignment: .leading, spacing: 9) {
-            EditorHeader(title: Timetable.dayNames[slot.day],
-                         detail: (period.map { "\($0.name) · \($0.times)" } ?? "")
-                             + (table.twoWeeks ? " · \(Timetable.weekName(slot.week))" : ""),
-                         close: { model.timetableEdit = nil })
-
-            EditorField(label: isActivity ? "Activity" : "Subject") {
-                TextField(isActivity ? "e.g. Soccer training" : "e.g. Maths", text: binding(\.subject))
-                    .focused($focused, equals: .subject)
-                    .onSubmit { focused = .room }
-            }
-            if !suggestions.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 5) {
-                        ForEach(suggestions.prefix(8), id: \.self) { name in
-                            Button(action: { pick(name) }) {
-                                HStack(spacing: 5) {
-                                    Circle()
-                                        .fill(Theme.subject(table.colour(for: name)))
-                                        .frame(width: 6, height: 6)
-                                    Text(name)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(Theme.text2)
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(height: 22)
-                                .background(Capsule().fill(Theme.raised))
-                                .contentShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .scrollIndicators(.never)
-            }
-            EditorField(label: isActivity ? "Where" : "Room") {
-                TextField(isActivity ? "e.g. Oval" : "e.g. B12", text: binding(\.room))
-                    .focused($focused, equals: .room)
-                    .onSubmit { focused = .teacher }
-            }
-            EditorField(label: isActivity ? "With" : "Teacher") {
-                TextField(isActivity ? "e.g. Coach Sam" : "e.g. Ms Lee", text: binding(\.teacher))
-                    .focused($focused, equals: .teacher)
-                    .onSubmit { model.timetableEdit = nil }
-            }
-
-            if lesson != nil {
-                LessonTimes(model: model, store: store, slot: slot)
-            }
-            if !subject.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(0..<Timetable.colourCount, id: \.self) { index in
-                        let chosen = table.colour(for: subject) == index
-                        Button(action: { store.change { $0.setColour(index, for: subject) } }) {
-                            Circle()
-                                .fill(Theme.subject(index))
-                                .frame(width: 16, height: 16)
-                                .overlay(Circle().strokeBorder(Theme.text, lineWidth: chosen ? 2 : 0).padding(-3))
-                                .frame(width: 20, height: 20)
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Colour for every \(subject) lesson")
-                    }
-                }
-                .padding(.leading, 2)
-            }
-
-            Spacer(minLength: 0)
-            HStack(spacing: 8) {
-                if lesson != nil {
-                    PillButton(title: "Clear", action: {
-                        store.change { $0.setLesson(nil, at: slot) }
-                        model.timetableEdit = nil
-                    })
-                }
-                Spacer(minLength: 0)
-                PillButton(title: "Done", prominent: true, action: { model.timetableEdit = nil })
-            }
-        }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
-        .onAppear { focused = .subject }
-    }
-
-    /// Edits one part of the lesson, saving as you type.
-    private func binding(_ part: WritableKeyPath<Timetable.Lesson, String>) -> Binding<String> {
-        Binding(
-            get: { store.timetable.lesson(at: slot)?[keyPath: part] ?? "" },
-            set: { typed in
-                store.change { table in
-                    var lesson = table.lesson(at: slot) ?? Timetable.Lesson(subject: "")
-                    lesson[keyPath: part] = typed
-                    table.setLesson(lesson, at: slot)
-                }
-            }
-        )
-    }
-
-    /// A subject you've used before, with its usual room and teacher.
-    private func pick(_ subject: String) {
-        store.change { table in
-            var lesson = table.lesson(at: slot) ?? Timetable.Lesson(subject: "")
-            let usual = table.usual(for: subject)
-            lesson.subject = subject
-            if lesson.room.trimmingCharacters(in: .whitespaces).isEmpty {
-                lesson.room = usual?.room ?? ""
-            }
-            if lesson.teacher.trimmingCharacters(in: .whitespaces).isEmpty {
-                lesson.teacher = usual?.teacher ?? ""
-            }
-            table.setLesson(lesson, at: slot)
-        }
-        focused = .room
-    }
-}
-
-/// In a lesson's side panel: whether it runs at its row's times or its own (piano from 5:15
-/// to 6:00 in the 5 pm hour block). Own times are saved as they're typed, once they make
-/// sense; if they start in another row, it offers to move the lesson there.
-struct LessonTimes: View {
-    @ObservedObject var model: NotchModel
-    @ObservedObject var store: TimetableStore
-    let slot: Timetable.Slot
-    @State var own = false
-    @State var start = ""
-    @State var end = ""
-    @State var loaded = false
-
-    var body: some View {
-        let table = store.timetable
-        let period = table.period(slot.period)
-        let problem = Timetable.timesProblem(start: start, end: end)
-        let better = table.betterRow(for: slot)
-
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: $own) {
-                Text(period.map { "Its own times (the row is \($0.times))" } ?? "Its own times")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.body)
-            }
-            .toggleStyle(.checkbox)
-            .help("For a class or activity that doesn't start or finish with its row")
-            .onChange(of: own) { on in
-                guard loaded else { return }
-                if on {
-                    save()
-                } else {
-                    store.change { $0.setTimes(start: nil, end: nil, at: slot) }
-                    fill(from: period)
-                }
-            }
-            if own {
-                HStack(spacing: 8) {
-                    EditorField(label: "Starts") {
-                        TextField("5:15 pm", text: $start)
-                            .onChange(of: start) { _ in save() }
-                    }
-                    EditorField(label: "Ends") {
-                        TextField("6:00 pm", text: $end)
-                            .onChange(of: end) { _ in save() }
-                    }
-                }
-                if let problem = problem {
-                    Text(problem)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(hex: 0xFFB340))
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if let row = better {
-                    HStack(spacing: 6) {
-                        Text("It starts in the \(ClockTime.hour(row.start)) row.")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.tertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        SmallPill(title: "Move It There", symbol: "arrow.up.and.down", action: { move(to: row.id) })
-                    }
-                }
-            }
-        }
-        .onAppear(perform: load)
-    }
-
-    private func load() {
-        let table = store.timetable
-        let lesson = table.lesson(at: slot)
-        if let lesson = lesson, lesson.hasOwnTimes, let from = lesson.start, let to = lesson.end {
-            own = true
-            start = ClockTime.long(from)
-            end = ClockTime.long(to)
-        } else {
-            own = false
-            fill(from: table.period(slot.period))
-        }
-        DispatchQueue.main.async { loaded = true }
-    }
-
-    /// The row's times, as a start for typing your own.
-    private func fill(from period: Timetable.Period?) {
-        guard let period = period else { return }
-        start = ClockTime.long(period.start)
-        end = ClockTime.long(period.end)
-    }
-
-    /// Saves as you type, once the times make sense.
-    private func save() {
-        guard loaded, own, let from = ClockTime.parse(start), let to = ClockTime.parse(end), Timetable.validTimes(start: from, end: to) else { return }
-        store.change { $0.setTimes(start: from, end: to, at: slot) }
-    }
-
-    /// Moves the lesson to the row its times start in, and edits it there.
-    private func move(to row: UUID) {
-        store.change { $0.moveLesson(from: slot, to: row) }
-        model.editLesson(day: slot.day, period: row)
-    }
-}
-
 /// The side panel for a period: its name, when it starts and ends, and whether it's a break.
 struct PeriodEditor: View {
     @ObservedObject var model: NotchModel
@@ -816,11 +949,7 @@ struct PeriodEditor: View {
     }
 
     var body: some View {
-        if store.timetable.period(periodID)?.isActivity == true {
-            BlocksEditor(model: model, store: store)
-        } else {
-            periodForm
-        }
+        periodForm
     }
 
     @ViewBuilder
@@ -836,7 +965,7 @@ struct PeriodEditor: View {
 
         VStack(alignment: .leading, spacing: 9) {
             EditorHeader(title: period?.name ?? "Period",
-                         detail: period?.isBreak == true ? "A break, across every day" : "The same times every day",
+                         detail: period?.isBreak == true ? "A break, on every school day" : "A bell time: classes on it move with it",
                          close: { model.timetableEdit = nil })
 
             EditorField(label: "Name") {
@@ -878,7 +1007,7 @@ struct PeriodEditor: View {
                     store.change { $0.removePeriod(periodID) }
                     model.timetableEdit = nil
                 })
-                .help("Removes this period and its lessons")
+                .help("Removes this bell time, and the classes on its times")
                 Spacer(minLength: 0)
                 PillButton(title: "Done", prominent: true, action: { model.timetableEdit = nil })
             }
@@ -904,42 +1033,6 @@ struct PeriodEditor: View {
         changed.start = startMinute
         changed.end = endMinute
         store.change { _ = $0.updatePeriod(changed) }
-    }
-}
-
-/// The side panel for the hour blocks: how many before school and after.
-struct BlocksEditor: View {
-    @ObservedObject var model: NotchModel
-    @ObservedObject var store: TimetableStore
-
-    var body: some View {
-        let table = store.timetable
-
-        VStack(alignment: .leading, spacing: 12) {
-            EditorHeader(title: "Hour blocks",
-                         detail: "For extracurriculars, before and after school",
-                         close: { model.timetableEdit = nil })
-            BlockCountRow(title: "Before school",
-                          detail: table.beforeSchool == 0 ? "None" : "From \(ClockTime.hour(max(0, table.schoolStart - table.beforeSchool * 60)))",
-                          count: table.beforeSchool, range: 0...Timetable.maxBefore,
-                          change: { count in store.change { $0.setBlocks(before: count) } })
-            BlockCountRow(title: "After school",
-                          detail: table.afterSchool == 0 ? "None" : "Until \(ClockTime.hour(min(24 * 60, table.schoolEnd + table.afterSchool * 60)))",
-                          count: table.afterSchool, range: 0...Timetable.maxAfter,
-                          change: { count in store.change { $0.setBlocks(after: count) } })
-            Text("They follow the school day: change when school starts or ends by clicking a period. Taking a block away keeps what was in it, for if you add it back.")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            HStack {
-                Spacer(minLength: 0)
-                PillButton(title: "Done", prominent: true, action: { model.timetableEdit = nil })
-            }
-        }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
     }
 }
 
@@ -1080,8 +1173,7 @@ struct TimetableToolTile: View {
                                       subject: lesson.subject, detail: [lesson.room, "until \(ClockTime.short(now.end))"]
                                           .filter { !$0.isEmpty }.joined(separator: " · "))
                         } else {
-                            ClassLine(label: "Now", colour: Theme.tertiary,
-                                      subject: now.period.isBreak ? now.period.name : "Free",
+                            ClassLine(label: "Now", colour: Theme.tertiary, subject: now.name,
                                       detail: "until \(ClockTime.short(now.end))")
                         }
                     }

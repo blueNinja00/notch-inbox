@@ -51,18 +51,15 @@ enum StudyPlanner {
     private static func slots(timetable: Timetable, now: Date, calendar: Calendar) -> [Slot] {
         var slots: [Slot] = []
         let today = calendar.startOfDay(for: now)
-        let rows = timetable.rows
         for offset in 0..<days {
             guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
             let dayIndex = Timetable.dayIndex(of: date, calendar: calendar)
             let week = timetable.week(of: date, calendar: calendar)
-            // Classes and activities take the times they run: their own, if they have them.
-            let entries = timetable.entries(day: dayIndex, week: week)
+            // Classes and activities take the times they run; on school days, so do breaks.
+            let events = timetable.events(day: dayIndex, week: week)
+            let breaks = dayIndex < 5 ? timetable.breaks : []
             func busy(_ from: Int, _ to: Int) -> Bool {
-                if dayIndex < 5 && rows.contains(where: { $0.isBreak && !$0.isActivity && $0.start < to && $0.end > from }) {
-                    return true
-                }
-                return entries.contains { $0.start < to && $0.end > from }
+                breaks.contains { $0.start < to && $0.end > from } || events.contains { $0.overlaps(from, to) }
             }
             // School days: from when school ends. Weekends: through the day.
             var hour = dayIndex < 5 ? timetable.schoolEnd : weekendStart

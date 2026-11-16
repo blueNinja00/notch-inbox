@@ -184,9 +184,9 @@ enum Tour {
                 kind: kind, symbol: "calendar", title: "Timetable",
                 summary: "Your school week. The primary menu shows the class you're in now and the one after.",
                 points: [
-                    .init(symbol: "square.and.pencil", text: "Click any slot to put a lesson or activity in it: subject, room and teacher."),
-                    .init(symbol: "calendar.badge.clock", text: "Week A and Week B, weekends, and hours before and after school are in Settings → Timetable."),
-                    .init(symbol: "book", text: "Study the planner has planned shows faintly in this week's empty slots."),
+                    .init(symbol: "square.and.pencil", text: "Click any time on a day to add a class or activity there, at whatever times it runs. Drag it to move it."),
+                    .init(symbol: "calendar.badge.clock", text: "Week A and Week B, weekends, and the hours shown are in Settings → Timetable."),
+                    .init(symbol: "book", text: "Study the planner has planned shows faintly in this week's free time."),
                     .init(symbol: "sparkles", text: "Or just ask the assistant: \"put Soccer on Tuesdays at 5\"."),
                 ],
                 action: .init(title: "Open the Timetable", target: .timetable))

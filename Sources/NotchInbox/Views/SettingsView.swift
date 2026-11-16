@@ -1214,9 +1214,9 @@ struct TimetableSettings: View {
         let table = store.timetable
 
         SettingsHeading(title: "Timetable",
-                        detail: "Your day from 6 am to 10 pm: school, and an hour block for each hour around it. Click a slot in the timetable to fill it in, or ask the assistant to. It's kept on this Mac.")
+                        detail: "Your week as a calendar: every class and activity at its own times, as many as you like. Click any time in the timetable to add one, drag it to move it, or ask the assistant. It's kept on this Mac.")
         SettingsRow(title: "School",
-                    detail: "\(ClockTime.long(table.schoolStart)) to \(ClockTime.long(table.schoolEnd)). Click School in the timetable to change its times.") {
+                    detail: "\(ClockTime.long(table.schoolStart)) to \(ClockTime.long(table.schoolEnd)). These are your bell times: click one beside the hours in the timetable to change it, and the classes on it move with it.") {
             ChoiceSegments(options: [
                 ChoiceSegments<Bool>.Option(value: true, title: "One block", help: "School as one block, 8 am to 4 pm"),
                 ChoiceSegments<Bool>.Option(value: false, title: "Periods", help: "Seven periods, recess and lunch, 8 am to 4 pm"),
@@ -1232,14 +1232,14 @@ struct TimetableSettings: View {
             })
         }
         VStack(alignment: .leading, spacing: 12) {
-            BlockCountRow(title: "Hour blocks before school",
-                          detail: table.beforeSchool == 0 ? "None" : "For extracurriculars from \(ClockTime.hour(max(0, table.schoolStart - table.beforeSchool * 60)))",
-                          count: table.beforeSchool, range: 0...Timetable.maxBefore,
-                          change: { count in store.change { $0.setBlocks(before: count) } })
-            BlockCountRow(title: "Hour blocks after school",
-                          detail: table.afterSchool == 0 ? "None" : "For extracurriculars until \(ClockTime.hour(min(24 * 60, table.schoolEnd + table.afterSchool * 60)))",
-                          count: table.afterSchool, range: 0...Timetable.maxAfter,
-                          change: { count in store.change { $0.setBlocks(after: count) } })
+            BlockCountRow(title: "The day starts at",
+                          detail: ClockTime.hour(table.dayStart) + (table.shownStart < table.dayStart ? " (earlier for what's on before then)" : ""),
+                          count: table.dayStart / 60, range: 0...23,
+                          change: { hour in store.change { $0.setDay(start: hour * 60) } })
+            BlockCountRow(title: "The day ends at",
+                          detail: ClockTime.hour(table.dayEnd % (24 * 60)) + (table.shownEnd > table.dayEnd ? " (later for what's on after then)" : ""),
+                          count: table.dayEnd / 60, range: 1...24,
+                          change: { hour in store.change { $0.setDay(end: hour * 60) } })
             SettingsToggle(title: "Saturday and Sunday",
                            detail: "For weekend sport, music and jobs.",
                            isOn: Binding(get: { store.timetable.weekends },
@@ -1262,8 +1262,8 @@ struct TimetableSettings: View {
             }
         }
         SettingsDivider()
-        SettingsRow(title: "Clear every lesson", detail: "Periods, times and hour blocks stay, ready for a new term.") {
-            PillButton(title: confirmClear ? "Click Again to Clear" : "Clear Lessons", prominent: confirmClear, action: {
+        SettingsRow(title: "Clear every class", detail: "Bell times and the hours shown stay, ready for a new term.") {
+            PillButton(title: confirmClear ? "Click Again to Clear" : "Clear Classes", prominent: confirmClear, action: {
                 if confirmClear {
                     store.change { $0.clearLessons() }
                     confirmClear = false

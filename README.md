@@ -14,7 +14,13 @@ Paste this into Terminal (macOS 13 Ventura or later):
 pkill -x NotchInbox; curl -fL --retry 4 --retry-delay 3 -o /tmp/NotchInbox.zip https://github.com/blueNinja00/notch-inbox/releases/latest/download/NotchInbox.zip && rm -rf "/Applications/Notch Inbox.app" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
 ```
 
-It downloads the newest build that has been released to everyone, puts **Notch Inbox** in your Applications folder (replacing any copy already there, after quitting it) and starts it. GitHub sometimes answers a download with a server error; it tries again a few times. To have it start when you log in, add it under **System Settings → General → Login Items**.
+It downloads the newest build that has been released to everyone, puts **Notch Inbox** in your Applications folder (replacing any copy already there, after quitting it) and starts it. To try the newest **test build** instead (see [below](#test-builds-and-releasing-to-everyone)), use this one; it asks GitHub for the newest build that has finished building:
+
+```sh
+pkill -x NotchInbox; B=$(curl -fsSL "https://api.github.com/repos/blueNinja00/notch-inbox/actions/workflows/release.yml/runs?per_page=1&status=success" | grep -o '"run_number": *[0-9]*' | head -1 | grep -o '[0-9]*$') && echo "Installing build $B" && curl -fL --retry 4 --retry-delay 3 -o /tmp/NotchInbox.zip "https://github.com/blueNinja00/notch-inbox/releases/download/build-$B/NotchInbox.zip" && rm -rf "/Applications/Notch Inbox.app" && ditto -x -k /tmp/NotchInbox.zip /Applications && open "/Applications/Notch Inbox.app"
+```
+
+Then switch on **Settings → Updates → Get test builds** to keep being offered them. GitHub sometimes answers a download with a server error; it tries again a few times. To have it start when you log in, add it under **System Settings → General → Login Items**.
 
 ## Link your Gmail
 
@@ -103,7 +109,7 @@ Click the gear at the top right of the open notch. Settings open inside the notc
 - **Assistant:** who answers (below), which Claude model, and a switch for each thing it may see and do: look things up on the web, your timetable, your planner, your assignments and marks, your bookmarks, handing jobs to agents, and your newest emails and notes. Then your saved [chats](#your-chats), the [usage](#usage) count and the daily cap for agents, [typing into your documents](#typing-into-your-documents) and the permission macOS wants for it, and the [agents](#agents): how many work at once, whether they use the web, the chime, and the folders they may read.
 - **Timetable:** school as one block or periods, the hours shown, weekends, Week A and Week B, and clearing every class for a new term.
 - **Extras:** switches for now playing, the focus timer (and its lengths), clipboard history, the shelf, and volume and brightness at the notch (with **Keep them beside the notch** and **Hide macOS's own pop-up**).
-- **Shortcuts:** the keys for the Agents room and for getting around the notch, each one yours to [change](#shortcuts).
+- **Shortcuts:** ⌃⌥N opens the notch from any app, plus keys for the Agents room and for getting around the notch, each one yours to [change](#shortcuts).
 - **Planner:** whether Google Classroom emails add homework, whether the assistant looks for due dates in your other emails (off to start with for Claude), planning study time, and clearing finished homework.
 - **Gmail link:** whether the browser add-on is working, set it up, show its folder, and **Copy Debug Info** (counts and addresses only, never what your emails say).
 - **Updates:** your build, checking and installing, whether this Mac gets test builds, and releasing a build to everyone.
@@ -181,7 +187,9 @@ Under the hood each agent is `claude -p` with only the web and file tools switch
 
 ## Shortcuts
 
-The Agents room has keys for everything in it, and **Settings → Shortcuts** lets you change every one. They work while the notch is open and you've clicked in it, even while you're typing a task. The keyboard button at the top right of the Agents room opens the list.
+**⌃⌥N opens the notch from any app**, even while it's closed: the primary menu opens on the screen the pointer is on, ready for your keys, and the app you were in stays in front. Press it again, or Esc, to close it. Give the tools keys too (below) and you can go straight from any app to one: ⌃⌥N, then ⌘1 for Mail, say. Change it in **Settings → Shortcuts → From any app**; it needs ⌃, or ⌘ and ⌥ together (or an F-key): ⌘ by itself would take ⌘N or ⌘S from every other app, and macOS doesn't allow ⌥ by itself for a key like this. If another app already uses the key you pick, Settings says so.
+
+The Agents room has keys for everything in it, and **Settings → Shortcuts** lets you change every one. They work while the notch is open and you've clicked in it (or opened it with ⌃⌥N), even while you're typing a task. The keyboard button at the top right of the Agents room opens the list.
 
 | Key | What it does |
 |---|---|
@@ -203,7 +211,7 @@ The Agents room has keys for everything in it, and **Settings → Shortcuts** le
 - **Change a key:** click it in Settings → Shortcuts and press the keys you want. It has to include ⌘, ⌃ or ⌥ (or be an F-key), so that it can't be typed by accident; the keys for cut, copy, paste, select all, undo and ⌘Q can't be used. Esc gives up, and Delete takes the key off. If another shortcut had those keys, it loses them, and Settings says so. The arrow beside a changed key puts it back; **Put Them All Back** resets the lot.
 - **Going places:** the same page has shortcuts for the primary menu, each tool and Settings. They come with no key; give the ones you want a key and they work anywhere in the open notch.
 - **Keys that also edit text:** ⌘⌫ and ⌘ or ⌥ with an arrow are left to the text while there's something typed in the box you're in, so ⌘⌫ still clears a line you're writing.
-- Shortcuts are for the open notch only: nothing is listened for while the notch is closed or another app is in front.
+- Apart from the key that opens the notch, shortcuts are for the open notch only. That one key is registered with macOS as a hot key, so macOS tells the app when it's pressed and about nothing else: the app doesn't watch your typing, and it needs no Accessibility permission.
 
 ## The tour
 
@@ -314,7 +322,7 @@ A row under the primary menu's tiles. Click any of them for the **Extras** panel
 - **Now playing:** the song in Spotify or Music, with previous, play or pause, and next. What's playing comes from the notices those apps post when it changes, so it appears the next time the song changes or you press play. The first time you press a button, macOS asks whether Notch Inbox may control that app (say OK); because each update is a new build, it may ask again after one. It never starts a music app, and nothing is looked up online.
 - **Focus timer:** press play for a round of focus (25 minutes, or 15, 45 or 50), then a break (5, 10 or 15). The minutes left show beside the closed notch; when time's up there's a chime and the notch opens. In the planner, point at a stretch in the Plan and click its timer to focus on that for as long as it's planned; afterwards one click ticks the homework off.
 - **Clipboard history:** the last 30 things you copied; click one to copy it again. They're held in memory only: never saved to disk, never sent anywhere, never shown to the assistant, and gone when the app quits. Copies that password managers mark as private are skipped, and **Clear** forgets the lot.
-- **Shelf:** drag files to the notch (it opens as you get there) and drop them to park them. Later, drag them out to wherever they're going: an email, a folder, a chat. **AirDrop** sends everything on the shelf. The shelf keeps a pointer to each file, not a copy, and forgets files that have since been moved or deleted.
+- **Shelf:** drag files to the notch (it opens as you get there) and drop them to park them. Later, drag them out to wherever they're going: an email (Gmail's attach area in the browser too), a folder, a chat. Drag a file's icon, or on the primary menu drag the shelf's tray icon to take every file at once (the notch stays open until you drop them); in the Extras panel, **Drag All** does the same. Dropped files are copied or attached, never moved. **AirDrop** sends everything on the shelf. The shelf keeps a pointer to each file, not a copy, and forgets files that have since been moved or deleted.
 - **Volume and brightness:** two small gauges sit beside the closed notch all the time: the volume on the left, the brightness on the right, each a symbol over a short bar (**Settings → Extras → Keep them beside the notch** turns that off). Change either one (with the keyboard's keys, Control Centre or anything else) and the notch shows it bigger for a moment: a speaker or a sun on the left, a bar on the right. The Extras panel has a slider for each, and clicking the speaker mutes. This needs no permission. Volume is whatever output you're using; an output with no volume of its own (some screens) says so. Brightness is this Mac's own screen, read and set through a framework of macOS's own that isn't part of its public kit, so if a future macOS changes it, brightness simply stops showing. To notice brightness changing, the app asks macOS for it about three times a second. Nothing shows while the notch is minimised to the mail tab.
 - **Hide macOS's own pop-up** (off to start with): the notch takes over the volume, mute and brightness keys and changes them itself, in the same sixteen steps (quarter steps with Shift and Option), so macOS's pop-up doesn't appear as well. Only those keys are looked at; every other key passes untouched. It needs the same Accessibility permission as [typing into your documents](#typing-into-your-documents), and macOS asks again after each update; until it's allowed, the keys work as usual and both show. With a second screen plugged in, the brightness keys are left to macOS.
 
@@ -347,7 +355,7 @@ open "build/Notch Inbox.app"
 | `NowPlaying.swift`, `NowPlayingWatcher.swift` | What Spotify or Music is playing, and the buttons |
 | `FocusTimer.swift` | The focus timer |
 | `ClipboardHistory.swift`, `ClipboardWatcher.swift` | The last things you copied, in memory only |
-| `Shelf.swift`, `Views/ExtrasView.swift` | The shelf for parked files; the extras row and panel |
+| `Shelf.swift`, `Views/ExtrasView.swift`, `Views/FileDrag.swift` | The shelf for parked files; the extras row and panel; dragging files out the way Finder does |
 | `Assistant.swift`, `AssistantEngines.swift`, `AssistantPrompt.swift`, `ClaudeCode.swift` | The assistant: Claude through Claude Code or the API, or Qwen through Ollama |
 | `Chats.swift` | Your chats with the assistant: several of them, kept between launches |
 | `Usage.swift` | The count of what the notch has used: reading it from Claude Code, totals by day, and the daily cap |
@@ -358,6 +366,7 @@ open "build/Notch Inbox.app"
 | `Levels.swift`, `SystemLevels.swift`, `MediaKeyTap.swift` | Volume and brightness: reading and setting them, deciding when to show them at the notch, and taking over their keys |
 | `Agents.swift`, `AgentGroups.swift`, `AgentRunner.swift`, `Views/AgentsView.swift`, `Views/AgentGroupsView.swift` | Agents: their jobs and groups, running each one with Claude Code and reading what it does, drawing reports, and the agent room |
 | `Keybinds.swift`, `Views/ShortcutsView.swift` | Shortcuts: what each key does, and changing them |
+| `GlobalHotKey.swift` | The key that opens the notch from any app (a macOS hot key) |
 | `BrowserOpener.swift`, `BrowserProfiles.swift`, `Views/LinkPlacesView.swift` | Opens Gmail and links in Chrome rather than the default browser, in the profile the inbox is signed in to: reading Chrome's list of profiles, matching an inbox to one, and the choice in Settings |
 | `NotchPanel.swift` | The window at the notch; hover, click and keyboard handling |
 | `NotchPlacement.swift`, `Layout.swift` | Finds the notch and sizes each level |

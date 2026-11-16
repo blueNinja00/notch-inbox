@@ -452,7 +452,7 @@ final class AppSettings: ObservableObject {
     /// Gives an action a key, and says what happened (or why the key can't be used).
     @discardableResult
     func setKey(_ combo: KeyCombo, for action: KeyAction) -> String {
-        if let problem = combo.problem {
+        if let problem = combo.problem(for: action) {
             return problem
         }
         var binds = keybinds
@@ -479,6 +479,10 @@ final class AppSettings: ObservableObject {
     func resetKeys() {
         keybinds = Keybinds()
     }
+
+    /// Why the key that opens the notch from any app isn't working, if it isn't (another
+    /// app has it, say). Not kept: it's found out again each time the app starts.
+    @Published var globalKeyProblem: String?
 
     /// Whether an agent the assistant started sends its report back to the chat it was
     /// started from when it finishes.

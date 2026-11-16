@@ -317,6 +317,13 @@ struct ShelfChip: View {
 
         HStack(spacing: 8) {
             ChipIcon(symbol: "tray.and.arrow.down", tint: targeted ? Theme.text : Theme.secondary)
+                .overlay {
+                    if !items.isEmpty {
+                        FileDragArea(urls: { store.items.map { $0.url } }, click: { model.openExtras() },
+                                     started: { model.draggingFiles = true }, ended: { model.draggingFiles = false },
+                                     tip: ShelfChip.dragAllTip(items.count))
+                    }
+                }
             if items.isEmpty {
                 Text(targeted ? "Drop to park it here" : "Drop files here")
                     .font(.system(size: 12))
@@ -325,7 +332,7 @@ struct ShelfChip: View {
             } else {
                 HStack(spacing: 4) {
                     ForEach(items.prefix(5)) { item in
-                        ShelfIcon(item: item, size: 24)
+                        ShelfIcon(model: model, item: item, size: 24)
                     }
                 }
                 if items.count > 5 {
@@ -344,10 +351,17 @@ struct ShelfChip: View {
         }
         .help("Drop files here to park them, then drag them out where they're going")
     }
+
+    static func dragAllTip(_ count: Int) -> String {
+        count == 1 ? "Drag to take the file on the shelf wherever it's going · click to open the shelf"
+                   : "Drag to take all \(count) files on the shelf at once · click to open the shelf"
+    }
 }
 
-/// A file's icon, which you can drag out to wherever the file is going.
+/// A file's icon on the primary menu: drag it out to wherever the file is going (the notch
+/// stays open until it's dropped); click it to open the shelf.
 struct ShelfIcon: View {
+    @ObservedObject var model: NotchModel
     let item: ShelfItem
     var size: CGFloat = 24
 
@@ -356,8 +370,11 @@ struct ShelfIcon: View {
             .resizable()
             .interpolation(.high)
             .frame(width: size, height: size)
-            .onDrag { NSItemProvider(object: item.url as NSURL) }
-            .help(item.name)
+            .overlay {
+                FileDragArea(urls: { [item.url] }, click: { model.openExtras() },
+                             started: { model.draggingFiles = true }, ended: { model.draggingFiles = false },
+                             tip: "\(item.name) · drag it to where it's going")
+            }
     }
 }
 
@@ -443,6 +460,7 @@ struct ShelfPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             PanelHeading(symbol: "tray.and.arrow.down", title: items.isEmpty ? "Shelf" : "Shelf · \(items.count)") {
                 if !items.isEmpty {
+                    DragAllPill(urls: { store.items.map { $0.url } }, count: items.count)
                     SmallPill(title: "AirDrop", symbol: "dot.radiowaves.left.and.right", action: { ShelfPanel.airDrop(items) })
                         .help("Send everything on the shelf by AirDrop")
                     SmallPill(title: "Clear", symbol: "xmark", action: { store.clear() })
@@ -498,31 +516,41 @@ struct ShelfPanel: View {
     }
 }
 
-/// One file on the shelf: drag it out, double-click to open it.
+/// One file on the shelf: drag it out (from its icon or name), double-click to open it,
+/// right-click for more.
 struct ShelfRow: View {
     let item: ShelfItem
     let remove: () -> Void
     @State var hovering = false
+    @State var overFile = false
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 26, height: 26)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(item.name)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Theme.text2)
-                    .truncationMode(.middle)
-                Text(ShelfRow.folder(of: item.url))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
-                    .truncationMode(.head)
+        HStack(spacing: 4) {
+            HStack(spacing: 9) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 26, height: 26)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.name)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.text2)
+                        .truncationMode(.middle)
+                    Text(ShelfRow.folder(of: item.url))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.tertiary)
+                        .truncationMode(.head)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 4)
             }
-            .lineLimit(1)
-            Spacer(minLength: 4)
-            if hovering {
+            .frame(maxHeight: .infinity)
+            .overlay {
+                FileDragArea(urls: { [item.url] }, doubleClick: { NSWorkspace.shared.open(item.url) },
+                             menu: { ShelfRow.menu(for: item, remove: remove) }, hover: { overFile = $0 },
+                             tip: "Drag it to where it's going · double-click to open it")
+            }
+            if hovering || overFile {
                 IconButton(symbol: "magnifyingglass", label: "Show in Finder", size: 24, tint: Theme.secondary,
                            action: { NSWorkspace.shared.activateFileViewerSelecting([item.url]) })
                 IconButton(symbol: "xmark", label: "Take off the shelf", size: 24, tint: Theme.tertiary, action: remove)
@@ -530,22 +558,23 @@ struct ShelfRow: View {
         }
         .padding(.horizontal, 7)
         .frame(height: 38)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hovering ? Theme.hover.opacity(0.6) : Color.clear))
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(hovering || overFile ? Theme.hover.opacity(0.6) : Color.clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
-        .onDrag { NSItemProvider(object: item.url as NSURL) }
-        .contextMenu {
-            Button("Open") { NSWorkspace.shared.open(item.url) }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-            Button("Copy Its Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(item.url.path, forType: .string)
-            }
-            Divider()
-            Button("Take Off the Shelf", action: remove)
-        }
-        .help("Drag it to where it's going · double-click to open it")
+    }
+
+    /// A file's right-click menu.
+    static func menu(for item: ShelfItem, remove: @escaping () -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ActionMenuItem("Open") { NSWorkspace.shared.open(item.url) })
+        menu.addItem(ActionMenuItem("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) })
+        menu.addItem(ActionMenuItem("Copy Its Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(item.url.path, forType: .string)
+        })
+        menu.addItem(.separator())
+        menu.addItem(ActionMenuItem("Take Off the Shelf", handler: remove))
+        return menu
     }
 
     /// "~/Desktop", "~/Documents/School".
@@ -553,6 +582,31 @@ struct ShelfRow: View {
         let path = url.deletingLastPathComponent().path
         let home = NSHomeDirectory()
         return path.hasPrefix(home) ? "~" + String(path.dropFirst(home.count)) : path
+    }
+}
+
+/// In the shelf's heading: drag it to take every file on the shelf at once.
+struct DragAllPill: View {
+    let urls: () -> [URL]
+    let count: Int
+    @State var hovering = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "hand.draw")
+                .font(.system(size: 10, weight: .semibold))
+            Text("Drag All")
+                .font(.system(size: 11.5, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.text2)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(Capsule().fill(hovering ? Theme.hover : Theme.raised))
+        .overlay {
+            FileDragArea(urls: urls, hover: { hovering = $0 },
+                         tip: count == 1 ? "Drag the file somewhere" : "Drag all \(count) files somewhere at once: an email, a folder, a chat")
+        }
     }
 }
 

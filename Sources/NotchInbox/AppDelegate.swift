@@ -100,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let panelSizesKey = "panelSizes"
 
     private var subscriptions = Set<AnyCancellable>()
+    /// The key that opens the notch from any app (Settings → Shortcuts).
+    private let notchKey = GlobalHotKey()
 
     /// Set when you ask for an update check or install, so the notch can say how it went.
     private var userAskedForUpdate = false
@@ -196,6 +198,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.syncScreens()
         }
+
+        // The key that opens the notch from any app, set up again whenever it's changed.
+        notchKey.onPress = { [weak self] in
+            self?.notchKeyPressed()
+        }
+        settings.$keybinds
+            .map { $0.combo(for: .openNotch) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] combo in self?.useNotchKey(combo) }
+            .store(in: &subscriptions)
 
         updater.$state
             .receive(on: DispatchQueue.main)
@@ -1923,9 +1936,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The notch on the screen you're using: where the pointer is, or the mail tab's screen.
     private func notchNearPointer() -> NotchModel? {
+        controllerNearPointer()?.model
+    }
+
+    private func controllerNearPointer() -> NotchWindowController? {
         let mouse = NSEvent.mouseLocation
-        let target = screens.values.first(where: { $0.screen.frame.contains(mouse) }) ?? screens.values.first
-        return target?.model
+        return screens.values.first(where: { $0.screen.frame.contains(mouse) }) ?? screens.values.first
+    }
+
+    // MARK: The key that opens the notch
+
+    private func useNotchKey(_ combo: KeyCombo?) {
+        let problem = notchKey.register(combo)
+        if settings.globalKeyProblem != problem {
+            settings.globalKeyProblem = problem
+        }
+    }
+
+    /// Opens the primary menu on the screen the pointer is on, ready for your keys, or
+    /// closes the notch if it's open. While a shortcut is being set in Settings, the key
+    /// is taken as that shortcut instead (macOS hands it here before the notch sees it).
+    private func notchKeyPressed() {
+        if let recording = screens.values.first(where: { $0.model.recordingKey != nil }),
+           let combo = settings.keybinds.combo(for: .openNotch) {
+            recording.record(combo)
+            return
+        }
+        let open = screens.values.filter { $0.model.level != .rest }
+        if !open.isEmpty {
+            open.forEach { $0.model.close() }
+            return
+        }
+        guard let controller = controllerNearPointer() else { return }
+        controller.model.goHome()
+        controller.takeKeyboard()
     }
 
     @objc private func openFromMenu() {

@@ -8,7 +8,7 @@ struct ShortcutSettings: View {
 
     var body: some View {
         SettingsHeading(title: "Shortcuts",
-                        detail: "Keys that work while the notch is open and you've clicked in it. To change one, click its key and press the keys you want: something with ⌘, ⌃ or ⌥, or an F-key. Esc gives up, and Delete takes the key off.")
+                        detail: "One key opens the notch from any app. The rest work while the notch is open and you've clicked in it (or opened it with its key). To change one, click its key and press the keys you want: something with ⌘, ⌃ or ⌥, or an F-key. Esc gives up, and Delete takes the key off.")
         if let note = model.keyNote {
             Text(note)
                 .font(.system(size: 12, weight: .medium))
@@ -52,6 +52,9 @@ struct ShortcutList: View {
                 .foregroundStyle(Theme.text2)
                 .padding(.top, 4)
             SettingsDetail(text: scope.detail)
+            if scope == .global, let problem = settings.globalKeyProblem {
+                StatusLine(state: .problem, text: problem)
+            }
             VStack(spacing: 0) {
                 ForEach(scope.actions) { action in
                     ShortcutRow(title: action.title, key: settings.keybinds.label(for: action),

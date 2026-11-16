@@ -158,10 +158,30 @@ struct KeyCombo: Codable, Hashable {
         }
         return nil
     }
+
+    /// Why this can't be an action's key, or nil if it can. A key that works from any app
+    /// also needs ⌃, or ⌘ and ⌥ together (or to be an F-key): ⌘ by itself would take ⌘N or
+    /// ⌘S from every other app, and macOS doesn't let ⌥ by itself be one.
+    func problem(for action: KeyAction) -> String? {
+        if let problem = problem {
+            return problem
+        }
+        if action.scope == .global && !control && !(command && option) && !KeyCombo.functionKeys.contains(code) {
+            return "A key that works from any app needs ⌃, or ⌘ and ⌥ together (or to be an F-key). ⌘ by itself would take a shortcut other apps use, and macOS doesn't allow ⌥ by itself."
+        }
+        return nil
+    }
+
+    /// The same keys as macOS's older keyboard calls want them: ⌘ 256, ⇧ 512, ⌥ 2048, ⌃ 4096.
+    var carbonModifiers: UInt32 {
+        (command ? 256 : 0) | (shift ? 512 : 0) | (option ? 2048 : 0) | (control ? 4096 : 0)
+    }
 }
 
 /// Something a shortcut can do.
 enum KeyAction: String, CaseIterable, Codable, Identifiable {
+    // From any app, even with the notch closed.
+    case openNotch
     // In the agent room.
     case newTask
     case startAll
@@ -197,6 +217,8 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
 
     /// Where a shortcut works.
     enum Scope: String, CaseIterable {
+        /// In every app, even while the notch is closed.
+        case global
         /// While the agent room is showing.
         case agents
         /// Wherever you are in the open notch.
@@ -204,6 +226,7 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
 
         var title: String {
             switch self {
+            case .global: return "From any app"
             case .agents: return "In the Agents room"
             case .anywhere: return "Anywhere in the notch"
             }
@@ -211,8 +234,9 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
 
         var detail: String {
             switch self {
+            case .global: return "Works in every app, even while the notch is closed. It opens the primary menu on the screen the pointer is on, ready for your keys; press it again (or Esc) to close it. It needs ⌃, or ⌘ and ⌥ together (or an F-key)."
             case .agents: return "These work while the Agents room is open, even while you're typing a task."
-            case .anywhere: return "These work wherever you are, once you've clicked in the open notch. None has a key until you give it one."
+            case .anywhere: return "These work wherever you are, once you've clicked in the open notch or opened it with its key. None has a key until you give it one."
             }
         }
 
@@ -221,6 +245,8 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
 
     var scope: Scope {
         switch self {
+        case .openNotch:
+            return .global
         case .goHome, .goMail, .goPlanner, .goTimetable, .goAssignments, .goNotes, .goAssistant, .goAgents, .goBookmarks, .goSettings:
             return .anywhere
         default:
@@ -230,6 +256,7 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
 
     var title: String {
         switch self {
+        case .openNotch: return "Open or close the notch"
         case .newTask: return "New task"
         case .startAll: return "Start all in the group"
         case .stopAll: return "Stop all in the group"
@@ -274,6 +301,7 @@ enum KeyAction: String, CaseIterable, Codable, Identifiable {
     /// Its key until you change it. The ones that go somewhere start with none.
     var standard: KeyCombo? {
         switch self {
+        case .openNotch: return KeyCombo.standard("N", command: false, control: true, option: true)
         case .newTask: return KeyCombo.standard("N")
         case .startAll: return KeyCombo.standard(code: KeyCombo.returnKey)
         case .stopAll: return KeyCombo.standard(".")
@@ -314,7 +342,7 @@ struct Keybinds: Codable, Equatable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let saved = (try? values.decodeIfPresent([String: KeyCombo].self, forKey: .changed)) ?? [:]
         // (Only actions there still are, with keys that can still be shortcuts.)
-        changed = saved.filter { KeyAction(rawValue: $0.key) != nil && $0.value.problem == nil }
+        changed = saved.filter { entry in KeyAction(rawValue: entry.key).map { entry.value.problem(for: $0) == nil } ?? false }
         cleared = ((try? values.decodeIfPresent([String].self, forKey: .cleared)) ?? []).filter { KeyAction(rawValue: $0) != nil && changed[$0] == nil }
     }
 
@@ -348,9 +376,10 @@ struct Keybinds: Codable, Equatable {
         KeyAction.allCases.first { self.combo(for: $0) == combo }
     }
 
-    /// What a pressed key does. A shortcut for the agent room only counts there.
+    /// What a pressed key does. A shortcut for the agent room only counts there. The key
+    /// that works from any app isn't one of these: macOS hands it to the app itself.
     func action(for combo: KeyCombo, inAgents: Bool) -> KeyAction? {
-        guard let action = owner(of: combo) else { return nil }
+        guard let action = owner(of: combo), action.scope != .global else { return nil }
         return action.scope == .agents && !inAgents ? nil : action
     }
 
@@ -358,7 +387,7 @@ struct Keybinds: Codable, Equatable {
     /// Nothing changes for a key that can't be a shortcut.
     @discardableResult
     mutating func set(_ combo: KeyCombo, for action: KeyAction) -> KeyAction? {
-        guard combo.problem == nil else { return nil }
+        guard combo.problem(for: action) == nil else { return nil }
         let before = owner(of: combo)
         if let other = before, other != action {
             clear(other)

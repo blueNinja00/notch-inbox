@@ -318,13 +318,15 @@ final class NotchModel: ObservableObject {
 
     /// What the timetable's side panel is editing.
     enum TimetableEdit: Equatable {
-        case lesson(Timetable.Slot)
+        /// A class or activity.
+        case event(UUID)
+        /// One of the school day's bell times.
         case period(UUID)
     }
 
     @Published var timetableEdit: TimetableEdit? {
         didSet {
-            // Finished with a lesson: trim what was typed and drop anything left blank.
+            // Finished with a class: trim what was typed and drop anything left blank.
             if oldValue != nil && oldValue != timetableEdit {
                 timetableStore?.change { $0.tidy() }
             }
@@ -1518,10 +1520,25 @@ final class NotchModel: ObservableObject {
         level = .detail
     }
 
-    /// Click a lesson (or an empty slot) to edit it; click it again to stop.
-    func editLesson(day: Int, period: UUID) {
-        let slot = Timetable.Slot(week: timetableWeek, day: day, period: period)
-        timetableEdit = timetableEdit == .lesson(slot) ? nil : .lesson(slot)
+    /// Click a class to edit it; click it again to stop.
+    func editEvent(_ id: UUID) {
+        timetableEdit = timetableEdit == .event(id) ? nil : .event(id)
+    }
+
+    /// Click an empty time on a day: a new class there (on the period it falls in, or an
+    /// hour from that quarter hour), opened to be named. One left without a name is
+    /// dropped when you finish.
+    @discardableResult
+    func addEvent(day: Int, at minute: Int) -> UUID? {
+        guard let store = timetableStore else { return nil }
+        // (Finish with what was open first, so that tidying it doesn't take the new one.)
+        timetableEdit = nil
+        let times = store.timetable.newTimes(day: day, at: minute)
+        var added: Timetable.Event?
+        store.change { added = $0.addEvent(day: day, week: timetableWeek, start: times.start, end: times.end) }
+        guard let event = added else { return nil }
+        timetableEdit = .event(event.id)
+        return event.id
     }
 
     func editPeriod(_ id: UUID) {

@@ -413,7 +413,7 @@ struct DayColumn: View {
         if let today = today {
             isPast = day < today || (isToday && event.end <= minute)
         }
-        return EventBlock(event: event, colour: Theme.subject(table.colour(for: event.subject)),
+        return EventBlock(event: event, colour: Theme.subject(event.subject, in: table),
                           width: max(10, laneWidth - 2), height: max(14, CGFloat(event.minutes) * layout.scale), layout: layout,
                           isNow: isToday && event.contains(minute), isPast: isPast,
                           selected: model.timetableEdit == .event(event.id),
@@ -729,7 +729,7 @@ struct SubjectSuggestions: View {
         ScrollView(.horizontal) {
             HStack(spacing: 5) {
                 ForEach(names, id: \.self) { name in
-                    PinChip(title: name, tint: Theme.subject(table.colour(for: name)), selected: false, action: { pick(name) })
+                    PinChip(title: name, tint: Theme.subject(name, in: table), selected: false, action: { pick(name) })
                 }
             }
         }
@@ -741,22 +741,160 @@ struct SubjectSuggestions: View {
 struct SubjectColours: View {
     @ObservedObject var store: TimetableStore
     let subject: String
+    @State var picking = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<Timetable.colourCount, id: \.self) { index in
-                let chosen = store.timetable.colour(for: subject) == index
+        let table = store.timetable
+        let custom = table.customColour(for: subject)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(0..<Timetable.colourCount, id: \.self) { index in
+                    let chosen = custom == nil && table.colour(for: subject) == index
+                    Circle()
+                        .fill(Theme.subject(index))
+                        .frame(width: 16, height: 16)
+                        .overlay(Circle().strokeBorder(Theme.text, lineWidth: chosen ? 2 : 0).padding(-3))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Circle())
+                        .onTapGesture {
+                            store.change { $0.setColour(index, for: subject) }
+                            picking = false
+                        }
+                        .help("Colour for every \(subject) class")
+                }
+                // Any colour: shows yours once you've picked one, a rainbow until then.
                 Circle()
-                    .fill(Theme.subject(index))
+                    .fill(custom.map { AnyShapeStyle(Color(hex: $0)) } ?? AnyShapeStyle(SubjectColourPicker.rainbow))
                     .frame(width: 16, height: 16)
-                    .overlay(Circle().strokeBorder(Theme.text, lineWidth: chosen ? 2 : 0).padding(-3))
+                    .overlay(Circle().strokeBorder(Theme.text, lineWidth: custom != nil || picking ? 2 : 0).padding(-3))
                     .frame(width: 20, height: 20)
                     .contentShape(Circle())
-                    .onTapGesture { store.change { $0.setColour(index, for: subject) } }
-                    .help("Colour for every \(subject) class")
+                    .onTapGesture { withAnimation(Theme.spring) { picking.toggle() } }
+                    .help("Any colour for every \(subject) class")
+            }
+            if picking {
+                SubjectColourPicker(store: store, subject: subject)
+                    .id(Timetable.subjectKey(subject))
+                    .transition(.opacity)
             }
         }
         .padding(.leading, 2)
+    }
+}
+
+/// Any colour for a subject, right in the notch: a square for how strong and how bright,
+/// a strip for the hue, and its hex code to type or copy. The classes change as you drag.
+struct SubjectColourPicker: View {
+    @ObservedObject var store: TimetableStore
+    let subject: String
+    @State private var hue: Double
+    @State private var saturation: Double
+    @State private var brightness: Double
+    @State private var typed: String
+
+    static var rainbow: AngularGradient {
+        AngularGradient(gradient: Gradient(colors: (0...6).map { Double($0) / 6 }.map {
+            Color(hue: $0, saturation: 0.75, brightness: 1)
+        }), center: .center)
+    }
+
+    init(store: TimetableStore, subject: String) {
+        self.store = store
+        self.subject = subject
+        let rgb = store.timetable.rgb(for: subject)
+        let (h, s, b) = SubjectColour.hsb(rgb)
+        _hue = State(initialValue: h)
+        _saturation = State(initialValue: s)
+        _brightness = State(initialValue: b)
+        _typed = State(initialValue: SubjectColour.text(rgb))
+    }
+
+    private var rgb: UInt32 {
+        SubjectColour.rgb(hue: hue, saturation: saturation, brightness: brightness)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GeometryReader { box in
+                ZStack {
+                    LinearGradient(colors: [.white, Color(hue: hue, saturation: 1, brightness: 1)], startPoint: .leading, endPoint: .trailing)
+                    // Down to the darkest a class can be and still be read on black.
+                    LinearGradient(colors: [.clear, .black.opacity(1 - SubjectColour.darkest)], startPoint: .top, endPoint: .bottom)
+                    Circle()
+                        .strokeBorder(.white, lineWidth: 2)
+                        .background(Circle().fill(Color(hex: rgb)))
+                        .frame(width: 14, height: 14)
+                        .shadow(color: .black.opacity(0.4), radius: 2)
+                        .position(x: saturation * box.size.width,
+                                  y: (1 - (brightness - SubjectColour.darkest) / (1 - SubjectColour.darkest)) * box.size.height)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                    saturation = min(max(drag.location.x / max(box.size.width, 1), 0), 1)
+                    let down = min(max(drag.location.y / max(box.size.height, 1), 0), 1)
+                    brightness = SubjectColour.darkest + (1 - SubjectColour.darkest) * (1 - down)
+                    use()
+                })
+            }
+            .frame(height: 84)
+            GeometryReader { strip in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(LinearGradient(colors: (0...6).map { Double($0) / 6 }.map {
+                        Color(hue: $0, saturation: 1, brightness: 1)
+                    }, startPoint: .leading, endPoint: .trailing))
+                    Circle()
+                        .strokeBorder(.white, lineWidth: 2)
+                        .background(Circle().fill(Color(hue: hue, saturation: 1, brightness: 1)))
+                        .frame(width: 14, height: 14)
+                        .shadow(color: .black.opacity(0.4), radius: 2)
+                        .offset(x: hue * max(strip.size.width - 14, 0))
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
+                    hue = min(max((drag.location.x - 7) / max(strip.size.width - 14, 1), 0), 0.999)
+                    use()
+                })
+            }
+            .frame(height: 14)
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color(hex: rgb))
+                    .frame(width: 20, height: 20)
+                TextField("#5E9EFF", text: $typed)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Theme.raised))
+                    .onSubmit(useTyped)
+                    .onChange(of: typed) { _ in
+                        if typed.count >= 6 || (typed.hasPrefix("#") && typed.count == 7) {
+                            useTyped()
+                        }
+                    }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.lane))
+    }
+
+    private func use() {
+        let colour = rgb
+        typed = SubjectColour.text(colour)
+        store.change { $0.setCustomColour(colour, for: subject) }
+    }
+
+    private func useTyped() {
+        guard let parsed = SubjectColour.parse(typed) else { return }
+        let colour = SubjectColour.readable(parsed)
+        guard colour != store.timetable.customColour(for: subject) else { return }
+        let (h, s, b) = SubjectColour.hsb(colour)
+        hue = h
+        saturation = s
+        brightness = b
+        store.change { $0.setCustomColour(colour, for: subject) }
     }
 }
 
@@ -1169,7 +1307,7 @@ struct TimetableToolTile: View {
                 } else {
                     if let now = now {
                         if let lesson = now.lesson, !lesson.subject.trimmingCharacters(in: .whitespaces).isEmpty {
-                            ClassLine(label: "Now", colour: Theme.subject(table.colour(for: lesson.subject)),
+                            ClassLine(label: "Now", colour: Theme.subject(lesson.subject, in: table),
                                       subject: lesson.subject, detail: [lesson.room, "until \(ClockTime.short(now.end))"]
                                           .filter { !$0.isEmpty }.joined(separator: " · "))
                         } else {
@@ -1178,7 +1316,7 @@ struct TimetableToolTile: View {
                         }
                     }
                     if let next = next, let lesson = next.moment.lesson {
-                        ClassLine(label: "Next", colour: Theme.subject(table.colour(for: lesson.subject)),
+                        ClassLine(label: "Next", colour: Theme.subject(lesson.subject, in: table),
                                   subject: lesson.subject,
                                   detail: [lesson.room, TimetableToolTile.when(next.date, now: context.date)]
                                       .filter { !$0.isEmpty }.joined(separator: " · "))

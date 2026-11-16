@@ -879,6 +879,25 @@ struct EventDays: View {
     }
 }
 
+/// A hairline with a small label, between parts of a list (the Planner uses it).
+struct SectionLine: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label.uppercased())
+                .font(.system(size: 8.5, weight: .heavy))
+                .tracking(0.8)
+                .foregroundStyle(Theme.tertiary)
+                .fixedSize()
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+        }
+        .padding(.leading, 8)
+    }
+}
+
 /// Mon to Fri across the top; today stands out.
 struct DayHeader: View {
     let days: Int

@@ -3,8 +3,10 @@ import Foundation
 /// Runs your agents. With Claude through Claude Code, each agent is its own `claude` run,
 /// working over many turns in a folder of its own: it can search the web and read pages
 /// (if that's switched on), read and write files in its folder, and read folders you've
-/// chosen. It has no shell and nothing else on the Mac. With the other engines an agent
-/// can only think and write. Only a few work at once; the rest wait their turn.
+/// chosen. It has no shell and nothing else on the Mac. With Qwen on this Mac, an agent
+/// works the same way with the app's own tools (see AgentToolbox). With Claude through an
+/// API key, an agent can only think and write. Only a few work at once; the rest wait
+/// their turn.
 final class AgentRunner {
     private let store: AgentsStore
     private let assistant: Assistant
@@ -148,14 +150,15 @@ final class AgentRunner {
         let id = job.id
         let engine = assistant.engine
         let model = assistant.claudeModel
-        let tools = engine == .claudeCode
+        let qwen = engine == .qwen ? assistant.qwenModelName : nil
+        let tools = engine.agentTools
         let folder = AgentBrief.home.appendingPathComponent(AgentBrief.folderName(for: job.name, id: id), isDirectory: true)
         if tools {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
         store.change { $0.begin(id, folder: tools ? folder.path : "", model: assistant.modelName) }
 
-        let web = tools && settings.agentsUseWeb
+        let web = engine.agentWeb(allowed: settings.agentsUseWeb, ollamaKey: assistant.ollamaKeyHint != nil)
         var readFolders = tools ? settings.agentReadFolders.filter { AgentRunner.isFolder($0) } : []
         // The team chat: a file every agent may read (and none may change).
         var teamChat: String?
@@ -169,15 +172,18 @@ final class AgentRunner {
                 readFolders.append(earlier)
             }
         }
-        let system = AgentBrief.system(now: Date(), tools: tools, web: web, readFolders: readFolders, teamChat: teamChat)
+        let system = AgentBrief.system(now: Date(), tools: tools, web: web, readFolders: readFolders, teamChat: teamChat,
+                                       qwen: engine == .qwen)
         let prompt = AgentBrief.prompt(for: job, team: store.team, tools: tools, web: web)
         let path = assistant.claudePath
 
         let work = Task { [weak self] in
             guard let self = self else { return }
-            if tools {
+            if engine == .claudeCode {
                 await self.runWithClaudeCode(id: id, path: path, model: model, system: system, web: web, readFolders: readFolders,
                                              prompt: prompt, folder: folder)
+            } else if engine == .qwen {
+                await self.runWithQwen(id: id, model: qwen, system: system, prompt: prompt, folder: folder, readFolders: readFolders, web: web)
             } else {
                 await self.runWithoutTools(id: id, system: system, prompt: prompt, model: model)
             }
@@ -261,9 +267,45 @@ final class AgentRunner {
         }
     }
 
-    // MARK: The other engines
+    // MARK: Qwen on this Mac
 
-    /// Claude with an API key, or Qwen: one answer, from what it knows.
+    /// A Qwen agent, through Ollama, with the app's own tools: its folder, the folders it was
+    /// given, and (with an Ollama key) the web. Its steps, posts and report go through the
+    /// same feed as a Claude agent's.
+    private func runWithQwen(id: UUID, model: String?, system: String, prompt: String, folder: URL, readFolders: [String], web: Bool) async {
+        guard let model = model else {
+            await fail(id, "Qwen isn't set up yet. See Settings → Assistant.")
+            return
+        }
+        let feed = AgentFeed(id: id, store: store, folder: folder.path)
+        feed.desk = desk
+        let store = self.store
+        let toolbox = AgentToolbox(folder: folder.path, readFolders: readFolders, web: web)
+        let agent = QwenAgent(model: model, toolbox: toolbox, webKey: web ? OllamaKeyFile.read() : nil,
+                              contextSize: AgentToolbox.contextSize(memory: ProcessInfo.processInfo.physicalMemory),
+                              onEvent: { event in await feed.take(events: [event]) },
+                              onUsage: { use in
+                                  await MainActor.run { store.change { $0.setUsage(id, tokens: use.tokens, cost: nil) } }
+                              })
+        let outcome = await agent.run(system: system, prompt: prompt)
+        let used = agent.used
+        let usage = assistant.usage
+        await MainActor.run {
+            guard !used.isEmpty else { return }
+            usage.record(used, kind: .agent, label: store.team.job(id)?.name ?? "", model: model)
+        }
+        if Task.isCancelled { return }
+        switch outcome {
+        case .report(let report, let turns):
+            await feed.take(events: [.finished(report: report, turns: turns)])
+        case .problem(let problem):
+            await fail(id, problem)
+        }
+    }
+
+    // MARK: Claude with an API key
+
+    /// Claude with an API key: one answer, from what it knows.
     private func runWithoutTools(id: UUID, system: String, prompt: String, model: ClaudeModel) async {
         await MainActor.run {
             self.store.change { $0.note(id, kind: .note, text: "Thinking it through") }
@@ -314,7 +356,13 @@ final class AgentFeed {
 
     func take(_ line: String) async {
         tally.take(line: line)
-        for event in AgentStream.events(fromLine: line, folder: folder) {
+        await take(events: AgentStream.events(fromLine: line, folder: folder))
+    }
+
+    /// What an agent did, however it was worked out (from Claude Code's output, or a Qwen
+    /// agent's tools).
+    func take(events: [AgentStream.Event]) async {
+        for event in events {
             switch event {
             case .text(let text):
                 buffer += text

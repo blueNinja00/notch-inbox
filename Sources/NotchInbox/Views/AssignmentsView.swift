@@ -641,9 +641,10 @@ struct AssignmentResearch: View {
     }
 
     private var startHelp: String {
-        let tools = assistant.engine == .claudeCode
-        return AgentChain.researchHelp(ready: assistant.status.isReady, engine: assistant.engine.name, claude: assistant.engine.isClaude,
-                                       tools: tools, web: tools && settings.agentsUseWeb)
+        let engine = assistant.engine
+        return AgentChain.researchHelp(ready: assistant.status.isReady, engine: engine.name, claude: engine.isClaude,
+                                       tools: engine.agentTools,
+                                       web: engine.agentWeb(allowed: settings.agentsUseWeb, ollamaKey: assistant.ollamaKeyHint != nil))
     }
 
     private func start() {

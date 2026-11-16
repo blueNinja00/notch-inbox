@@ -774,8 +774,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "Hand jobs to agents",
             detail: "It can start agents on bigger jobs, stop them, read their reports, and see your recipes.",
             instructions: { [weak self] in
-                let tools = Assistant.shared.engine == .claudeCode
-                return StaffAgent.instructions(tools: tools, web: tools && (self?.settings.agentsUseWeb ?? false))
+                let assistant = Assistant.shared
+                return StaffAgent.instructions(tools: assistant.engine.agentTools,
+                                               web: assistant.engine.agentWeb(allowed: self?.settings.agentsUseWeb ?? false,
+                                                                              ollamaKey: assistant.ollamaKeyHint != nil))
             },
             describe: { [weak self] in
                 guard let self = self else { return "" }
